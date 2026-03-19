@@ -1,0 +1,194 @@
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, RefreshCw, Sparkles, Linkedin, Mail, Phone, UserCircle2 } from "lucide-react";
+import { activitiesApi, companiesApi, contactsApi, outreachApi } from "../lib/api";
+import type { Activity, Company, Contact, OutreachSequence } from "../types";
+import { avatarColor, formatDate, getInitials } from "../lib/utils";
+import OutreachDrawer from "../components/outreach/OutreachDrawer";
+
+export default function ContactDetail() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [contact, setContact] = useState<Contact | null>(null);
+  const [company, setCompany] = useState<Company | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [sequence, setSequence] = useState<OutreachSequence | null>(null);
+  const [brief, setBrief] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [seqLoading, setSeqLoading] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const loadContact = async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const c = await contactsApi.get(id);
+      setContact(c);
+
+      const tasks: Promise<unknown>[] = [activitiesApi.list(undefined, id).then((a) => setActivities(a))];
+      if (c.company_id) {
+        tasks.push(companiesApi.get(c.company_id).then((co) => setCompany(co)));
+      } else {
+        setCompany(null);
+      }
+      tasks.push(
+        outreachApi
+          .getSequence(id)
+          .then((s) => setSequence(s))
+          .catch(() => setSequence(null))
+      );
+      await Promise.all(tasks);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadContact();
+  }, [id]);
+
+  const handleGetBrief = async () => {
+    if (!id) return;
+    setBriefLoading(true);
+    try {
+      const result = await contactsApi.getBrief(id);
+      setBrief(result.brief ?? "No brief generated.");
+    } catch {
+      setBrief("Failed to generate brief.");
+    } finally {
+      setBriefLoading(false);
+    }
+  };
+
+  const handleGenerateOutreach = async () => {
+    if (!id) return;
+    setSeqLoading(true);
+    try {
+      const generated = await outreachApi.generate(id);
+      setSequence(generated);
+      setDrawerOpen(true);
+    } finally {
+      setSeqLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="crm-panel p-14 text-center crm-muted">Loading contact profile...</div>;
+  }
+
+  if (!contact) {
+    return <div className="crm-panel p-14 text-center crm-muted">Contact not found.</div>;
+  }
+
+  return (
+    <>
+      <div className="contact-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <div className="flex items-center justify-between gap-3">
+          <button className="crm-button soft" onClick={() => navigate("/contacts")}>
+            <ArrowLeft size={14} />
+            Back to Contacts
+          </button>
+        </div>
+
+        <section className="crm-panel p-8" style={{ padding: 32 }}>
+          <div className="flex items-start gap-5" style={{ gap: 20 }}>
+            <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-[16px] font-extrabold ${avatarColor(contact.first_name + contact.last_name)}`}>
+              {getInitials(`${contact.first_name} ${contact.last_name}`)}
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-[30px] font-extrabold tracking-tight text-[#1f2d3d]">{contact.first_name} {contact.last_name}</h2>
+              <p className="text-[14px] text-[#6f8399] mt-1">{contact.title ?? "-"}</p>
+              <div className="flex items-center gap-3 mt-3 text-[13px] text-[#4d6178] flex-wrap" style={{ marginTop: 14, rowGap: 10, columnGap: 12 }}>
+                {company && (
+                  <Link to={`/companies/${company.id}`} className="hover:text-[#ff6b35] font-semibold">
+                    {company.name}
+                  </Link>
+                )}
+                {contact.email && (
+                  <span className="inline-flex items-center gap-1"><Mail size={13} />{contact.email}</span>
+                )}
+                {contact.phone && (
+                  <span className="inline-flex items-center gap-1"><Phone size={13} />{contact.phone}</span>
+                )}
+                {contact.linkedin_url && (
+                  <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#2a5f8c] hover:text-[#ff6b35]">
+                    <Linkedin size={13} />LinkedIn
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="crm-panel p-6" style={{ padding: 26 }}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <UserCircle2 size={16} className="text-[#ff6b35]" />
+              <h3 className="text-[16px] font-bold">AI Brief</h3>
+            </div>
+            <button className="crm-button soft" onClick={handleGetBrief} disabled={briefLoading}>
+              {briefLoading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {briefLoading ? "Generating..." : "Generate Brief"}
+            </button>
+          </div>
+          {brief ? (
+            <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] p-4 space-y-2">
+              {brief.split("\n").filter(Boolean).map((line, i) => (
+                <p key={i} className="text-[14px] text-[#2d4258]">{line}</p>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[13px] text-[#6f8399]">Generate stakeholder brief from profile and context.</p>
+          )}
+        </section>
+
+        <section className="crm-panel p-6" style={{ padding: 26 }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-[16px] font-bold">Outreach</h3>
+            {sequence ? (
+              <button className="crm-button soft" onClick={() => setDrawerOpen(true)}>
+                Open Sequence
+              </button>
+            ) : (
+              <button className="crm-button primary" onClick={handleGenerateOutreach} disabled={seqLoading}>
+                {seqLoading ? "Generating..." : "Generate Sequence"}
+              </button>
+            )}
+          </div>
+          {sequence ? (
+            <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] p-4 text-[13px] text-[#2d4258] space-y-1">
+              <p><span className="font-semibold">Status:</span> {sequence.status}</p>
+              <p><span className="font-semibold">Persona:</span> {sequence.persona ?? "-"}</p>
+              <p><span className="font-semibold">Subject:</span> {sequence.subject_1 ?? "-"}</p>
+            </div>
+          ) : (
+            <p className="text-[13px] text-[#6f8399]">No outreach sequence generated yet.</p>
+          )}
+        </section>
+
+        <section className="crm-panel p-6" style={{ padding: 26 }}>
+          <h3 className="text-[16px] font-bold mb-4">Activity Timeline</h3>
+          {activities.length === 0 ? (
+            <p className="text-[13px] text-[#6f8399]">No activities logged for this contact.</p>
+          ) : (
+            <div className="space-y-3">
+              {activities.map((a) => (
+                <div key={a.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[13px] font-bold capitalize text-[#31485f]">{a.type}</p>
+                    <p className="text-[12px] text-[#7a8ea4]">{formatDate(a.created_at)}</p>
+                  </div>
+                  {a.content && <p className="text-[13px] text-[#4d6178] mt-1.5">{a.content}</p>}
+                  {a.ai_summary && <p className="text-[12px] text-[#ff6b35] mt-2">AI summary: {a.ai_summary}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <OutreachDrawer contact={drawerOpen ? contact : null} onClose={() => setDrawerOpen(false)} />
+    </>
+  );
+}

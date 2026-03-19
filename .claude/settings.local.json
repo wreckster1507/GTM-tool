@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import json; d=json.load\\(open\\(r''C:\\\\Users\\\\sarthu\\\\.claude\\\\projects\\\\c--gtm-prototype\\\\11d91c98-fcda-416e-ba73-cdaedd9cd1ee\\\\tool-results\\\\mcp-claude_ai_Mermaid_Chart-validate_and_render_mermaid_diagram-1773707272451.txt''\\)\\); print\\(''valid:'', d[''valid''], ''liveEditUrl:'', d[''liveEditUrl'']\\)\")",
+      "Bash(python -c \"import json; d=json.load\\(open\\(r''C:\\\\Users\\\\sarthu\\\\.claude\\\\projects\\\\c--gtm-prototype\\\\11d91c98-fcda-416e-ba73-cdaedd9cd1ee\\\\tool-results\\\\mcp-claude_ai_Mermaid_Chart-validate_and_render_mermaid_diagram-1773707272451.txt'', encoding=''utf-8''\\)\\); print\\(''valid:'', d[''valid''], ''\\\\nliveEditUrl:'', d[''liveEditUrl'']\\)\")",
+      "WebSearch",
+      "Bash(venvScriptspip.exe install:*)",
+      "Bash(source venv/Scripts/activate)",
+      "Bash(python -m alembic upgrade head)",
+      "Bash(curl -s \"http://localhost:8000/api/v1/contacts?limit=5\")",
+      "Bash(python -m json.tool)",
+      "Bash(curl -v \"http://localhost:8000/api/v1/contacts\")",
+      "Bash(curl -s \"http://localhost:8000/api/v1/contacts/\")",
+      "Bash(python -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(c[''''id''''], c[''''persona''''], c[''''first_name''''], c[''''last_name''''], c.get\\(''''title'''',''''''''\\)[:40]\\) for c in data[:8]]\")",
+      "Bash(curl -s -X POST \"http://localhost:8000/api/v1/outreach/generate/19983e77-cf14-4b62-bb40-07f97a73990a\")",
+      "Bash(pip install:*)",
+      "Bash(curl -s http://localhost:8000/docs)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist)",
+      "Bash(taskkill /F /PID 27452 /PID 2800 /PID 13716 /PID 22752 /PID 23040 /PID 17600 /PID 7236)",
+      "Bash(powershell -Command \"Get-Process -Name python | Stop-Process -Force\")",
+      "WebFetch(domain:clay.com)",
+      "WebFetch(domain:www.hubspot.com)",
+      "WebFetch(domain:attio.com)",
+      "WebFetch(domain:linear.app)",
+      "WebFetch(domain:clickup.com)",
+      "WebFetch(domain:notion.so)",
+      "WebFetch(domain:www.notion.com)",
+      "WebFetch(domain:dribbble.com)",
+      "WebFetch(domain:www.figma.com)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:www.uidesign.tips)",
+      "WebFetch(domain:uxplanet.org)"
+    ]
+  },
+  "outputStyle": "Explanatory"
+}

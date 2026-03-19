@@ -1,0 +1,663 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Cabin:wght@500;600;700&display=swap");
+@import "tailwindcss";
+
+:root {
+  --bg: #f5f7fb;
+  --bg-soft: #eef2f8;
+  --panel: #ffffff;
+  --panel-soft: #f8fafd;
+  --line: #e2e9f2;
+  --line-strong: #d4deea;
+  --text: #1f2937;
+  --muted: #667892;
+  --accent: #ff6a3d;
+  --accent-hover: #ea5a2f;
+  --nav-bg: #0f2236;
+  --nav-bg-2: #132c45;
+  --radius: 16px;
+  --shadow-soft: 0 14px 34px rgba(15, 36, 62, 0.06);
+  --shadow-card: 0 10px 24px rgba(15, 36, 62, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 0% -10%, #fff1e9 0%, transparent 33%),
+    radial-gradient(circle at 110% 0%, #eaf3ff 0%, transparent 35%),
+    var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.crm-shell {
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+  height: 100%;
+}
+
+.crm-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--nav-bg) 0%, #0c1a2a 100%);
+  border-right: 1px solid #1f3852;
+  color: #d6e3f2;
+}
+
+.crm-brand {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  border-bottom: 1px solid #21405e;
+}
+
+.crm-brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #ff875e 0%, #ff5f37 100%);
+  color: white;
+  box-shadow: 0 12px 26px rgba(255, 106, 61, 0.44);
+}
+
+.crm-brand-title {
+  font-family: "Cabin", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  color: #f1f7ff;
+}
+
+.crm-brand-sub {
+  font-size: 12px;
+  color: #9cb3cc;
+  margin-top: 3px;
+}
+
+.crm-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.crm-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 14px;
+  text-decoration: none;
+  color: #c1d3e6;
+  font-weight: 600;
+  font-size: 14px;
+  transition: all 0.16s ease;
+}
+
+.crm-nav-link:hover {
+  background: #1f3852;
+  color: #f2f8ff;
+}
+
+.crm-nav-link.active {
+  background: linear-gradient(140deg, var(--nav-bg-2) 0%, #19354f 100%);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.crm-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.crm-topbar {
+  min-height: 96px;
+  background: rgba(255, 255, 255, 0.88);
+  border-bottom: 1px solid var(--line-strong);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 32px;
+  flex-wrap: wrap;
+}
+
+.crm-title {
+  font-family: "Cabin", sans-serif;
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  font-weight: 700;
+  color: #1d2b3d;
+}
+
+.crm-subtitle {
+  font-size: 14px;
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.crm-top-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.crm-search {
+  width: min(416px, 46vw);
+  min-width: 240px;
+  height: 48px;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  padding: 0 16px 0 40px;
+  font-size: 14px;
+  color: #263345;
+  outline: none;
+}
+
+.crm-search:focus {
+  border-color: #b8c8dc;
+  box-shadow: 0 0 0 3px rgba(76, 129, 186, 0.14);
+}
+
+.crm-content {
+  flex: 1;
+  overflow: auto;
+  padding: 32px 40px;
+  animation: fade-enter 220ms ease;
+}
+
+.crm-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+}
+
+.crm-muted {
+  color: var(--muted);
+}
+
+.crm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-soft);
+  color: #48607a;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 16px;
+}
+
+.crm-button {
+  height: 48px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.crm-button.primary {
+  background: var(--accent);
+  color: white;
+}
+
+.crm-button.primary:hover {
+  background: var(--accent-hover);
+}
+
+.crm-button.soft {
+  border-color: var(--line-strong);
+  background: white;
+  color: #31465f;
+}
+
+.crm-button.soft:hover {
+  background: #f8fbff;
+}
+
+.crm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.crm-toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.crm-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.crm-table th {
+  text-align: left;
+  padding: 16px 24px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #72859b;
+  background: var(--panel-soft);
+  border-bottom: 1px solid var(--line);
+}
+
+.crm-table td {
+  padding: 16px 24px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.crm-table tr:hover td {
+  background: #fbfdff;
+}
+
+.pipeline-toolbar-shell {
+  margin: 16px 0 12px;
+  border-radius: 20px;
+}
+
+.pipeline-toolbar-inner {
+  padding: 18px 24px;
+}
+
+.pipeline-toolbar-left {
+  padding-left: 8px;
+}
+
+.pipeline-toolbar-right {
+  padding-right: 8px;
+}
+
+.pipeline-board-wrap {
+  padding-top: 4px;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+.pipeline-board-row {
+  align-items: flex-start;
+  padding: 2px 4px 6px 0;
+}
+
+.pipeline-drag-overlay {
+  transform-origin: top left;
+  margin-top: 2px;
+  margin-left: 2px;
+}
+
+.deal-card {
+  padding: 18px;
+}
+
+.deal-card-head,
+.deal-card-title,
+.deal-card-footer {
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+/* Page-specific spacing controls */
+.dashboard-page {
+  gap: 20px;
+}
+
+.dashboard-kpi-grid {
+  margin-top: 4px;
+}
+
+.dashboard-kpi-card {
+  padding: 28px 30px;
+}
+
+.dashboard-chart-main,
+.dashboard-chart-side {
+  padding: 26px 28px;
+}
+
+.dashboard-responsive-wrap {
+  margin: 8px 0;
+}
+
+.dashboard-responsive-wrap-main {
+  margin-top: 10px;
+  margin-bottom: 6px;
+}
+
+.dashboard-responsive-wrap-side {
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
+
+.companies-toolbar,
+.contacts-toolbar {
+  padding: 20px 24px;
+  margin-bottom: 6px;
+}
+
+.companies-table-panel,
+.contacts-table-panel {
+  margin-top: 2px;
+}
+
+.companies-importer-panel {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.companies-importer-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.companies-importer-controls input[type="file"] {
+  flex: 1;
+  min-width: 260px;
+}
+
+.companies-importer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.companies-importer-preview {
+  border-radius: 14px;
+}
+
+.companies-importer-result {
+  border: 1px solid #dbe5f0;
+  border-radius: 12px;
+  background: #f9fbfe;
+  padding: 12px;
+}
+
+.companies-importer-stat {
+  border: 1px solid #dbe5f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.companies-importer-stat span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6f8399;
+}
+
+.companies-importer-stat strong {
+  font-size: 16px;
+  color: #273b50;
+}
+
+.company-detail-page {
+  gap: 24px;
+  padding-bottom: 8px;
+}
+
+.company-detail-top-actions {
+  margin-bottom: 0;
+  row-gap: 10px;
+}
+
+.company-detail-hero {
+  padding: 30px;
+}
+
+.company-detail-hero-header {
+  gap: 24px;
+}
+
+.company-detail-hero-identity {
+  min-width: 0;
+  flex: 1;
+}
+
+.company-detail-hero-title {
+  min-width: 0;
+}
+
+.company-detail-hero-badges {
+  align-self: flex-start;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.company-detail-facts {
+  padding: 28px;
+}
+
+.company-detail-automation,
+.company-detail-brief,
+.company-detail-signals,
+.company-detail-deals,
+.company-detail-stakeholders {
+  padding: 24px;
+}
+
+.company-detail-core-grid,
+.company-detail-insights-grid {
+  row-gap: 20px;
+}
+
+.deal-detail-page {
+  gap: 20px;
+}
+
+.deal-detail-top-actions {
+  margin-bottom: 2px;
+}
+
+.deal-detail-summary {
+  padding: 28px;
+}
+
+.deal-detail-meddpicc,
+.deal-detail-timeline {
+  padding: 24px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes fade-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1080px) {
+  .crm-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-sidebar {
+    display: none;
+  }
+
+  .crm-topbar {
+    padding: 16px;
+    min-height: 80px;
+  }
+
+  .crm-title {
+    font-size: 28px;
+  }
+
+  .crm-content {
+    padding: 16px;
+  }
+
+  .crm-search {
+    width: min(320px, 75vw);
+    min-width: 180px;
+  }
+
+  .crm-toolbar-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .pipeline-toolbar-shell {
+    margin: 16px 0 16px;
+  }
+
+  .pipeline-toolbar-inner {
+    padding: 16px;
+  }
+
+  .dashboard-kpi-card,
+  .dashboard-chart-main,
+  .dashboard-chart-side,
+  .company-detail-hero,
+  .company-detail-facts,
+  .company-detail-automation,
+  .company-detail-signals,
+  .company-detail-deals,
+  .company-detail-brief,
+  .company-detail-stakeholders,
+  .deal-detail-summary,
+  .deal-detail-meddpicc,
+  .deal-detail-timeline {
+    padding: 16px;
+  }
+
+  .company-detail-page {
+    gap: 16px;
+  }
+
+  .company-detail-hero-header {
+    gap: 16px;
+  }
+
+  .company-detail-hero-identity {
+    gap: 14px;
+  }
+
+  .company-detail-hero-badges {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .company-detail-core-grid,
+  .company-detail-insights-grid {
+    row-gap: 16px;
+  }
+
+  .dashboard-responsive-wrap,
+  .dashboard-responsive-wrap-main,
+  .dashboard-responsive-wrap-side {
+    margin: 6px 0;
+  }
+
+  .companies-toolbar,
+  .contacts-toolbar {
+    padding: 16px;
+    margin-bottom: 0;
+  }
+
+  .companies-importer-panel {
+    padding: 16px;
+  }
+
+  .pipeline-toolbar-left,
+  .pipeline-toolbar-right {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .pipeline-board-wrap {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .pipeline-board-row {
+    padding: 0 0 4px;
+  }
+
+  .pipeline-drag-overlay {
+    margin-top: 0;
+    margin-left: 0;
+  }
+
+  .deal-card {
+    padding: 14px;
+  }
+
+  .deal-card-head,
+  .deal-card-title,
+  .deal-card-footer {
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c7d5e5;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
