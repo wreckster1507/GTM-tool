@@ -93,6 +93,162 @@ class ApolloClient:
             return self._mock_contacts(domain, limit)
         return []
 
+    async def search_people(
+        self,
+        domain: str,
+        limit: int = 5,
+        titles: list[str] | None = None,
+        seniorities: list[str] | None = None,
+    ) -> list[dict]:
+        """
+        Search for contacts at a domain using Apollo people search endpoints.
+
+        Tries endpoints in order of preference, falling back if one returns 403:
+          1. mixed_people/search (best, searches global DB)
+          2. people/search (alternative global search)
+          3. contacts/search (searches saved Apollo CRM contacts only)
+
+        Credit-conservative: limits results and uses targeted filters.
+        """
+        if self.mock:
+            return self._mock_contacts(domain, limit)
+
+        if not self.api_key:
+            return []
+
+        import httpx
+        import logging
+        logger = logging.getLogger(__name__)
+
+        headers = {"X-Api-Key": self.api_key, "Content-Type": "application/json"}
+
+        # ── Attempt 1: mixed_people/search ──────────────────────────────────
+        body: dict = {
+            "q_organization_domains": domain,
+            "page": 1,
+            "per_page": min(limit, 10),
+        }
+        if titles:
+            body["person_titles"] = titles
+        if seniorities:
+            body["person_seniorities"] = seniorities
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            try:
+                resp = await client.post(
+                    "https://api.apollo.io/v1/mixed_people/search",
+                    headers=headers, json=body,
+                )
+                if resp.status_code == 403:
+                    logger.info("mixed_people/search not enabled, trying people/search")
+                else:
+                    resp.raise_for_status()
+                    people = resp.json().get("people", [])
+                    return self._normalize_people(people)
+            except httpx.HTTPStatusError:
+                logger.info("mixed_people/search failed, trying fallback")
+
+            # ── Attempt 2: people/search ────────────────────────────────────
+            try:
+                resp = await client.post(
+                    "https://api.apollo.io/v1/people/search",
+                    headers=headers, json=body,
+                )
+                if resp.status_code == 403:
+                    logger.info("people/search not enabled, trying contacts/search")
+                else:
+                    resp.raise_for_status()
+                    people = resp.json().get("people", [])
+                    return self._normalize_people(people)
+            except httpx.HTTPStatusError:
+                logger.info("people/search failed, trying contacts/search")
+
+            # ── Attempt 3: contacts/search (saved CRM contacts) ─────────────
+            try:
+                contacts_body: dict = {
+                    "q_organization_domains": domain,
+                    "page": 1,
+                    "per_page": min(limit, 10),
+                }
+                resp = await client.post(
+                    "https://api.apollo.io/v1/contacts/search",
+                    headers=headers, json=contacts_body,
+                )
+                if resp.status_code == 403:
+                    logger.warning("No Apollo people search endpoint is enabled")
+                    return []
+                resp.raise_for_status()
+                contacts = resp.json().get("contacts", [])
+                return self._normalize_people(contacts)
+            except httpx.HTTPStatusError:
+                logger.warning("All Apollo people search endpoints failed")
+                return []
+
+    def _normalize_people(self, people: list) -> list[dict]:
+        """Normalize Apollo people/contacts response into a standard format."""
+        return [
+            {
+                "first_name": p.get("first_name") or "",
+                "last_name": p.get("last_name") or "",
+                "email": p.get("email") or None,
+                "title": p.get("title") or None,
+                "seniority": p.get("seniority") or None,
+                "linkedin_url": p.get("linkedin_url") or None,
+                "phone": p.get("phone_numbers", [{}])[0].get("sanitized_number") if p.get("phone_numbers") else None,
+                "organization_name": p.get("organization", {}).get("name") if p.get("organization") else None,
+            }
+            for p in people
+        ]
+
+    async def enrich_person(self, email: str = "", first_name: str = "", last_name: str = "", domain: str = "") -> dict | None:
+        """
+        Single-contact enrichment via Apollo people/match.
+        Used by re-enrich for individual contacts.
+        """
+        if self.mock:
+            contacts = self._mock_contacts(domain or "example.com", 1)
+            return contacts[0] if contacts else None
+
+        if not self.api_key:
+            return None
+
+        import httpx
+
+        body: dict = {}
+        if email:
+            body["email"] = email
+        if first_name:
+            body["first_name"] = first_name
+        if last_name:
+            body["last_name"] = last_name
+        if domain:
+            body["organization_domain"] = domain
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.apollo.io/v1/people/match",
+                headers={"X-Api-Key": self.api_key, "Content-Type": "application/json"},
+                json=body,
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            person = resp.json().get("person")
+            if not person:
+                return None
+
+        return {
+            "first_name": person.get("first_name", ""),
+            "last_name": person.get("last_name", ""),
+            "email": person.get("email"),
+            "title": person.get("title"),
+            "seniority": person.get("seniority"),
+            "linkedin_url": person.get("linkedin_url"),
+            "phone": person.get("phone_numbers", [{}])[0].get("sanitized_number") if person.get("phone_numbers") else None,
+            "headline": person.get("headline"),
+            "employment_history": person.get("employment_history", [])[:3],
+        }
+
     # ── Hunter fallback ────────────────────────────────────────────────────────
 
     async def _enrich_via_hunter(self, domain: str) -> Optional[dict]:

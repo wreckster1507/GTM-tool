@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Plus, Search, Swords, RefreshCw, Pencil, Trash2, X } from "lucide-react";
 import { battlecardsApi } from "../lib/api";
 import type { Battlecard } from "../types";
@@ -10,12 +10,159 @@ const CATEGORIES = [
   { key: "tech_faq", label: "Tech FAQs" },
 ];
 
-const CATEGORY_STYLE: Record<string, string> = {
-  objection: "bg-[#fff1ec] border-[#ffcbb8] text-[#b94a24]",
-  competitor: "bg-[#eaf4ff] border-[#c7def8] text-[#2a5f8c]",
-  tech_faq: "bg-[#e4fbf3] border-[#b8efd8] text-[#1b6f53]",
-  pricing: "bg-[#fff3dd] border-[#f7dda4] text-[#86581a]",
-  use_case: "bg-[#edf3f9] border-[#d7e1eb] text-[#546679]",
+const CATEGORY_STYLE: Record<string, { bg: string; border: string; text: string }> = {
+  objection: { bg: "#fff1ec", border: "#ffcbb8", text: "#b94a24" },
+  competitor: { bg: "#eaf4ff", border: "#c7def8", text: "#2a5f8c" },
+  tech_faq: { bg: "#e4fbf3", border: "#b8efd8", text: "#1b6f53" },
+  pricing: { bg: "#fff3dd", border: "#f7dda4", text: "#86581a" },
+  use_case: { bg: "#edf3f9", border: "#d7e1eb", text: "#546679" },
+};
+
+const styles: Record<string, CSSProperties> = {
+  page: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 20,
+    padding: "8px 2px 18px",
+  },
+  panel: {
+    background: "#ffffff",
+    border: "1px solid #e2eaf3",
+    borderRadius: 16,
+    boxShadow: "0 8px 28px rgba(18, 44, 70, 0.06)",
+  },
+  topPanel: {
+    padding: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 14,
+  },
+  toolbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  chip: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "7px 12px",
+    borderRadius: 999,
+    border: "1px solid #d8e4ef",
+    background: "#f8fbff",
+    color: "#38526b",
+    fontSize: 13,
+    fontWeight: 700,
+  },
+  buttonSoft: {
+    border: "1px solid #d9e5f0",
+    background: "#f5f9ff",
+    color: "#45607a",
+    borderRadius: 10,
+    padding: "9px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+    cursor: "pointer",
+  },
+  buttonPrimary: {
+    border: "1px solid #ff6b35",
+    background: "#ff6b35",
+    color: "white",
+    borderRadius: 10,
+    padding: "9px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+    cursor: "pointer",
+  },
+  inputWrap: {
+    position: "relative",
+    maxWidth: 560,
+  },
+  input: {
+    height: 44,
+    width: "100%",
+    borderRadius: 10,
+    border: "1px solid #d7e2ee",
+    background: "white",
+    padding: "0 12px 0 36px",
+    fontSize: 14,
+    color: "#25384d",
+    boxSizing: "border-box",
+  },
+  tabs: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  cardsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+    gap: 16,
+  },
+  card: {
+    background: "#ffffff",
+    border: "1px solid #e2eaf3",
+    borderRadius: 16,
+    boxShadow: "0 8px 28px rgba(18, 44, 70, 0.06)",
+    padding: 18,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(16, 24, 32, 0.3)",
+    zIndex: 40,
+  },
+  modalWrap: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 50,
+    display: "grid",
+    placeItems: "center",
+    padding: 16,
+  },
+  modal: {
+    width: "100%",
+    maxWidth: 860,
+    background: "#ffffff",
+    border: "1px solid #e2eaf3",
+    borderRadius: 16,
+    boxShadow: "0 18px 54px rgba(20, 46, 72, 0.2)",
+    padding: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  field: {
+    height: 42,
+    borderRadius: 10,
+    border: "1px solid #d7e2ee",
+    padding: "0 12px",
+    fontSize: 14,
+    color: "#25384d",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+  textarea: {
+    width: "100%",
+    minHeight: 120,
+    borderRadius: 10,
+    border: "1px solid #d7e2ee",
+    padding: 12,
+    fontSize: 14,
+    color: "#25384d",
+    boxSizing: "border-box",
+    resize: "vertical",
+  },
 };
 
 export default function Battlecards() {
@@ -146,102 +293,167 @@ export default function Battlecards() {
   }, [cards.length, search]);
 
   return (
-    <div className="battlecards-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <div className="crm-panel p-6 space-y-4" style={{ padding: 26 }}>
-        <div className="crm-toolbar">
-          <div className="flex items-center gap-2">
-            <span className="crm-chip">{resultsLabel}</span>
+    <div style={styles.page}>
+      <div style={{ ...styles.panel, ...styles.topPanel }}>
+        <div style={styles.toolbar}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={styles.chip}>{resultsLabel}</span>
           </div>
-          <div className="crm-toolbar-actions">
-            <button className="crm-button soft" onClick={handleSeed} disabled={seeding}>
-              {seeding ? <RefreshCw size={14} className="animate-spin" /> : <Swords size={14} />}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button style={styles.buttonSoft} onClick={handleSeed} disabled={seeding}>
+              {seeding ? <RefreshCw size={14} /> : <Swords size={14} />}
               {seeding ? "Seeding..." : "Seed Default Cards"}
             </button>
-            <button className="crm-button primary" onClick={openCreate}>
+            <button style={styles.buttonPrimary} onClick={openCreate}>
               <Plus size={14} />
               Add Card
             </button>
           </div>
         </div>
 
-        <div className="relative max-w-lg" style={{ marginTop: 2 }}>
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8094a8]" />
+        <div style={styles.inputWrap}>
+          <Search
+            size={14}
+            style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#8094a8" }}
+          />
           <input
-            className="h-12 w-full rounded-xl border border-[#d7e2ee] bg-white pl-10 pr-4 text-[14px]"
+            style={styles.input}
             placeholder="Search trigger, title, tags"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
-        <div className="flex gap-2 flex-wrap">
-          {CATEGORIES.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setCategory(tab.key)}
-              className={`h-10 px-4 rounded-xl border text-[13px] font-semibold transition-all ${
-                category === tab.key
-                  ? "bg-[#fff1ec] border-[#ffcbb8] text-[#b94a24]"
-                  : "bg-white border-[#d7e2ee] text-[#4d6178]"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div style={styles.tabs}>
+          {CATEGORIES.map((tab) => {
+            const active = category === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setCategory(tab.key)}
+                style={{
+                  height: 38,
+                  padding: "0 14px",
+                  borderRadius: 10,
+                  border: active ? "1px solid #ffcbb8" : "1px solid #d7e2ee",
+                  background: active ? "#fff1ec" : "white",
+                  color: active ? "#b94a24" : "#4d6178",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {loading ? (
-        <div className="crm-panel p-14 text-center crm-muted">Loading battlecards...</div>
+        <div style={{ ...styles.panel, padding: "46px 20px", textAlign: "center", color: "#7a8ea4", fontSize: 14 }}>
+          Loading battlecards...
+        </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" style={{ rowGap: 20, columnGap: 20 }}>
-          {cards.map((card) => (
-            <article key={card.id} className="crm-panel p-5 space-y-3" style={{ padding: 22 }}>
-              <div className="flex items-center justify-between gap-2">
-                <span className={`inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-bold capitalize ${CATEGORY_STYLE[card.category] ?? "bg-[#edf3f9] border-[#d7e1eb] text-[#546679]"}`}>
-                  {card.category.replace(/_/g, " ")}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button className="h-8 w-8 rounded-lg border border-[#d8e3ee] grid place-items-center text-[#5f748b] hover:text-[#2a3f56]" onClick={() => openEdit(card)}>
-                    <Pencil size={13} />
-                  </button>
-                  <button className="h-8 w-8 rounded-lg border border-[#ffd0c0] grid place-items-center text-[#c2532d] hover:text-[#a84321]" onClick={() => handleDelete(card.id)}>
-                    <Trash2 size={13} />
-                  </button>
+        <div style={styles.cardsGrid}>
+          {cards.map((card) => {
+            const tone = CATEGORY_STYLE[card.category] ?? CATEGORY_STYLE.use_case;
+            return (
+              <article key={card.id} style={styles.card}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      border: `1px solid ${tone.border}`,
+                      background: tone.bg,
+                      color: tone.text,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {card.category.replace(/_/g, " ")}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      style={{
+                        height: 30,
+                        width: 30,
+                        borderRadius: 8,
+                        border: "1px solid #d8e3ee",
+                        background: "white",
+                        display: "grid",
+                        placeItems: "center",
+                        color: "#5f748b",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => openEdit(card)}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      style={{
+                        height: 30,
+                        width: 30,
+                        borderRadius: 8,
+                        border: "1px solid #ffd0c0",
+                        background: "#fffaf8",
+                        display: "grid",
+                        placeItems: "center",
+                        color: "#c2532d",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => handleDelete(card.id)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <h3 className="text-[15px] font-bold text-[#24364b]">{card.title}</h3>
-              <p className="text-[12px] uppercase tracking-[0.08em] text-[#7a8ea4]">Trigger</p>
-              <p className="text-[13px] text-[#2f455d]">{card.trigger}</p>
-              <p className="text-[12px] uppercase tracking-[0.08em] text-[#7a8ea4]">Response</p>
-              <p className="text-[13px] text-[#2f455d] leading-relaxed">{card.response}</p>
-            </article>
-          ))}
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#24364b" }}>{card.title}</h3>
+                <p style={{ margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ea4" }}>
+                  Trigger
+                </p>
+                <p style={{ margin: 0, fontSize: 13, color: "#2f455d", lineHeight: 1.55 }}>{card.trigger}</p>
+                <p style={{ margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ea4" }}>
+                  Response
+                </p>
+                <p style={{ margin: 0, fontSize: 13, color: "#2f455d", lineHeight: 1.6 }}>{card.response}</p>
+              </article>
+            );
+          })}
           {cards.length === 0 && (
-            <div className="crm-panel p-14 text-center text-[#6f8297] md:col-span-2 xl:col-span-3">
+            <div style={{ ...styles.panel, padding: "42px 20px", textAlign: "center", color: "#6f8297" }}>
               No battlecards found.
             </div>
           )}
         </div>
       )}
 
-      {error && <p className="text-[12px] text-[#b94a24] font-semibold">{error}</p>}
+      {error && <p style={{ margin: 0, fontSize: 12, color: "#b94a24", fontWeight: 700 }}>{error}</p>}
 
       {showModal && (
         <>
-          <div className="fixed inset-0 bg-black/25 z-40" onClick={() => setShowModal(false)} />
-          <div className="fixed inset-0 z-50 grid place-items-center p-4">
-            <div className="crm-panel w-full max-w-2xl p-6 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[18px] font-bold">{editing ? "Edit Battlecard" : "Add Battlecard"}</h3>
-                <button className="text-[#7a8ea4] hover:text-[#31465f]" onClick={() => setShowModal(false)}>
+          <div style={styles.modalOverlay} onClick={() => setShowModal(false)} />
+          <div style={styles.modalWrap}>
+            <div style={styles.modal}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#25384d" }}>
+                  {editing ? "Edit Battlecard" : "Add Battlecard"}
+                </h3>
+                <button
+                  style={{ background: "transparent", border: "none", color: "#7a8ea4", cursor: "pointer" }}
+                  onClick={() => setShowModal(false)}
+                >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
                 <select
-                  className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white"
+                  style={styles.field}
                   value={form.category}
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                 >
@@ -252,7 +464,7 @@ export default function Battlecards() {
                   <option value="use_case">use_case</option>
                 </select>
                 <input
-                  className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
+                  style={styles.field}
                   placeholder="Title"
                   value={form.title}
                   onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
@@ -260,37 +472,39 @@ export default function Battlecards() {
               </div>
 
               <input
-                className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
+                style={styles.field}
                 placeholder="Trigger"
                 value={form.trigger}
                 onChange={(e) => setForm((f) => ({ ...f, trigger: e.target.value }))}
               />
 
               <textarea
-                className="w-full min-h-32 rounded-xl border border-[#d7e2ee] p-3 text-[14px]"
+                style={styles.textarea}
                 placeholder="Response"
                 value={form.response}
                 onChange={(e) => setForm((f) => ({ ...f, response: e.target.value }))}
               />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
                 <input
-                  className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
+                  style={styles.field}
                   placeholder="Competitor (optional)"
                   value={form.competitor}
                   onChange={(e) => setForm((f) => ({ ...f, competitor: e.target.value }))}
                 />
                 <input
-                  className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
+                  style={styles.field}
                   placeholder="Tags comma-separated"
                   value={form.tags}
                   onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
-                <button className="crm-button soft" onClick={() => setShowModal(false)}>Cancel</button>
-                <button className="crm-button primary" onClick={handleSave} disabled={saving}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button style={styles.buttonSoft} onClick={() => setShowModal(false)}>
+                  Cancel
+                </button>
+                <button style={styles.buttonPrimary} onClick={handleSave} disabled={saving}>
                   {saving ? "Saving..." : "Save"}
                 </button>
               </div>

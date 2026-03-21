@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, closestCenter } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
-import { Filter, Plus } from "lucide-react";
+import { Filter, Plus, X, CalendarDays } from "lucide-react";
 import { dealsApi, companiesApi } from "../lib/api";
-import type { Deal } from "../types";
+import type { Company, Deal } from "../types";
 import DealCard from "../components/deal/DealCard";
 import { formatCurrency } from "../lib/utils";
 
@@ -60,16 +60,45 @@ function Column({ stage, deals, companies }: { stage: typeof STAGES[number]; dea
 export default function Pipeline() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [companies, setCompanies] = useState<Record<string, string>>({});
+  const [companyList, setCompanyList] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // New deal modal state
+  const [showModal, setShowModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dealError, setDealError] = useState("");
+  const [dealForm, setDealForm] = useState({
+    name: "", company_id: "", value: "", stage: "discovery", close_date_est: "",
+  });
 
   useEffect(() => {
     Promise.all([dealsApi.list(), companiesApi.list()]).then(([ds, cs]) => {
       setDeals(ds);
+      setCompanyList(cs);
       setCompanies(Object.fromEntries(cs.map((c) => [c.id, c.name])));
       setLoading(false);
     });
   }, []);
+
+  const handleCreateDeal = async () => {
+    if (!dealForm.name.trim()) { setDealError("Deal name is required."); return; }
+    setSaving(true); setDealError("");
+    try {
+      const created = await dealsApi.create({
+        name: dealForm.name.trim(),
+        company_id: dealForm.company_id || undefined,
+        stage: dealForm.stage,
+        value: dealForm.value ? Number(dealForm.value) : undefined,
+        close_date_est: dealForm.close_date_est || undefined,
+      });
+      setDeals((prev) => [...prev, created]);
+      setShowModal(false);
+      setDealForm({ name: "", company_id: "", value: "", stage: "discovery", close_date_est: "" });
+    } catch (e) {
+      setDealError(e instanceof Error ? e.message : "Failed to create deal");
+    } finally { setSaving(false); }
+  };
 
   const handleDragStart = (e: DragStartEvent) => setDraggingId(e.active.id as string);
 
@@ -113,7 +142,7 @@ export default function Pipeline() {
               <Filter size={14} />
               Filter
             </button>
-            <button className="crm-button primary">
+            <button className="crm-button primary" onClick={() => setShowModal(true)}>
               <Plus size={14} />
               New deal
             </button>
@@ -142,6 +171,75 @@ export default function Pipeline() {
           </DragOverlay>
         </DndContext>
       </div>
+
+      {showModal && (
+        <>
+          <div className="fixed inset-0 bg-black/25 z-40" onClick={() => setShowModal(false)} />
+          <div className="fixed inset-0 z-50 grid place-items-center p-4">
+            <div className="crm-panel w-full max-w-lg p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[18px] font-bold text-[#25384d]">Create Deal</h3>
+                <button className="text-[#7a8ea4] hover:text-[#31465f]" onClick={() => setShowModal(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="grid gap-3">
+                <input
+                  className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
+                  placeholder="Deal name"
+                  value={dealForm.name}
+                  onChange={(e) => setDealForm((f) => ({ ...f, name: e.target.value }))}
+                />
+                <select
+                  className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white"
+                  value={dealForm.company_id}
+                  onChange={(e) => setDealForm((f) => ({ ...f, company_id: e.target.value }))}
+                >
+                  <option value="">Select company (optional)</option>
+                  {companyList.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    type="number"
+                    className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
+                    placeholder="Deal value"
+                    value={dealForm.value}
+                    onChange={(e) => setDealForm((f) => ({ ...f, value: e.target.value }))}
+                  />
+                  <select
+                    className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white"
+                    value={dealForm.stage}
+                    onChange={(e) => setDealForm((f) => ({ ...f, stage: e.target.value }))}
+                  >
+                    {STAGES.map((s) => (
+                      <option key={s.id} value={s.id}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <label className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white flex items-center gap-2 text-[#6f8399]">
+                  <CalendarDays size={13} />
+                  <input
+                    type="date"
+                    className="w-full outline-none text-[#25384d] text-[13px]"
+                    placeholder="Close date"
+                    value={dealForm.close_date_est}
+                    onChange={(e) => setDealForm((f) => ({ ...f, close_date_est: e.target.value }))}
+                  />
+                </label>
+              </div>
+              {dealError && <p className="text-[12px] text-[#b94a24] font-semibold">{dealError}</p>}
+              <div className="flex justify-end gap-2">
+                <button className="crm-button soft" onClick={() => setShowModal(false)}>Cancel</button>
+                <button className="crm-button primary" onClick={handleCreateDeal} disabled={saving}>
+                  {saving ? "Creating..." : "Create Deal"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

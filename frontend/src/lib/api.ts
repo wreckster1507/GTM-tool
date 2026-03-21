@@ -8,6 +8,8 @@ import type {
   Meeting,
   Battlecard,
   Paginated,
+  SourcingBatch,
+  SalesResource,
 } from "../types";
 
 /**
@@ -330,4 +332,271 @@ export const prospectingApi = {
   status: async (batchId: string): Promise<ProspectingBatch> => {
     return request<ProspectingBatch>(`/api/v1/prospecting/status/${batchId}`);
   },
+};
+
+// ── Custom Demo ───────────────────────────────────────────────────────────────
+
+export type DemoStatus = "draft" | "generating" | "ready" | "error";
+
+export type CustomDemo = {
+  id: string;
+  title: string;
+  client_name: string | null;
+  client_domain: string | null;
+  creation_path: "file_upload" | "editor" | "brief";
+  source_filename: string | null;
+  status: DemoStatus;
+  error_message: string | null;
+  brand_data: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SceneIn = {
+  scene_title: string;
+  beacon_steps: string[];
+  client_screen: string;
+  reveal_description: string;
+};
+
+export type DemoBriefIn = {
+  title: string;
+  client_name?: string;
+  client_domain?: string;
+  company_id?: string;
+  deal_id?: string;
+  industry?: string;
+  company_summary: string;
+  audience?: string;
+  business_objectives: string[];
+  demo_objectives: string[];
+  workflow_overview: string;
+  key_capabilities: string[];
+  scenes_outline: string[];
+  success_metrics: string[];
+  constraints: string[];
+  additional_context?: string;
+};
+
+export const customDemoApi = {
+  list: () => request<CustomDemo[]>("/api/v1/custom-demos/"),
+
+  generateFromFile: (
+    file: File,
+    title: string,
+    clientName: string,
+    clientDomain: string,
+    companyId?: string,
+    dealId?: string,
+  ) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", title);
+    form.append("client_name", clientName);
+    form.append("client_domain", clientDomain);
+    if (companyId) form.append("company_id", companyId);
+    if (dealId) form.append("deal_id", dealId);
+    return fetch(`${BASE}/api/v1/custom-demos/generate-from-file`, {
+      method: "POST",
+      body: form,
+    }).then(async (r) => {
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }));
+        throw new Error(err.detail ?? "Upload failed");
+      }
+      return r.json() as Promise<CustomDemo>;
+    });
+  },
+
+  generateFromEditor: (payload: {
+    title: string;
+    client_name?: string;
+    client_domain?: string;
+    company_id?: string;
+    deal_id?: string;
+    scenes: SceneIn[];
+  }) =>
+    request<CustomDemo>("/api/v1/custom-demos/generate-from-editor", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  generateFromBrief: (payload: DemoBriefIn) =>
+    request<CustomDemo>("/api/v1/custom-demos/generate-from-brief", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  status: (id: string) =>
+    request<{ id: string; status: DemoStatus; error_message: string | null }>(
+      `/api/v1/custom-demos/${id}/status`
+    ),
+
+  revise: (id: string, instruction: string) =>
+    request<CustomDemo>(`/api/v1/custom-demos/${id}/revise`, {
+      method: "POST",
+      body: JSON.stringify({ instruction }),
+    }),
+
+  delete: (id: string) =>
+    request<void>(`/api/v1/custom-demos/${id}`, { method: "DELETE" }),
+
+  htmlUrl: (id: string) => `${BASE}/api/v1/custom-demos/${id}/html`,
+};
+
+// ── Account Sourcing ──────────────────────────────────────────────────────────
+
+export const accountSourcingApi = {
+  upload: async (file: File): Promise<SourcingBatch> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/api/v1/account-sourcing/upload`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail ?? "Upload failed");
+    }
+    return res.json();
+  },
+
+  listBatches: () =>
+    requestList<SourcingBatch>("/api/v1/account-sourcing/batches"),
+
+  batchStatus: (batchId: string) =>
+    request<SourcingBatch>(`/api/v1/account-sourcing/batches/${batchId}`),
+
+  batchCompanies: (batchId: string) =>
+    requestList<Company>(`/api/v1/account-sourcing/batches/${batchId}/companies`),
+
+  listCompanies: (skip = 0, limit = 200) =>
+    requestList<Company>(`/api/v1/account-sourcing/companies?skip=${skip}&limit=${limit}`),
+
+  getCompany: (companyId: string) =>
+    request<Company>(`/api/v1/account-sourcing/companies/${companyId}`),
+
+  reEnrichCompany: (companyId: string) =>
+    request<{ company_id: string; task_id: string; status: string; message: string }>(
+      `/api/v1/account-sourcing/companies/${companyId}/re-enrich`,
+      { method: "POST" }
+    ),
+
+  getContacts: (companyId: string) =>
+    requestList<Contact>(`/api/v1/account-sourcing/companies/${companyId}/contacts`),
+
+  reEnrichContact: (contactId: string) =>
+    request<{ contact_id: string; task_id: string; status: string; message: string }>(
+      `/api/v1/account-sourcing/contacts/${contactId}/re-enrich`,
+      { method: "POST" }
+    ),
+
+  pushToInstantly: (companyId: string, campaignId = "default") =>
+    request<{ company_id: string; contacts_pushed: number; results: unknown[] }>(
+      `/api/v1/account-sourcing/companies/${companyId}/push-instantly?campaign_id=${campaignId}`,
+      { method: "POST" }
+    ),
+};
+
+// ── Workspace ────────────────────────────────────────────────────────────────
+
+export type WorkspaceSummary = {
+  open_deals: number;
+  total_companies: number;
+  total_contacts: number;
+  scheduled_meetings: number;
+  alerts_count: number;
+};
+
+export type WorkspaceAlert = {
+  id: string;
+  type: string;
+  severity: "high" | "medium" | "low";
+  title: string;
+  description: string;
+  entity_id?: string;
+  entity_name?: string;
+  entity_type?: string;
+  link?: string;
+  created_at: string;
+};
+
+export type StageStatus = {
+  stage: string;
+  status: "ready" | "needs_action" | "blocked";
+  count: number;
+  blockers: string[];
+  actions: string[];
+};
+
+export const workspaceApi = {
+  summary: () =>
+    request<WorkspaceSummary>("/api/v1/workspace/summary"),
+  alerts: () =>
+    request<WorkspaceAlert[]>("/api/v1/workspace/alerts"),
+  stageStatus: (stage: string) =>
+    request<StageStatus>(`/api/v1/workspace/stages/${stage}`),
+};
+
+// ── Knowledge Base / Sales Resources ────────────────────────────────────────
+
+export const resourcesApi = {
+  list: (skip = 0, limit = 50, category?: string, module?: string, q?: string) => {
+    const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+    if (category) params.set("category", category);
+    if (module) params.set("module", module);
+    if (q) params.set("q", q);
+    return requestPaginated<SalesResource>(`/api/v1/resources?${params}`);
+  },
+  get: (id: string) => request<SalesResource>(`/api/v1/resources/${id}`),
+  create: (data: {
+    title: string;
+    category: string;
+    description?: string;
+    content: string;
+    tags?: string[];
+    modules?: string[];
+  }) =>
+    request<SalesResource>("/api/v1/resources", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  upload: (file: File, meta: {
+    title: string;
+    category: string;
+    description?: string;
+    tags?: string[];
+    modules?: string[];
+  }) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", meta.title);
+    form.append("category", meta.category);
+    if (meta.description) form.append("description", meta.description);
+    form.append("tags", JSON.stringify(meta.tags ?? []));
+    form.append("modules", JSON.stringify(meta.modules ?? []));
+    return request<SalesResource>("/api/v1/resources/upload", {
+      method: "POST",
+      body: form,
+    });
+  },
+  update: (id: string, data: Partial<{
+    title: string;
+    category: string;
+    description: string;
+    content: string;
+    tags: string[];
+    modules: string[];
+    is_active: boolean;
+  }>) =>
+    request<SalesResource>(`/api/v1/resources/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  delete: (id: string) =>
+    request<void>(`/api/v1/resources/${id}`, { method: "DELETE" }),
+  options: () =>
+    request<{ categories: string[]; modules: string[] }>("/api/v1/resources/meta/options"),
 };

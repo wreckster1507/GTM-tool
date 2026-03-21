@@ -3,13 +3,20 @@ import { Search, Bell, Plus } from "lucide-react";
 import Sidebar from "./Sidebar";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
-  "/pipeline": { title: "Sales Pipeline", subtitle: "Track movement across every stage" },
-  "/import": { title: "Data Import", subtitle: "Upload target account CSVs and run bulk prospecting" },
-  "/companies": { title: "Companies", subtitle: "Target accounts and ICP fit" },
-  "/contacts": { title: "Contacts", subtitle: "Stakeholders, personas, and outreach" },
-  "/meetings": { title: "Meetings", subtitle: "Pre-brief, debrief, and meeting quality scoring" },
-  "/battlecards": { title: "Battlecards", subtitle: "Live objection handling and competitive responses" },
-  "/dashboard": { title: "Revenue Insights", subtitle: "Pipeline and win trends" },
+  "/sales-workspace": { title: "Sales Workspace", subtitle: "Unified GTM execution journey across all stages" },
+  "/pipeline": { title: "Pipeline", subtitle: "Track movement across every revenue stage" },
+  "/account-sourcing": { title: "Account Sourcing", subtitle: "Source, import, and prioritize target accounts" },
+  "/import": { title: "Account Sourcing", subtitle: "Upload target account CSVs and run bulk prospecting" },
+  "/companies": { title: "Account Sourcing", subtitle: "Target accounts and ICP fit" },
+  "/prospecting": { title: "Prospecting", subtitle: "Activate contacts, personas, and outreach readiness" },
+  "/contacts": { title: "Prospecting", subtitle: "Stakeholders, personas, and outreach" },
+  "/pre-meeting-assistance": { title: "Pre-Meeting Assistance", subtitle: "Pre-brief and account context before every call" },
+  "/custom-demo-assistance": { title: "Custom-Demo Assistance", subtitle: "Generate account-specific demo strategy" },
+  "/meetings": { title: "Pre-Meeting Assistance", subtitle: "Pre-brief, debrief, and meeting quality scoring" },
+  "/live-meeting-assistance": { title: "Live-Meeting Assistance", subtitle: "Live objection handling and competitive responses" },
+  "/battlecards": { title: "Live-Meeting Assistance", subtitle: "Battlecards and talk-track support during calls" },
+  "/crm-insights-alerts": { title: "CRM- Insights and Alerts", subtitle: "Pipeline trends, risks, and momentum signals" },
+  "/dashboard": { title: "CRM- Insights and Alerts", subtitle: "Pipeline and win trends" },
 };
 
 export default function Layout() {

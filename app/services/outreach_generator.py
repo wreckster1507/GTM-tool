@@ -93,6 +93,11 @@ async def generate_sequence(
     persona = contact.persona or "unknown"
     system_prompt = _PERSONA_SYSTEM.get(persona, _PERSONA_SYSTEM["unknown"])
 
+    # ── Knowledge base context ──────────────────────────────────────────────────
+    from app.services.knowledge_context import get_knowledge_context
+    kb_context = await get_knowledge_context(session, "outreach", limit=3, max_total_chars=1500)
+    context["kb_context"] = kb_context
+
     ai = AzureOpenAIClient()
 
     # Check for existing sequence
@@ -192,6 +197,8 @@ def _build_initial_prompt(ctx: dict) -> str:
     if ctx["tech_stack"]:
         stack_note = f"\nTech stack: {', '.join(ctx['tech_stack'])}"
 
+    kb_note = ctx.get("kb_context", "")
+
     return (
         f"Write a cold outreach email to {ctx['contact_name']}, {ctx['title']} at {ctx['company_name']}.\n"
         f"Industry: {ctx['industry']}{emp_note}\n"
@@ -199,6 +206,7 @@ def _build_initial_prompt(ctx: dict) -> str:
         "Include: a subject line on the first line (format 'Subject: ...'), "
         "then the email body. Reference something specific about their company or role. "
         "End with a clear, low-friction CTA (15-min chat or a simple yes/no question)."
+        f"{kb_note}"
     )
 
 

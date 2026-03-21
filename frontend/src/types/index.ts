@@ -14,6 +14,10 @@ export interface Company {
   icp_tier?: string;
   enrichment_sources?: Record<string, unknown>;
   enriched_at?: string;
+  description?: string;
+  intent_signals?: Record<string, unknown>;
+  sourcing_batch_id?: string;
+  enrichment_cache?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -31,6 +35,23 @@ export interface Contact {
   seniority?: string;
   linkedin_url?: string;
   persona?: string;
+  enriched_at?: string;
+  enrichment_data?: Record<string, unknown>;
+  persona_type?: string; // champion | buyer | evaluator | blocker
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SourcingBatch {
+  id: string;
+  filename: string;
+  status: string; // pending | processing | completed | failed
+  total_rows: number;
+  processed_rows: number;
+  created_companies: number;
+  skipped_rows: number;
+  failed_rows: number;
+  error_log?: Array<{ name?: string; error?: string }>;
   created_at: string;
   updated_at: string;
 }
@@ -126,6 +147,21 @@ export interface Meeting {
   what_went_right?: string;
   what_went_wrong?: string;
   next_steps?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SalesResource {
+  id: string;
+  title: string;
+  category: string;
+  description?: string;
+  content: string;
+  filename?: string;
+  file_size?: number;
+  tags: string[];
+  modules: string[];
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }

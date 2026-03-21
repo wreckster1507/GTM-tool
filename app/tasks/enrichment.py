@@ -55,3 +55,113 @@ async def _async_enrich(company_id: UUID) -> None:
                 )
     finally:
         await engine.dispose()
+
+
+# ── Account Sourcing Tasks ─────────────────────────────────────────────────────
+
+def _make_session():
+    """Create a fresh engine + session for a Celery task (avoids stale pools)."""
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker
+    from app.config import settings
+
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, SessionLocal
+
+
+@celery_app.task(
+    name="app.tasks.enrichment.enrich_batch_task",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def enrich_batch_task(self, batch_id: str) -> dict:
+    """Process all companies in a sourcing batch through tiered enrichment."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_async_enrich_batch(UUID(batch_id)))
+        finally:
+            loop.close()
+        return {"status": "completed", "batch_id": batch_id}
+    except Exception as exc:
+        logger.error(f"Batch enrichment task failed for {batch_id}: {exc}")
+        raise self.retry(exc=exc)
+
+
+async def _async_enrich_batch(batch_id: UUID) -> None:
+    from app.services.account_sourcing import process_batch
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            batch = await process_batch(batch_id, session)
+            if batch:
+                logger.info(f"Batch {batch_id} complete: {batch.processed_rows}/{batch.total_rows}")
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(
+    name="app.tasks.enrichment.re_enrich_company_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def re_enrich_company_task(self, company_id: str) -> dict:
+    """Re-enrich a single company through the tiered pipeline."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_async_re_enrich_company(UUID(company_id)))
+        finally:
+            loop.close()
+        return {"status": "completed", "company_id": company_id}
+    except Exception as exc:
+        logger.error(f"Re-enrich task failed for {company_id}: {exc}")
+        raise self.retry(exc=exc)
+
+
+async def _async_re_enrich_company(company_id: UUID) -> None:
+    from app.services.account_sourcing import re_enrich_company
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await re_enrich_company(company_id, session)
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(
+    name="app.tasks.enrichment.re_enrich_contact_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def re_enrich_contact_task(self, contact_id: str) -> dict:
+    """Re-enrich a single contact."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_async_re_enrich_contact(UUID(contact_id)))
+        finally:
+            loop.close()
+        return {"status": "completed", "contact_id": contact_id}
+    except Exception as exc:
+        logger.error(f"Contact re-enrich failed for {contact_id}: {exc}")
+        raise self.retry(exc=exc)
+
+
+async def _async_re_enrich_contact(contact_id: UUID) -> None:
+    from app.services.account_sourcing import re_enrich_contact_service
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await re_enrich_contact_service(contact_id, session)
+    finally:
+        await engine.dispose()
+
+

@@ -104,14 +104,23 @@ async def generate_pre_brief(meeting_id: UUID, session: DBSession):
 @router.post("/{meeting_id}/intelligence")
 async def run_meeting_intelligence(meeting_id: UUID, session: DBSession):
     """
-    Web research only: Wikipedia + DuckDuckGo news/milestones + stakeholder
-    profiles + battlecards. Saves to meeting.research_data. ~5-10s.
+    Full pre-meeting intelligence: website scrape, DuckDuckGo news/signals,
+    Hunter contacts, Google News, competitive landscape, GPT-4o executive
+    briefing. Saves to meeting.research_data. ~10-15s.
     """
+    import logging
+    logger = logging.getLogger(__name__)
     from app.services.pre_meeting_intelligence import run_pre_meeting_intelligence
-    result = await run_pre_meeting_intelligence(meeting_id, session)
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-    return result
+    try:
+        result = await run_pre_meeting_intelligence(meeting_id, session)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Pre-meeting intelligence failed for {meeting_id}")
+        raise HTTPException(status_code=500, detail=f"Intelligence run failed: {str(e)}")
 
 
 @router.post("/{meeting_id}/demo-strategy")
@@ -120,11 +129,19 @@ async def generate_demo_strategy(meeting_id: UUID, session: DBSession):
     GPT-4o Demo Strategy & Story Lineup. Reads cached research_data (if intel
     was already run) plus company DB profile. Saves to meeting.demo_strategy.
     """
+    import logging
+    logger = logging.getLogger(__name__)
     from app.services.pre_meeting_intelligence import generate_meeting_demo_strategy
-    result = await generate_meeting_demo_strategy(meeting_id, session)
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-    return result
+    try:
+        result = await generate_meeting_demo_strategy(meeting_id, session)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Demo strategy generation failed for {meeting_id}")
+        raise HTTPException(status_code=500, detail=f"Demo strategy failed: {str(e)}")
 
 
 @router.post("/{meeting_id}/post-score")

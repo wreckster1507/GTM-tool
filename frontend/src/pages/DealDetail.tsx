@@ -1,8 +1,8 @@
 import { useEffect, useState, type ComponentType, type CSSProperties } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { dealsApi, activitiesApi, contactsApi, meetingsApi } from "../lib/api";
-import type { Deal, Activity, Contact } from "../types";
-import { ArrowLeft, Phone, Mail, Video, FileText, Activity as ActivityIcon, Trash2, CalendarDays, X } from "lucide-react";
+import type { Deal, Activity, Contact, Meeting } from "../types";
+import { ArrowLeft, Phone, Mail, Video, FileText, Activity as ActivityIcon, Trash2, CalendarDays, X, ExternalLink, Sparkles } from "lucide-react";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 
 const MEDDPICC = [
@@ -45,9 +45,10 @@ export default function DealDetail() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [showMeetingModal, setShowMeetingModal] = useState(false);
   const [savingMeeting, setSavingMeeting] = useState(false);
-  const [meetingForm, setMeetingForm] = useState({ title: "", meeting_type: "demo", scheduled_at: "" });
+  const [meetingForm, setMeetingForm] = useState({ title: "", meeting_type: "demo", scheduled_at: "", attendee_ids: [] as string[] });
   const [meetingError, setMeetingError] = useState("");
 
   useEffect(() => {
@@ -56,6 +57,7 @@ export default function DealDetail() {
       setDeal(d);
       setActivities(acts);
       if (d.company_id) contactsApi.list(0, 100, d.company_id).then(setContacts);
+      meetingsApi.list(0, 50, undefined, id).then(setMeetings);
       setLoading(false);
     });
   }, [id]);
@@ -74,9 +76,18 @@ export default function DealDetail() {
         deal_id: deal.id,
         meeting_type: meetingForm.meeting_type,
         scheduled_at: meetingForm.scheduled_at ? new Date(meetingForm.scheduled_at).toISOString() : undefined,
+        attendees: contacts
+          .filter((contact) => meetingForm.attendee_ids.includes(contact.id))
+          .map((contact) => ({
+            contact_id: contact.id,
+            name: `${contact.first_name} ${contact.last_name}`.trim(),
+            title: contact.title,
+            email: contact.email,
+          })),
       });
       setShowMeetingModal(false);
-      setMeetingForm({ title: "", meeting_type: "demo", scheduled_at: "" });
+      setMeetingForm({ title: "", meeting_type: "demo", scheduled_at: "", attendee_ids: [] });
+      setMeetings((prev) => [meeting, ...prev]);
       navigate(`/meetings/${meeting.id}`);
     } catch (e) {
       setMeetingError(e instanceof Error ? e.message : "Failed to create meeting");
@@ -145,27 +156,66 @@ export default function DealDetail() {
         </div>
       </section>
 
-      {/* Schedule Meeting Banner — shown for meeting-worthy stages */}
-      {deal && ["demo", "poc", "proposal", "negotiation"].includes(deal.stage) && (
-        <section className="crm-panel px-6 py-4 flex items-center justify-between gap-4" style={{ background: "#fff8f5", border: "1px solid #ffd5be" }}>
-          <div className="flex items-center gap-3">
-            <CalendarDays className="h-4 w-4 text-[#ff6b35] shrink-0" />
-            <div>
-              <p className="text-[14px] font-bold text-[#8f3a14]">
-                Deal is in <span className="capitalize">{deal.stage}</span> stage
-              </p>
-              <p className="text-[12px] text-[#b05a2a]">Schedule a meeting to unlock the Pre-Meeting Intelligence workspace.</p>
-            </div>
+      {/* Meetings section — schedule + view linked meetings */}
+      <section className="crm-panel p-6" style={{ padding: 26 }}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4 text-[#ff6b35]" />
+            <p className="text-[15px] font-bold text-[#2b3f55]">Meetings ({meetings.length})</p>
           </div>
           <button className="crm-button primary shrink-0" onClick={() => {
-            setMeetingForm(f => ({ ...f, title: `${STAGE_LABEL[deal.stage] ?? deal.stage} — ${deal.name}`, meeting_type: deal.stage === "negotiation" ? "other" : deal.stage }));
+            const stageType = ["discovery", "demo", "poc"].includes(deal.stage) ? deal.stage : "other";
+            setMeetingForm(f => ({ ...f, title: `${STAGE_LABEL[deal.stage] ?? deal.stage} — ${deal.name}`, meeting_type: stageType, attendee_ids: [] }));
             setShowMeetingModal(true);
           }}>
             <CalendarDays className="h-3.5 w-3.5" />
             Schedule Meeting
           </button>
-        </section>
-      )}
+        </div>
+
+        {meetings.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-[#ffd5be] bg-[#fff8f5] px-5 py-4 flex items-center gap-3">
+            <Sparkles className="h-4 w-4 text-[#ff6b35] shrink-0" />
+            <div>
+              <p className="text-[13px] font-bold text-[#8f3a14]">No meetings scheduled yet</p>
+              <p className="text-[12px] text-[#b05a2a]">Schedule a meeting to unlock the Pre-Meeting Intelligence workspace with 13 research sources.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2" style={{ rowGap: 8, display: "grid" }}>
+            {meetings.map((m) => (
+              <Link
+                key={m.id}
+                to={`/meetings/${m.id}`}
+                className="flex items-center justify-between gap-4 rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3 hover:border-[#ff6b35] transition-colors"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Video className="h-4 w-4 text-[#4a7fa5] shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[14px] font-bold text-[#24364b] truncate">{m.title}</p>
+                    <div className="flex items-center gap-2 mt-0.5 text-[12px] text-[#7a8ea4]">
+                      <span className="capitalize">{m.meeting_type}</span>
+                      {m.scheduled_at && <span>· {formatDate(m.scheduled_at)}</span>}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold capitalize"
+                    style={m.status === "completed"
+                      ? { color: "#1d7f57", background: "#e4fbf3", border: "1px solid #b8efd8" }
+                      : { color: "#4f657e", background: "#f8fbff", border: "1px solid #d7e2ee" }}>
+                    {m.status}
+                  </span>
+                  {m.meeting_score != null && (
+                    <span className="text-[12px] font-bold tabular text-[#ff6b35]">{m.meeting_score}/100</span>
+                  )}
+                  <ExternalLink className="h-3 w-3 text-[#9eb0c3]" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-6 deal-detail-main-grid">
         <div className="crm-panel p-6 deal-detail-meddpicc">
@@ -268,7 +318,7 @@ export default function DealDetail() {
                   <X size={18} />
                 </button>
               </div>
-              <div className="grid gap-3">
+                <div className="grid gap-3">
                 <input
                   className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
                   placeholder="Meeting title"
@@ -295,6 +345,41 @@ export default function DealDetail() {
                     />
                   </label>
                 </div>
+                {contacts.length > 0 && (
+                  <div className="rounded-xl border border-[#d7e2ee] p-3">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p className="text-[11px] uppercase tracking-[0.06em] font-bold text-[#6f8399]">Attendees</p>
+                      <span className="text-[11px] text-[#7a8ea4]">{meetingForm.attendee_ids.length} selected</span>
+                    </div>
+                    <div className="grid gap-2 max-h-40 overflow-y-auto">
+                      {contacts.map((contact) => {
+                        const checked = meetingForm.attendee_ids.includes(contact.id);
+                        return (
+                          <label key={contact.id} className="flex items-start gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setMeetingForm((f) => ({
+                                ...f,
+                                attendee_ids: checked
+                                  ? f.attendee_ids.filter((id) => id !== contact.id)
+                                  : [...f.attendee_ids, contact.id],
+                              }))}
+                            />
+                            <div>
+                              <p className="text-[13px] font-semibold text-[#25384d]">
+                                {contact.first_name} {contact.last_name}
+                              </p>
+                              <p className="text-[12px] text-[#7a8ea4]">
+                                {contact.title ?? contact.persona ?? contact.persona_type ?? "Stakeholder"}
+                              </p>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
               {meetingError && <p className="text-[12px] text-[#b94a24] font-semibold">{meetingError}</p>}
               <div className="flex justify-end gap-2">

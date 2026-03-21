@@ -59,19 +59,84 @@ class WebSearchClient:
             return []
 
     async def recent_news(self, company_name: str, domain: str) -> list[dict]:
-        """Recent funding rounds, launches, PR — tries exact name then broad."""
-        query = f'"{company_name}" funding OR acquisition OR launch OR partnership 2024 OR 2025'
+        """Recent funding rounds, launches, PR — uses domain to disambiguate common names."""
+        # Include domain so "Rippling rippling.com" doesn't return medical results
+        domain_hint = f" {domain}" if domain and not domain.endswith(".unknown") else ""
+        query = f'"{company_name}"{domain_hint} funding OR acquisition OR launch OR partnership 2024 OR 2025 OR 2026'
         results = await self.search(query, max_results=5)
         if not results:
             results = await self.search(
-                f"{company_name} news funding launch 2024 2025", max_results=5
+                f"{company_name}{domain_hint} company news 2025 2026", max_results=5
             )
         return results
 
-    async def company_milestones(self, company_name: str) -> list[dict]:
+    async def company_milestones(self, company_name: str, domain: str = "") -> list[dict]:
         """Company history and milestone search."""
-        query = f"{company_name} company history milestones founded"
+        domain_hint = f" {domain}" if domain and not domain.endswith(".unknown") else ""
+        query = f'"{company_name}"{domain_hint} company history milestones founded'
         return await self.search(query, max_results=4)
+
+    async def search_intent_signals(self, company_name: str, domain: str) -> dict:
+        """
+        Targeted searches for buying intent signals:
+        hiring, funding, product launches, tech adoption, pain points.
+        Returns structured dict of detected signals.
+        """
+        signals: dict = {"hiring": [], "funding": [], "product": [], "tech": [], "raw_results": []}
+        domain_hint = f" {domain}" if domain and not domain.endswith(".unknown") else ""
+
+        # Hiring signals (expanding team = budget available)
+        hiring = await self.search(f'"{company_name}"{domain_hint} hiring OR recruiting OR "open positions" 2025 2026', max_results=3)
+        signals["hiring"] = [{"title": r["title"], "snippet": r["snippet"]} for r in hiring]
+
+        # Funding signals (fresh capital = buying power)
+        funding = await self.search(f'"{company_name}"{domain_hint} funding OR raised OR investment OR series 2025 2026', max_results=3)
+        signals["funding"] = [{"title": r["title"], "snippet": r["snippet"]} for r in funding]
+
+        # Product/growth signals
+        product = await self.search(f'"{company_name}"{domain_hint} launch OR expansion OR partnership OR new product 2025 2026', max_results=3)
+        signals["product"] = [{"title": r["title"], "snippet": r["snippet"]} for r in product]
+
+        signals["raw_results"] = hiring + funding + product
+        return signals
+
+    async def scrape_company_pages(self, domain: str) -> dict:
+        """
+        Scrape company homepage + /about + /company pages.
+        Returns raw text for AI summarization (no AI call here).
+        """
+        if not domain or domain.endswith(".unknown"):
+            return {"text": "", "pages_scraped": 0}
+
+        base_url = f"https://{domain}"
+        pages_to_try = [
+            base_url,
+            f"{base_url}/about",
+            f"{base_url}/about-us",
+            f"{base_url}/company",
+            f"{base_url}/customers",
+            f"{base_url}/pricing",
+            f"{base_url}/careers",
+            f"{base_url}/products",
+        ]
+
+        raw_text = ""
+        pages_scraped = 0
+
+        async with httpx.AsyncClient(
+            timeout=12,
+            follow_redirects=True,
+            headers=_SCRAPE_HEADERS,
+        ) as client:
+            for url in pages_to_try:
+                text = await _fetch_page_text(client, url)
+                if text and len(text) > 100:
+                    raw_text += f"\n\n[{url}]\n{text}"
+                    pages_scraped += 1
+                    if len(raw_text) > 6000:
+                        break
+
+        return {"text": raw_text[:8000], "pages_scraped": pages_scraped}
 
     # ── Company website scraping + GPT-4o summary ─────────────────────────────
 

@@ -6,6 +6,9 @@ from app.models.outreach import OutreachSequence, OutreachSequenceRead
 from app.models.signal import Signal, SignalCreate, SignalRead
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.models.battlecard import Battlecard, BattlecardCreate, BattlecardRead, BattlecardUpdate
+from app.models.custom_demo import CustomDemo
+from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
+from app.models.sales_resource import SalesResource, SalesResourceCreate, SalesResourceRead, SalesResourceUpdate
 
 __all__ = [
     "Company", "CompanyCreate", "CompanyRead", "CompanyUpdate",
@@ -16,4 +19,7 @@ __all__ = [
     "Signal", "SignalCreate", "SignalRead",
     "Meeting", "MeetingCreate", "MeetingRead", "MeetingUpdate",
     "Battlecard", "BattlecardCreate", "BattlecardRead", "BattlecardUpdate",
+    "CustomDemo",
+    "SourcingBatch", "SourcingBatchRead",
+    "SalesResource", "SalesResourceCreate", "SalesResourceRead", "SalesResourceUpdate",
 ]

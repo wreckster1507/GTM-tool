@@ -33,6 +33,22 @@ class Settings(BaseSettings):
     AZURE_OPENAI_DEPLOYMENT: str = "gpt-4o-mini"
     AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
 
+    # Anthropic Claude (demo HTML generation)
+    ANTHROPIC_API_KEY: str = ""
+    CLAUDE_API_KEY: str = ""  # alias — some .env files use this name
+    ANTHROPIC_MODEL: str = "claude-opus-4-6"
+
+    # Demo generation tuning
+    DEMO_MODEL: str = "claude-sonnet-4-20250514"  # Sonnet 4 — best availability + quality for code gen
+    DEMO_MAX_TOKENS: int = 30000             # Extended thinking unlocks 64K; 30K is plenty for 15-25K token demos
+    DEMO_THINKING_BUDGET: int = 10000        # Tokens for planning HTML structure before writing
+    DEMO_TIMEOUT_SECONDS: int = 300          # Per-attempt timeout (streaming)
+
+    @property
+    def claude_api_key(self) -> str:
+        """Return whichever Claude key is set (ANTHROPIC_API_KEY or CLAUDE_API_KEY)."""
+        return self.ANTHROPIC_API_KEY or self.CLAUDE_API_KEY
+
     # Resend (email sending)
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "onboarding@resend.dev"

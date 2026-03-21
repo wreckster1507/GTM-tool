@@ -1,11 +1,138 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { CalendarDays, Plus, X } from "lucide-react";
-import { companiesApi, dealsApi, meetingsApi } from "../lib/api";
-import type { Company, Deal, Meeting } from "../types";
+import { companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
+import type { Company, Contact, Deal, Meeting } from "../types";
 import { formatDate } from "../lib/utils";
 
 const MEETING_TYPES = ["discovery", "demo", "poc", "qbr", "other"];
+
+const styles: Record<string, CSSProperties> = {
+  page: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 20,
+    padding: "8px 2px 18px",
+  },
+  panel: {
+    background: "#ffffff",
+    border: "1px solid #e2eaf3",
+    borderRadius: 16,
+    boxShadow: "0 8px 28px rgba(18, 44, 70, 0.06)",
+  },
+  toolbar: {
+    padding: 20,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  chip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 12px",
+    borderRadius: 999,
+    border: "1px solid #d8e4ef",
+    background: "#f8fbff",
+    color: "#38526b",
+    fontSize: 13,
+    fontWeight: 700,
+  },
+  buttonPrimary: {
+    border: "1px solid #ff6b35",
+    background: "#ff6b35",
+    color: "white",
+    borderRadius: 10,
+    padding: "9px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+    cursor: "pointer",
+  },
+  table: {
+    width: "100%",
+    minWidth: 920,
+    borderCollapse: "collapse",
+  },
+  th: {
+    textAlign: "left",
+    padding: "12px 16px",
+    fontSize: 12,
+    color: "#6f8399",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    borderBottom: "1px solid #e8eef5",
+    background: "#f9fbfe",
+  },
+  td: {
+    padding: "14px 16px",
+    borderBottom: "1px solid #edf2f8",
+    fontSize: 13,
+    color: "#30485f",
+  },
+  statusChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid #d7e2ee",
+    background: "#f8fbff",
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: "capitalize",
+    color: "#4f657e",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(16, 24, 32, 0.3)",
+    zIndex: 40,
+  },
+  modalWrap: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 50,
+    display: "grid",
+    placeItems: "center",
+    padding: 16,
+  },
+  modal: {
+    width: "100%",
+    maxWidth: 760,
+    background: "#ffffff",
+    border: "1px solid #e2eaf3",
+    borderRadius: 16,
+    boxShadow: "0 18px 54px rgba(20, 46, 72, 0.2)",
+    padding: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  input: {
+    height: 42,
+    borderRadius: 10,
+    border: "1px solid #d7e2ee",
+    padding: "0 12px",
+    fontSize: 14,
+    color: "#25384d",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+  secondaryButton: {
+    border: "1px solid #d9e5f0",
+    background: "#f5f9ff",
+    color: "#45607a",
+    borderRadius: 10,
+    padding: "9px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+};
 
 export default function Meetings() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -15,12 +142,14 @@ export default function Meetings() {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
   const [form, setForm] = useState({
     title: "",
     company_id: "",
     deal_id: "",
     meeting_type: "discovery",
     scheduled_at: "",
+    attendee_ids: [] as string[],
   });
 
   const loadData = async () => {
@@ -43,6 +172,14 @@ export default function Meetings() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (!showModal || !form.company_id) {
+      setAvailableContacts([]);
+      return;
+    }
+    contactsApi.list(0, 50, form.company_id).then(setAvailableContacts).catch(() => setAvailableContacts([]));
+  }, [showModal, form.company_id]);
+
   const companyName = useMemo(() => Object.fromEntries(companies.map((c) => [c.id, c.name])), [companies]);
   const companyDeals = useMemo(() => {
     return deals.filter((d) => !form.company_id || d.company_id === form.company_id);
@@ -62,9 +199,17 @@ export default function Meetings() {
         deal_id: form.deal_id || undefined,
         meeting_type: form.meeting_type,
         scheduled_at: form.scheduled_at ? new Date(form.scheduled_at).toISOString() : undefined,
+        attendees: availableContacts
+          .filter((contact) => form.attendee_ids.includes(contact.id))
+          .map((contact) => ({
+            contact_id: contact.id,
+            name: `${contact.first_name} ${contact.last_name}`.trim(),
+            title: contact.title,
+            email: contact.email,
+          })),
       });
       setShowModal(false);
-      setForm({ title: "", company_id: "", deal_id: "", meeting_type: "discovery", scheduled_at: "" });
+      setForm({ title: "", company_id: "", deal_id: "", meeting_type: "discovery", scheduled_at: "", attendee_ids: [] });
       await loadData();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create meeting");
@@ -74,56 +219,61 @@ export default function Meetings() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="crm-panel p-6 crm-toolbar">
-        <div className="flex items-center gap-2">
-          <span className="crm-chip">
-            <span className="font-bold tabular">{meetings.length}</span>
+    <div style={styles.page}>
+      <div style={{ ...styles.panel, ...styles.toolbar }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={styles.chip}>
+            <span style={{ fontWeight: 800 }}>{meetings.length}</span>
             Meetings
           </span>
         </div>
-        <button className="crm-button primary" onClick={() => setShowModal(true)}>
+        <button style={styles.buttonPrimary} onClick={() => setShowModal(true)}>
           <Plus size={14} />
           New Meeting
         </button>
       </div>
 
       {loading ? (
-        <div className="crm-panel p-14 text-center crm-muted">Loading meetings...</div>
+        <div style={{ ...styles.panel, padding: "46px 20px", textAlign: "center", color: "#7a8ea4", fontSize: 14 }}>
+          Loading meetings...
+        </div>
       ) : (
-        <div className="crm-panel overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="crm-table" style={{ minWidth: 980 }}>
+        <div style={{ ...styles.panel, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={styles.table}>
               <thead>
                 <tr>
-                  <th>Title</th>
-                  <th>Company</th>
-                  <th>Type</th>
-                  <th>Scheduled</th>
-                  <th>Status</th>
-                  <th>Score</th>
+                  <th style={styles.th}>Title</th>
+                  <th style={styles.th}>Company</th>
+                  <th style={styles.th}>Type</th>
+                  <th style={styles.th}>Scheduled</th>
+                  <th style={styles.th}>Status</th>
+                  <th style={styles.th}>Score</th>
                 </tr>
               </thead>
               <tbody>
                 {meetings.map((m) => (
                   <tr key={m.id}>
-                    <td>
-                      <Link to={`/meetings/${m.id}`} className="font-bold text-[#24364b] hover:text-[#ff6b35] transition-colors">
+                    <td style={styles.td}>
+                      <Link
+                        to={`/meetings/${m.id}`}
+                        style={{ fontWeight: 700, color: "#24364b", textDecoration: "none" }}
+                      >
                         {m.title}
                       </Link>
                     </td>
-                    <td>{m.company_id ? (companyName[m.company_id] ?? "-") : "-"}</td>
-                    <td className="capitalize">{m.meeting_type.replace(/_/g, " ")}</td>
-                    <td>{formatDate(m.scheduled_at)}</td>
-                    <td>
-                      <span className="crm-chip capitalize">{m.status}</span>
+                    <td style={styles.td}>{m.company_id ? (companyName[m.company_id] ?? "-") : "-"}</td>
+                    <td style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
+                    <td style={styles.td}>{formatDate(m.scheduled_at)}</td>
+                    <td style={styles.td}>
+                      <span style={styles.statusChip}>{m.status}</span>
                     </td>
-                    <td className="tabular">{m.meeting_score ?? "-"}</td>
+                    <td style={styles.td}>{m.meeting_score ?? "-"}</td>
                   </tr>
                 ))}
                 {meetings.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center text-[#7a8ea4] py-12">
+                    <td colSpan={6} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "38px 12px" }}>
                       No meetings yet.
                     </td>
                   </tr>
@@ -136,74 +286,139 @@ export default function Meetings() {
 
       {showModal && (
         <>
-          <div className="fixed inset-0 bg-black/25 z-40" onClick={() => setShowModal(false)} />
-          <div className="fixed inset-0 z-50 grid place-items-center p-4">
-            <div className="crm-panel w-full max-w-xl p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[18px] font-bold">Create Meeting</h3>
-                <button className="text-[#7a8ea4] hover:text-[#31465f]" onClick={() => setShowModal(false)}>
+          <div style={styles.modalOverlay} onClick={() => setShowModal(false)} />
+          <div style={styles.modalWrap}>
+            <div style={styles.modal}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#25384d" }}>Create Meeting</h3>
+                <button
+                  onClick={() => setShowModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#7a8ea4", cursor: "pointer" }}
+                >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="grid gap-3">
+              <div style={{ display: "grid", gap: 10 }}>
                 <input
-                  className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px]"
+                  style={styles.input}
                   placeholder="Meeting title"
                   value={form.title}
                   onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
                 />
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
                   <select
-                    className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white"
+                    style={styles.input}
                     value={form.company_id}
-                    onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value, deal_id: "" }))}
+                    onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value, deal_id: "", attendee_ids: [] }))}
                   >
                     <option value="">Select company (optional)</option>
                     {companies.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
                     ))}
                   </select>
                   <select
-                    className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white"
+                    style={styles.input}
                     value={form.deal_id}
                     onChange={(e) => setForm((f) => ({ ...f, deal_id: e.target.value }))}
                   >
                     <option value="">Select deal (optional)</option>
                     {companyDeals.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
                     ))}
                   </select>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
                   <select
-                    className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white"
+                    style={styles.input}
                     value={form.meeting_type}
                     onChange={(e) => setForm((f) => ({ ...f, meeting_type: e.target.value }))}
                   >
                     {MEETING_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
                     ))}
                   </select>
-                  <label className="h-11 rounded-xl border border-[#d7e2ee] px-3 text-[14px] bg-white flex items-center gap-2 text-[#6f8399]">
+                  <label
+                    style={{
+                      ...styles.input,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      color: "#6f8399",
+                    }}
+                  >
                     <CalendarDays size={14} />
                     <input
                       type="datetime-local"
-                      className="w-full outline-none text-[#25384d]"
+                      style={{ border: "none", outline: "none", width: "100%", color: "#25384d", background: "transparent" }}
                       value={form.scheduled_at}
                       onChange={(e) => setForm((f) => ({ ...f, scheduled_at: e.target.value }))}
                     />
                   </label>
                 </div>
+
+                {form.company_id && (
+                  <div style={{ border: "1px solid #d7e2ee", borderRadius: 12, padding: 12, display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#6f8399", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        Attendees
+                      </p>
+                      <span style={{ fontSize: 12, color: "#7a8ea4" }}>
+                        {form.attendee_ids.length} selected
+                      </span>
+                    </div>
+                    {availableContacts.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: 13, color: "#7a8ea4" }}>
+                        No discovered contacts yet for this company. You can still create the meeting now and add contacts later.
+                      </p>
+                    ) : (
+                      <div style={{ display: "grid", gap: 8, maxHeight: 180, overflowY: "auto" }}>
+                        {availableContacts.map((contact) => {
+                          const checked = form.attendee_ids.includes(contact.id);
+                          return (
+                            <label key={contact.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => setForm((f) => ({
+                                  ...f,
+                                  attendee_ids: checked
+                                    ? f.attendee_ids.filter((id) => id !== contact.id)
+                                    : [...f.attendee_ids, contact.id],
+                                }))}
+                              />
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: "#25384d" }}>
+                                  {contact.first_name} {contact.last_name}
+                                </div>
+                                <div style={{ fontSize: 12, color: "#6f8399" }}>
+                                  {contact.title || contact.persona || contact.persona_type || "Stakeholder"}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {error && <p className="text-[12px] text-[#b94a24] font-semibold">{error}</p>}
+              {error && <p style={{ margin: 0, fontSize: 12, color: "#b94a24", fontWeight: 700 }}>{error}</p>}
 
-              <div className="flex justify-end gap-2">
-                <button className="crm-button soft" onClick={() => setShowModal(false)}>Cancel</button>
-                <button className="crm-button primary" onClick={handleCreate} disabled={saving}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button style={styles.secondaryButton} onClick={() => setShowModal(false)}>
+                  Cancel
+                </button>
+                <button style={styles.buttonPrimary} onClick={handleCreate} disabled={saving}>
                   {saving ? "Creating..." : "Create Meeting"}
                 </button>
               </div>

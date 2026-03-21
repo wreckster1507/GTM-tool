@@ -14,9 +14,9 @@ router = APIRouter(tags=["intelligence"])
 @router.get("/intelligence/{company_id}")
 async def get_account_brief(company_id: UUID, session: DBSession):
     """
-    Full pre-meeting research pipeline:
-    Playwright scrapes company website → Google News signals →
-    GPT-4o synthesises into 3-bullet account brief. Takes 5-15s.
+    Company-level account planning brief:
+    combines saved CRM signals, stakeholder coverage, cached enrichment,
+    lightweight website research, and GPT synthesis into a seller-friendly brief.
     """
     result = await generate_account_brief(company_id, session)
     if "error" in result:

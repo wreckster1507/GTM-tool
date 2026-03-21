@@ -13,11 +13,14 @@ import type { Company, Contact, Deal, Signal } from "../types";
 import {
   ArrowLeft,
   BrainCircuit,
+  Building2,
   ExternalLink,
   Plus,
   RefreshCw,
   Sparkles,
+  Target,
   Trash2,
+  TrendingUp,
   Users,
   X,
 } from "lucide-react";
@@ -41,6 +44,61 @@ const PERSONA_STYLE: Record<string, CSSProperties> = {
 const PERSONA_SHORT: Record<string, string> = {
   economic_buyer: "Buyer", champion: "Champion", technical_evaluator: "Tech Eval", unknown: "Unknown",
 };
+
+function canonicalPersona(persona?: string | null, personaType?: string | null): keyof typeof PERSONA_STYLE {
+  const normalized = (persona || personaType || "").toLowerCase();
+  if (normalized === "buyer" || normalized === "economic_buyer") return "economic_buyer";
+  if (normalized === "champion") return "champion";
+  if (normalized === "evaluator" || normalized === "technical_evaluator") return "technical_evaluator";
+  return "unknown";
+}
+
+function SummaryStat({
+  label,
+  value,
+  hint,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone?: "neutral" | "warm" | "blue" | "green";
+}) {
+  const tones = {
+    neutral: { bg: "#fbfdff", border: "#e3eaf3", accent: "#506579" },
+    warm: { bg: "#fff6ef", border: "#ffd7c7", accent: "#b4532a" },
+    blue: { bg: "#f2f8ff", border: "#d5e5ff", accent: "#24567e" },
+    green: { bg: "#eefcf5", border: "#ccefdc", accent: "#1b6f53" },
+  }[tone];
+
+  return (
+    <div className="crm-panel" style={{ padding: "16px 18px", background: tones.bg, borderColor: tones.border }}>
+      <p className="text-[11px] uppercase tracking-[0.08em] text-[#7d8fa3] font-semibold">{label}</p>
+      <p className="text-[28px] font-extrabold mt-2" style={{ color: tones.accent }}>{value}</p>
+      <p className="text-[12px] text-[#6f8399] mt-1">{hint}</p>
+    </div>
+  );
+}
+
+function CompanySection({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="crm-panel" style={{ padding: 24 }}>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <p className="text-[15px] font-bold text-[#2b3f55]">{title}</p>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export default function CompanyDetail() {
   const { id } = useParams<{ id: string }>();
@@ -212,19 +270,29 @@ export default function CompanyDetail() {
   const techStack = company.tech_stack as Record<string, string> | null;
   const initials = getInitials(company.name);
   const avatarCls = avatarColor(company.name);
+  const tier = company.icp_tier ?? "monitor";
+  const stakeholderCount = contacts.length;
+  const activeDeals = companyDeals.filter((deal) => !["closed_won", "closed_lost"].includes(deal.stage)).length;
+  const signalCount = signals.length;
+  const totalPipeline = companyDeals.reduce((sum, deal) => sum + (deal.value ?? 0), 0);
+  const personaSummary = contacts.reduce(
+    (acc, contact) => {
+      const persona = canonicalPersona(contact.persona, contact.persona_type);
+      acc[persona] += 1;
+      return acc;
+    },
+    { economic_buyer: 0, champion: 0, technical_evaluator: 0, unknown: 0 } as Record<keyof typeof PERSONA_STYLE, number>,
+  );
 
   return (
     <>
-      <div
-        className="crm-page company-detail-page"
-        style={{ display: "flex", flexDirection: "column", gap: 24 }}
-      >
-        <div className="flex items-center justify-between gap-3 company-detail-top-actions">
+      <div className="crm-page company-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <div className="flex flex-wrap items-center justify-between gap-3 company-detail-top-actions">
           <button onClick={() => navigate("/companies")} className="crm-button soft">
             <ArrowLeft className="h-3.5 w-3.5" />
             Back to Companies
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {enrichMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{enrichMsg}</span>}
             <button className="crm-button soft" onClick={handleEnrich} disabled={enriching}>
               <RefreshCw className={`h-3.5 w-3.5 ${enriching ? "animate-spin" : ""}`} />
@@ -245,64 +313,345 @@ export default function CompanyDetail() {
           </div>
         </div>
 
-        <section className="crm-panel p-8 company-detail-hero" style={{ padding: 32 }}>
-          <div className="company-detail-hero-header flex flex-wrap gap-6 items-start justify-between">
-            <div className="company-detail-hero-identity flex items-start gap-6 min-w-0">
-              <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-[16px] font-extrabold ${avatarCls}`}>
-                {initials}
+        <section
+          className="crm-panel company-detail-hero"
+          style={{
+            padding: 32,
+            background:
+              "linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(246,250,255,0.98) 58%, rgba(255,244,238,0.98) 100%)",
+          }}
+        >
+          <div className="flex flex-col gap-8">
+            <div className="flex flex-wrap items-start justify-between gap-6">
+              <div className="flex items-start gap-5 min-w-0">
+                <div className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-[24px] text-[18px] font-extrabold shadow-sm ${avatarCls}`}>
+                  {initials}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-[#7c8ea1] font-semibold">Account Overview</p>
+                  <h2 className="text-[34px] leading-tight font-extrabold tracking-tight text-[#1f2d3d] mt-2">{company.name}</h2>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-[14px] text-[#61788f]">
+                    <a href={`https://${company.domain}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-[#ff6b35]">
+                      {company.domain}
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                    <span>{company.industry ?? "Industry not set"}</span>
+                    <span>{company.employee_count ? `${company.employee_count.toLocaleString()} employees` : "Employee count unknown"}</span>
+                  </div>
+                  <p className="max-w-3xl text-[15px] leading-7 text-[#52687f] mt-4">
+                    {company.vertical
+                      ? `${company.name} is being tracked in the ${company.vertical} motion. Use this page to understand fit, map the buying committee, and decide the next best action before outreach or meeting prep.`
+                      : "Use this page to understand account fit, map stakeholders, and keep outreach grounded in recent account context."}
+                  </p>
+                </div>
               </div>
-              <div className="company-detail-hero-title min-w-0">
-                <h2 className="text-[30px] font-extrabold tracking-tight text-[#1f2d3d]">{company.name}</h2>
-                <a href={`https://${company.domain}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[14px] text-[#61788f] hover:text-[#ff6b35] mt-1.5">
-                  {company.domain}
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              </div>
-            </div>
-            <div className="company-detail-hero-badges flex items-center gap-2">
-              {company.icp_tier && (
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold capitalize" style={TIER_STYLE[company.icp_tier] ?? TIER_STYLE.cold}>
-                  {company.icp_tier}
-                </span>
-              )}
-              {company.icp_score != null && (
-                <span className="crm-chip tabular">
-                  ICP {company.icp_score}
-                </span>
-              )}
-            </div>
-          </div>
 
-          {company.icp_score != null && (
-            <div className="mt-4">
-              <div className="h-2.5 rounded-full bg-[#edf3fa] overflow-hidden max-w-105">
-                <div className="h-2.5 rounded-full bg-[#ff6b35]" style={{ width: `${company.icp_score}%` }} />
+              <div className="flex flex-col items-start gap-3 min-w-[220px]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-bold capitalize" style={TIER_STYLE[tier] ?? TIER_STYLE.cold}>
+                    {tier}
+                  </span>
+                  {company.icp_score != null && <span className="crm-chip tabular">ICP {company.icp_score}</span>}
+                  <span className="crm-chip text-[10px]">{formatDate(company.enriched_at)}</span>
+                </div>
+                <button className="crm-button primary w-full" onClick={handleBulkOutreach} disabled={bulkGenerating}>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {bulkGenerating ? "Generating..." : "Generate Outreach For All"}
+                </button>
+                {bulkMsg && <p className="text-[12px] text-[#ff6b35]">{bulkMsg}</p>}
               </div>
             </div>
-          )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              <SummaryStat
+                label="ICP Score"
+                value={company.icp_score != null ? `${company.icp_score}` : "-"}
+                hint={company.icp_score != null ? `${100 - company.icp_score} points from max fit` : "Run enrichment to score fit"}
+                tone="warm"
+              />
+              <SummaryStat
+                label="Stakeholders"
+                value={`${stakeholderCount}`}
+                hint={stakeholderCount === 0 ? "No contacts mapped yet" : `${personaSummary.economic_buyer} buyers, ${personaSummary.champion} champions`}
+                tone="blue"
+              />
+              <SummaryStat
+                label="Active Deals"
+                value={`${activeDeals}`}
+                hint={activeDeals > 0 ? `${formatCurrency(totalPipeline)} open pipeline` : "No open pipeline yet"}
+                tone="green"
+              />
+              <SummaryStat
+                label="Signals"
+                value={`${signalCount}`}
+                hint={signalCount > 0 ? "Recent account activity captured" : "Refresh to pull recent activity"}
+              />
+            </div>
+
+            {company.icp_score != null && (
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#8093a8]">Account fit progress</p>
+                  <p className="text-[12px] font-semibold text-[#516779]">{company.icp_score}% match to ICP</p>
+                </div>
+                <div className="h-2.5 rounded-full bg-[#eaf0f6] overflow-hidden">
+                  <div className="h-2.5 rounded-full bg-[#ff6b35]" style={{ width: `${company.icp_score}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
         </section>
 
-        <section className="grid grid-cols-1 xl:grid-cols-3 gap-6 company-detail-core-grid" style={{ rowGap: 28, columnGap: 28 }}>
-          <div className="crm-panel p-8 xl:col-span-2 company-detail-facts">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4" style={{ gap: 14 }}>
-              {[
-                { label: "Industry", value: company.industry },
-                { label: "Employees", value: company.employee_count?.toLocaleString() },
-                { label: "ARR Estimate", value: formatCurrency(company.arr_estimate) },
-                { label: "Funding", value: company.funding_stage },
-                { label: "Vertical", value: company.vertical },
-                { label: "DAP", value: company.has_dap ? company.dap_tool ?? "Yes" : "No" },
-              ].map((item) => (
-                <div key={item.label} className="rounded-xl border border-[#e3eaf3] bg-[#f9fbfe] px-4 py-4" style={{ padding: "14px 16px" }}>
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-[#7d8fa3] font-semibold">{item.label}</p>
-                  <p className="text-[14px] font-bold text-[#2b3f55] mt-1.5">{item.value ?? "-"}</p>
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.95fr)] gap-6 items-start">
+          <div className="space-y-6">
+            <CompanySection
+              title="AI Account Brief"
+              action={
+                <button className="crm-button soft" onClick={handleGetBrief} disabled={briefLoading}>
+                  {briefLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  {briefLoading ? "Researching..." : "Generate Brief"}
+                </button>
+              }
+            >
+              {brief ? (
+                <div className="rounded-2xl border border-[#dce6f0] bg-[#f8fbff] p-5 space-y-2.5">
+                  {brief
+                    .split("\n")
+                    .filter((line) => line.trim())
+                    .map((line, i) => (
+                      <p key={i} className="text-[14px] leading-7 text-[#2d4258]">{line}</p>
+                    ))}
                 </div>
-              ))}
-            </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-[#d5e2ee] bg-[#fbfdff] p-5">
+                  <p className="text-[14px] leading-7 text-[#6f8399]">
+                    Generate a concise account brief before outreach or meeting prep. We’ll summarize fit, account context, and recent activity into a seller-friendly readout.
+                  </p>
+                </div>
+              )}
+            </CompanySection>
+
+            <CompanySection
+              title={`Stakeholders (${contacts.length})`}
+              action={
+                <div className="flex items-center gap-2">
+                  {discoverMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{discoverMsg}</span>}
+                  <button className="crm-button soft" onClick={handleDiscoverContacts} disabled={discoveringContacts}>
+                    <Users className={`h-3.5 w-3.5 ${discoveringContacts ? "animate-pulse" : ""}`} />
+                    {discoveringContacts ? "Searching..." : "Find Contacts"}
+                  </button>
+                </div>
+              }
+            >
+              {contacts.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-[#d5e2ee] bg-[#fbfdff] p-5">
+                  <p className="text-[14px] leading-7 text-[#6f8399]">No contacts are mapped to this account yet. Discover more stakeholders before running outreach or meeting prep.</p>
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {contacts.map((c) => {
+                    const persona = canonicalPersona(c.persona, c.persona_type);
+                    return (
+                      <div key={c.id} className="rounded-2xl border border-[#e0e8f1] bg-white p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                          <div className="flex items-start gap-3 min-w-0">
+                            <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
+                              {getInitials(`${c.first_name} ${c.last_name}`)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[15px] font-bold text-[#26384e]">{c.first_name} {c.last_name}</p>
+                              <p className="text-[13px] text-[#6f8399] mt-1">{c.title ?? "Title not available"}</p>
+                              <div className="flex flex-wrap items-center gap-2 mt-3 text-[12px] text-[#688097]">
+                                {c.email && <span className="rounded-full bg-[#f2f6fa] px-2.5 py-1">{c.email}</span>}
+                                {c.linkedin_url && (
+                                  <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="rounded-full bg-[#eef5ff] px-2.5 py-1 text-[#335f93] hover:text-[#ff6b35]">
+                                    LinkedIn
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold" style={PERSONA_STYLE[persona]}>
+                              {PERSONA_SHORT[persona]}
+                            </span>
+                            <button className="crm-button soft h-10 px-3 text-[12px]" onClick={() => handleContactBrief(c.id)} disabled={contactBriefLoading[c.id]}>
+                              {contactBriefLoading[c.id] ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BrainCircuit className="h-3.5 w-3.5" />}
+                              Brief
+                            </button>
+                            <button className="crm-button soft h-10 px-3 text-[12px]" onClick={() => setSelectedContact(c)}>
+                              <Sparkles className="h-3.5 w-3.5" />
+                              Outreach
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!window.confirm(`Delete "${c.first_name} ${c.last_name}"?`)) return;
+                                await contactsApi.delete(c.id);
+                                setContacts((prev) => prev.filter((x) => x.id !== c.id));
+                              }}
+                              className="flex items-center justify-center h-10 w-10 rounded-xl text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
+                              title="Delete contact"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {contactBriefs[c.id] && (
+                          <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] px-4 py-3 mt-4 space-y-1.5">
+                            {contactBriefs[c.id]
+                              .split("\n")
+                              .filter(Boolean)
+                              .map((line, i) => (
+                                <p key={i} className="text-[13px] leading-6 text-[#2d4258]">{line}</p>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CompanySection>
+
+            <CompanySection
+              title="Signals"
+              action={
+                <div className="flex items-center gap-2">
+                  {signalsMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{signalsMsg}</span>}
+                  <button className="crm-button soft h-10 px-3" onClick={handleRefreshSignals} disabled={signalsRefreshing}>
+                    <RefreshCw className={`h-3.5 w-3.5 ${signalsRefreshing ? "animate-spin" : ""}`} />
+                    Refresh
+                  </button>
+                </div>
+              }
+            >
+              {signals.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-[#d5e2ee] bg-[#fbfdff] p-5">
+                  <p className="text-[14px] leading-7 text-[#6f8399]">No signals available yet. Pull recent activity to give reps better timing context before outreach.</p>
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  {signals.slice(0, 6).map((s) => (
+                    <div key={s.id} className="rounded-2xl border border-[#e3eaf3] bg-[#fbfdff] p-4">
+                      <div className="flex items-center gap-2 text-[12px] font-semibold text-[#6f8399] capitalize">
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{
+                            background:
+                              s.signal_type === "funding"
+                                ? "#f59e0b"
+                                : s.signal_type === "pr"
+                                  ? "#3b82f6"
+                                  : s.signal_type === "news"
+                                    ? "#64748b"
+                                    : "#94a3b8",
+                          }}
+                        />
+                        {s.signal_type}
+                      </div>
+                      <p className="text-[14px] font-semibold text-[#2b3f55] mt-2">{s.title}</p>
+                      {s.summary && <p className="text-[13px] leading-6 text-[#647a91] mt-2">{s.summary}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CompanySection>
+          </div>
+
+          <div className="space-y-6">
+            <CompanySection
+              title="Account Snapshot"
+              action={
+                <span className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#7b8ea4]">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Key firmographics
+                </span>
+              }
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { label: "Industry", value: company.industry },
+                  { label: "Employees", value: company.employee_count?.toLocaleString() },
+                  { label: "ARR Estimate", value: formatCurrency(company.arr_estimate) },
+                  { label: "Funding", value: company.funding_stage },
+                  { label: "Vertical", value: company.vertical },
+                  { label: "DAP", value: company.has_dap ? company.dap_tool ?? "Yes" : "No" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-xl border border-[#e3eaf3] bg-[#f9fbfe] px-4 py-4">
+                    <p className="text-[11px] uppercase tracking-[0.08em] text-[#7d8fa3] font-semibold">{item.label}</p>
+                    <p className="text-[14px] font-bold text-[#2b3f55] mt-1.5">{item.value ?? "-"}</p>
+                  </div>
+                ))}
+              </div>
+            </CompanySection>
+
+            <CompanySection
+              title={`Pipeline & Automation (${companyDeals.length})`}
+              action={
+                <button className="crm-button primary h-10 px-3" onClick={() => setShowDealModal(true)}>
+                  <Plus className="h-3.5 w-3.5" />
+                  Create Deal
+                </button>
+              }
+            >
+              <div className="rounded-2xl border border-[#e5edf5] bg-[#fbfdff] p-4 mb-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-xl bg-[#fff1eb] p-2 text-[#ff6b35]">
+                    <Target className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#24364b]">Outreach automation</p>
+                    <p className="text-[13px] leading-6 text-[#6f8399] mt-1">
+                      Keep this account warm with refreshed firmographics and one-click outreach generation across mapped stakeholders.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {companyDeals.length === 0 ? (
+                <p className="text-[13px] text-[#6f8399]">No deals linked yet.</p>
+              ) : (
+                <div className="grid gap-3">
+                  {companyDeals.map((d) => (
+                    <div key={d.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <Link to={`/deals/${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
+                          {d.name}
+                        </Link>
+                        <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDate(d.close_date_est)}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[14px] font-bold tabular text-[#2d4056]">{formatCurrency(d.value)}</span>
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`Delete deal "${d.name}"?`)) return;
+                            await dealsApi.delete(d.id);
+                            setCompanyDeals((prev) => prev.filter((x) => x.id !== d.id));
+                          }}
+                          className="flex items-center justify-center h-7 w-7 rounded-lg text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
+                          title="Delete deal"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CompanySection>
 
             {techStack && Object.keys(techStack).length > 0 && (
-              <div className="mt-6">
-                <p className="text-[11px] uppercase tracking-[0.08em] text-[#7d8fa3] font-semibold mb-3">Tech Stack</p>
+              <CompanySection
+                title="Tech Stack"
+                action={
+                  <span className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#7b8ea4]">
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    Context for qualification
+                  </span>
+                }
+              >
                 <div className="flex flex-wrap gap-2.5">
                   {Object.entries(techStack).map(([name, tool]) => (
                     <span key={name} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#d8e3ee] bg-white text-[12px]">
@@ -311,207 +660,39 @@ export default function CompanyDetail() {
                     </span>
                   ))}
                 </div>
-              </div>
+              </CompanySection>
             )}
-          </div>
 
-          <div className="crm-panel p-6 company-detail-automation" style={{ padding: 26 }}>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-[15px] font-bold text-[#2b3f55]">Outreach Automation</p>
-              <span className="crm-chip text-[10px]">{formatDate(company.enriched_at)}</span>
-            </div>
-            <p className="text-[13px] text-[#6f8399] leading-relaxed">Keep account data fresh with weekly enrichment and outreach generation.</p>
-            <button className="crm-button primary w-full mt-4" onClick={handleBulkOutreach} disabled={bulkGenerating}>
-              <Sparkles className="h-3.5 w-3.5" />
-              {bulkGenerating ? "Generating..." : "Generate Outreach For All"}
-            </button>
-            {bulkMsg && <p className="text-[12px] text-[#ff6b35] mt-3">{bulkMsg}</p>}
-          </div>
-        </section>
-
-        <section className="crm-panel p-6 company-detail-brief" style={{ padding: 26 }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <BrainCircuit className="h-4 w-4 text-[#ff6b35]" />
-              <p className="text-[15px] font-bold text-[#2b3f55]">AI Account Brief</p>
-            </div>
-            <button className="crm-button soft" onClick={handleGetBrief} disabled={briefLoading}>
-              {briefLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              {briefLoading ? "Researching..." : "Generate Brief"}
-            </button>
-          </div>
-          {brief ? (
-            <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] p-5 space-y-2.5">
-              {brief
-                .split("\n")
-                .filter((line) => line.trim())
-                .map((line, i) => (
-                  <p key={i} className="text-[14px] leading-relaxed text-[#2d4258]">{line}</p>
-                ))}
-            </div>
-          ) : (
-            <p className="text-[13px] text-[#6f8399]">Generate a pre-meeting summary from website data, recent signals, and persona context.</p>
-          )}
-        </section>
-
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6 company-detail-insights-grid" style={{ rowGap: 28, columnGap: 28 }}>
-          <div className="crm-panel p-6 company-detail-signals" style={{ padding: 26 }}>
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-[15px] font-bold text-[#2b3f55]">Signals</p>
-              <div className="flex items-center gap-2">
-                {signalsMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{signalsMsg}</span>}
-                <button className="crm-button soft h-10 px-3" onClick={handleRefreshSignals} disabled={signalsRefreshing}>
-                  <RefreshCw className={`h-3.5 w-3.5 ${signalsRefreshing ? "animate-spin" : ""}`} />
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {signals.length === 0 ? (
-              <p className="text-[13px] text-[#6f8399]">No signals available yet.</p>
-            ) : (
-              <div className="space-y-3">
-                {signals.slice(0, 5).map((s) => (
-                  <div key={s.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] p-3">
-                    <div className="flex items-center gap-2 text-[12px] text-[#6f8399] capitalize">
-                      <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{
-                          background:
-                            s.signal_type === "funding"
-                              ? "#f59e0b"
-                              : s.signal_type === "pr"
-                              ? "#3b82f6"
-                              : s.signal_type === "news"
-                              ? "#64748b"
-                              : "#94a3b8",
-                        }}
-                      />
-                      {s.signal_type}
-                    </div>
-                    <p className="text-[14px] font-semibold text-[#2b3f55] mt-1">{s.title}</p>
-                    {s.summary && <p className="text-[13px] text-[#647a91] mt-1">{s.summary}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="crm-panel p-6 company-detail-deals" style={{ padding: 26 }}>
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-[15px] font-bold text-[#2b3f55]">Linked Deals ({companyDeals.length})</p>
-              <button className="crm-button primary h-10 px-3" onClick={() => setShowDealModal(true)}>
-                <Plus className="h-3.5 w-3.5" />
-                Create Deal
-              </button>
-            </div>
-
-            {companyDeals.length === 0 ? (
-              <p className="text-[13px] text-[#6f8399]">No deals linked yet.</p>
-            ) : (
-              <div className="space-y-3">
-                {companyDeals.map((d) => (
-                  <div key={d.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <Link to={`/deals/${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
-                        {d.name}
-                      </Link>
-                      <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDate(d.close_date_est)}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[14px] font-bold tabular text-[#2d4056]">{formatCurrency(d.value)}</span>
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm(`Delete deal "${d.name}"?`)) return;
-                          await dealsApi.delete(d.id);
-                          setCompanyDeals((prev) => prev.filter((x) => x.id !== d.id));
-                        }}
-                        className="flex items-center justify-center h-7 w-7 rounded-lg text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
-                        title="Delete deal"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="crm-panel p-6 company-detail-stakeholders" style={{ padding: 24, marginTop: 4 }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-[#4a627c]" />
-              <p className="text-[15px] font-bold text-[#2b3f55]">Stakeholders ({contacts.length})</p>
-            </div>
-            <div className="flex items-center gap-2">
-              {discoverMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{discoverMsg}</span>}
-              <button className="crm-button soft" onClick={handleDiscoverContacts} disabled={discoveringContacts}>
-                <Users className={`h-3.5 w-3.5 ${discoveringContacts ? "animate-pulse" : ""}`} />
-                {discoveringContacts ? "Searching…" : "Find Contacts"}
-              </button>
-            </div>
-          </div>
-          {contacts.length === 0 ? (
-            <p className="text-[12px] text-[#6f8399]">No contacts found for this account yet.</p>
-          ) : (
-            <div className="space-y-3" style={{ rowGap: 10, display: "grid" }}>
-              {contacts.map((c) => (
-                <div key={c.id} className="rounded-xl border border-[#e0e8f1] bg-white px-4 py-4" style={{ padding: "12px 14px" }}>
-                  <div className="flex items-center justify-between gap-4" style={{ alignItems: "flex-start", gap: 12 }}>
-                    <div className="flex items-center gap-3 min-w-0" style={{ flex: 1, paddingRight: 8 }}>
-                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
-                        {getInitials(`${c.first_name} ${c.last_name}`)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[14px] font-bold text-[#26384e] truncate">{c.first_name} {c.last_name}</p>
-                        <p className="text-[13px] text-[#7b8fa4] truncate mt-0.5">{c.title ?? "-"}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end", rowGap: 8, columnGap: 8, marginLeft: 8 }}>
-                      {c.persona && (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold" style={PERSONA_STYLE[c.persona] ?? PERSONA_STYLE.unknown}>
-                          {PERSONA_SHORT[c.persona] ?? c.persona}
-                        </span>
-                      )}
-                      <button className="crm-button soft h-10 px-3 text-[12px]" style={{ minWidth: 92, height: 38, padding: "0 14px" }} onClick={() => handleContactBrief(c.id)} disabled={contactBriefLoading[c.id]}>
-                        {contactBriefLoading[c.id] ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BrainCircuit className="h-3.5 w-3.5" />}
-                        Brief
-                      </button>
-                      <button className="crm-button soft h-10 px-3 text-[12px]" style={{ minWidth: 128, height: 38, padding: "0 14px" }} onClick={() => setSelectedContact(c)}>
-                        <Sparkles className="h-3.5 w-3.5" />
-                        Outreach
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm(`Delete "${c.first_name} ${c.last_name}"?`)) return;
-                          await contactsApi.delete(c.id);
-                          setContacts((prev) => prev.filter((x) => x.id !== c.id));
-                        }}
-                        className="flex items-center justify-center h-10 w-10 rounded-xl text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
-                        style={{ height: 38, width: 38 }}
-                        title="Delete contact"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {contactBriefs[c.id] && (
-                    <div className="rounded-lg border border-[#dce6f0] bg-[#f8fbff] px-3 py-2 mt-3 space-y-1">
-                      {contactBriefs[c.id]
-                        .split("\n")
-                        .filter(Boolean)
-                        .map((line, i) => (
-                          <p key={i} className="text-[13px] text-[#2d4258]">{line}</p>
-                        ))}
-                    </div>
-                  )}
+            <CompanySection
+              title="Stakeholder Mix"
+              action={
+                <span className="inline-flex items-center gap-2 text-[12px] font-semibold text-[#7b8ea4]">
+                  <Users className="h-3.5 w-3.5" />
+                  Buying coverage
+                </span>
+              }
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-[#e7eef6] bg-[#fff8f4] px-4 py-4">
+                  <p className="text-[11px] uppercase tracking-[0.08em] text-[#a06f53] font-semibold">Economic Buyers</p>
+                  <p className="text-[24px] font-extrabold text-[#7b3a1d] mt-2">{personaSummary.economic_buyer}</p>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
+                <div className="rounded-xl border border-[#d9efe4] bg-[#f2fcf7] px-4 py-4">
+                  <p className="text-[11px] uppercase tracking-[0.08em] text-[#48826b] font-semibold">Champions</p>
+                  <p className="text-[24px] font-extrabold text-[#1b6f53] mt-2">{personaSummary.champion}</p>
+                </div>
+                <div className="rounded-xl border border-[#d8e6f5] bg-[#f4f9ff] px-4 py-4">
+                  <p className="text-[11px] uppercase tracking-[0.08em] text-[#4c6f91] font-semibold">Tech Evaluators</p>
+                  <p className="text-[24px] font-extrabold text-[#24567e] mt-2">{personaSummary.technical_evaluator}</p>
+                </div>
+                <div className="rounded-xl border border-[#e4ebf3] bg-[#f8fbfe] px-4 py-4">
+                  <p className="text-[11px] uppercase tracking-[0.08em] text-[#6b7c8d] font-semibold">Unclassified</p>
+                  <p className="text-[24px] font-extrabold text-[#4f6073] mt-2">{personaSummary.unknown}</p>
+                </div>
+              </div>
+            </CompanySection>
+          </div>
+        </div>
       </div>
 
       {showDealModal && (

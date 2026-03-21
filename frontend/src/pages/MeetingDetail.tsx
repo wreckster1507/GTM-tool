@@ -4,7 +4,8 @@ import {
   ArrowLeft, BrainCircuit, ExternalLink, RefreshCw, Sparkles,
   Users, Newspaper, BookOpen, Shield, ChevronDown, ChevronUp,
   Building2, TrendingUp, Lightbulb, Search, PlayCircle,
-  Swords, MessageSquareWarning, ArrowRight,
+  Swords, MessageSquareWarning, ArrowRight, Briefcase, Zap,
+  Globe, Target, Mail, UserPlus, FileText, Crosshair, Trash2,
 } from "lucide-react";
 import { companiesApi, contactsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
 import type { Company, Contact, Meeting, Signal } from "../types";
@@ -29,6 +30,14 @@ const PERSONA_LABEL: Record<string, string> = {
   technical_evaluator: "Tech Eval", unknown: "Unknown",
 };
 
+function canonicalPersona(persona?: string | null, personaType?: string | null): keyof typeof PERSONA_STYLE {
+  const normalized = (persona || personaType || "").toLowerCase();
+  if (normalized === "buyer" || normalized === "economic_buyer") return "economic_buyer";
+  if (normalized === "champion") return "champion";
+  if (normalized === "evaluator" || normalized === "technical_evaluator") return "technical_evaluator";
+  return "unknown";
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface CompanyBackground {
@@ -39,11 +48,88 @@ interface CompanyBackground {
   founded?: string;
 }
 
+interface IntentSignals {
+  hiring?: Array<{ title: string; snippet: string }>;
+  funding?: Array<{ title: string; snippet: string }>;
+  product?: Array<{ title: string; snippet: string }>;
+}
+
+interface GoogleNewsItem {
+  title: string;
+  url: string;
+  published?: string;
+  source?: string;
+}
+
+interface HunterContact {
+  email: string;
+  first_name: string;
+  last_name: string;
+  title?: string;
+  linkedin_url?: string;
+  confidence: number;
+}
+
+interface HunterContacts {
+  domain: string;
+  pattern?: string;
+  emails_found?: number;
+  contacts: HunterContact[];
+  organization?: string;
+}
+
+interface WhyNowSignal {
+  title: string;
+  detail: string;
+  source: string;
+  url?: string;
+}
+
+interface StakeholderCard {
+  contact_id?: string;
+  name: string;
+  title?: string;
+  email?: string;
+  linkedin_url?: string;
+  persona?: string;
+  role?: string;
+  role_label?: string;
+  status?: "attending" | "recommended" | "discovered";
+  priority?: "high" | "medium" | "low";
+  likely_focus?: string;
+  talk_track?: string;
+  questions_to_ask?: string[];
+}
+
+interface CommitteeCoverage {
+  coverage_score?: number;
+  discovered_roles?: Array<{ role: string; label: string }>;
+  attending_roles?: Array<{ role: string; label: string }>;
+  missing_roles?: Array<{ role: string; label: string }>;
+  meeting_gaps?: Array<{ role: string; label: string }>;
+}
+
+interface AttendeeIntelligence {
+  has_explicit_attendees?: boolean;
+  stakeholder_cards?: StakeholderCard[];
+  committee_coverage?: CommitteeCoverage;
+}
+
 interface WebResearch {
   company_background?: CompanyBackground | null;
+  website_analysis?: Record<string, string> | null;
   recent_news?: Array<{ title: string; url: string; snippet: string }>;
   milestones?: Array<{ title: string; url: string; snippet: string }>;
+  intent_signals?: IntentSignals | null;
+  google_news?: GoogleNewsItem[];
+  hunter_contacts?: HunterContacts | null;
+  hunter_company?: Record<string, unknown> | null;
+  competitive_landscape?: Array<{ title: string; url: string; snippet: string }>;
+  attendee_intelligence?: AttendeeIntelligence | null;
+  why_now_signals?: WhyNowSignal[];
+  meeting_recommendations?: string[];
   relevant_battlecards?: Array<{ id: string; title: string; category: string; summary: string }>;
+  executive_briefing?: string | null;
 }
 
 // ── Demo strategy section config ─────────────────────────────────────────────
@@ -190,6 +276,47 @@ export default function MeetingDetail() {
   const hasWikipedia = !!webResearch.company_background;
   const hasNews = (webResearch.recent_news?.length ?? 0) > 0;
   const hasMilestones = (webResearch.milestones?.length ?? 0) > 0;
+  const hasIntentSignals = !!(
+    (webResearch.intent_signals?.hiring?.length) ||
+    (webResearch.intent_signals?.funding?.length) ||
+    (webResearch.intent_signals?.product?.length)
+  );
+  const hasGoogleNews = (webResearch.google_news?.length ?? 0) > 0;
+  const hasHunterContacts = (webResearch.hunter_contacts?.contacts?.length ?? 0) > 0;
+  const hasWebsiteAnalysis = !!webResearch.website_analysis && Object.keys(webResearch.website_analysis).length > 0;
+  const hasCompetitors = (webResearch.competitive_landscape?.length ?? 0) > 0;
+  const hasExecutiveBriefing = !!webResearch.executive_briefing;
+  const stakeholderCards = webResearch.attendee_intelligence?.stakeholder_cards ?? [];
+  const committeeCoverage = webResearch.attendee_intelligence?.committee_coverage;
+  const whyNowSignals = webResearch.why_now_signals ?? [];
+  const meetingRecommendations = webResearch.meeting_recommendations ?? [];
+  const hasMeetingReadiness = stakeholderCards.length > 0 || whyNowSignals.length > 0 || meetingRecommendations.length > 0;
+  const readinessStats = [
+    {
+      label: "Committee Coverage",
+      value: `${committeeCoverage?.coverage_score ?? 0}%`,
+      hint: "Buying group mapped",
+      tone: (committeeCoverage?.coverage_score ?? 0) >= 75 ? "green" : "blue",
+    },
+    {
+      label: "Stakeholders",
+      value: String(stakeholderCards.length || contacts.length),
+      hint: "People in motion",
+      tone: "blue",
+    },
+    {
+      label: "Why Now",
+      value: String(whyNowSignals.length),
+      hint: "Timing signals found",
+      tone: whyNowSignals.length > 0 ? "orange" : "neutral",
+    },
+    {
+      label: "Signals",
+      value: String(signals.length),
+      hint: "CRM and web alerts",
+      tone: signals.length > 0 ? "orange" : "neutral",
+    },
+  ] as const;
 
   // ── Fetch account brief from intelligence endpoint ──────────────────────────
   const handleGetAccountBrief = async () => {
@@ -209,7 +336,7 @@ export default function MeetingDetail() {
   const handleRunIntelligence = async () => {
     if (!id) return;
     setRunning(true);
-    setStatusMsg("Searching Wikipedia, recent news, milestones…");
+    setStatusMsg("Running full intel: website, news, Hunter, signals, competitors…");
     setError("");
     try {
       await meetingsApi.runIntelligence(id);
@@ -264,10 +391,31 @@ export default function MeetingDetail() {
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between gap-3">
-        <button className="crm-button soft" onClick={() => navigate("/meetings")}>
-          <ArrowLeft size={14} /> Back to Meetings
-        </button>
-        <span className="crm-chip capitalize">{meeting.status} · {meeting.meeting_type}</span>
+        <div className="flex items-center gap-2">
+          {meeting.deal_id ? (
+            <button className="crm-button soft" onClick={() => navigate(`/deals/${meeting.deal_id}`)}>
+              <ArrowLeft size={14} /> Back to Deal
+            </button>
+          ) : (
+            <button className="crm-button soft" onClick={() => navigate("/meetings")}>
+              <ArrowLeft size={14} /> Back to Meetings
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="crm-chip capitalize">{meeting.status} · {meeting.meeting_type}</span>
+          <button
+            className="crm-button soft text-[#c0392b] border-[#fcc] hover:bg-[#fff5f5]"
+            onClick={async () => {
+              if (!window.confirm(`Delete meeting "${meeting.title}"? This cannot be undone.`)) return;
+              await meetingsApi.delete(id!);
+              navigate(meeting.deal_id ? `/deals/${meeting.deal_id}` : "/meetings");
+            }}
+          >
+            <Trash2 size={14} />
+            Delete
+          </button>
+        </div>
       </div>
 
       {/* ── Hero ── */}
@@ -300,6 +448,194 @@ export default function MeetingDetail() {
           </div>
         </div>
       </div>
+
+      <div className="grid gap-3 md:grid-cols-4" style={{ gap: 12 }}>
+        {readinessStats.map((item) => {
+          const tone = item.tone === "green"
+            ? { bg: "#eefcf5", border: "#cdeedc", accent: "#1b6f53" }
+            : item.tone === "orange"
+              ? { bg: "#fff7ef", border: "#ffd9be", accent: "#b05a2a" }
+              : item.tone === "blue"
+                ? { bg: "#f3f8ff", border: "#d5e5ff", accent: "#24567e" }
+                : { bg: "#fbfdff", border: "#e3eaf3", accent: "#6f8399" };
+          return (
+            <div
+              key={item.label}
+              className="crm-panel"
+              style={{ padding: "16px 18px", background: tone.bg, borderColor: tone.border }}
+            >
+              <p className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: "#7d8fa3" }}>{item.label}</p>
+              <p className="text-[25px] font-extrabold mt-2" style={{ color: tone.accent }}>{item.value}</p>
+              <p className="text-[12px] text-[#6f8399] mt-1">{item.hint}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 0 — Executive Briefing (GPT-4o synthesis of all intel)
+      ══════════════════════════════════════════════════════════════════════ */}
+      {hasExecutiveBriefing && (
+        <Section title="Executive Briefing" icon={<Briefcase size={15} className="text-[#ff6b35]" />} badge="AI">
+          <div className="rounded-xl border border-[#ffd5be] bg-[#fff8f5] p-5">
+            <div className="prose prose-sm max-w-none text-[14px] text-[#2d4258] leading-relaxed whitespace-pre-wrap">
+              {webResearch.executive_briefing!.split(/\n(?=##\s)/).map((block, i) => {
+                const lines = block.trim().split("\n");
+                const heading = lines[0]?.replace(/^##\s*/, "");
+                const body = lines.slice(1).join("\n").trim();
+                return (
+                  <div key={i} className={i > 0 ? "mt-4" : ""}>
+                    {heading && (
+                      <p className="text-[12px] uppercase tracking-wide font-bold text-[#b05a2a] mb-1.5">{heading}</p>
+                    )}
+                    <div className="text-[13px] text-[#3d5268] leading-relaxed">
+                      {body.split("\n").map((line, j) => (
+                        <p key={j} className={line.startsWith("-") || line.startsWith("•") ? "pl-3" : ""}>{line}</p>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {hasMeetingReadiness && (
+        <Section title="Meeting Readiness" icon={<Target size={15} className="text-[#2563eb]" />} badge="Prep">
+          <div className="space-y-5" style={{ rowGap: 18, display: "grid" }}>
+            {committeeCoverage && (
+              <div className="rounded-xl border border-[#dbe7f5] bg-[#f7fbff] p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#6e88a5] font-semibold">Committee Coverage</p>
+                    <p className="text-[14px] font-bold text-[#24364b] mt-1">
+                      {committeeCoverage.coverage_score ?? 0}% of the core buying group is covered
+                    </p>
+                  </div>
+                  {typeof committeeCoverage.coverage_score === "number" && (
+                    <span className="crm-chip tabular">{committeeCoverage.coverage_score}%</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {(committeeCoverage.discovered_roles ?? []).map((item) => (
+                    <span key={item.role} className="inline-flex items-center rounded-full border border-[#c7daf0] bg-white px-3 py-1 text-[11px] font-semibold text-[#2d5f8e]">
+                      {item.label}
+                    </span>
+                  ))}
+                  {(committeeCoverage.meeting_gaps ?? []).map((item) => (
+                    <span key={item.role} className="inline-flex items-center rounded-full border border-[#ffd6c7] bg-[#fff5f0] px-3 py-1 text-[11px] font-semibold text-[#b4532a]">
+                      Missing: {item.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {whyNowSignals.length > 0 && (
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-2">Why Now</p>
+                <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
+                  {whyNowSignals.map((item, i) => (
+                    <div key={`${item.title}-${i}`} className="rounded-xl border border-[#e3eaf3] bg-white px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold">{item.title}</p>
+                      <p className="text-[13px] text-[#2d4258] leading-relaxed mt-1">{item.detail}</p>
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-[#4a7fa5] hover:underline"
+                        >
+                          Source <ExternalLink size={10} />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {stakeholderCards.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold">Stakeholder Focus</p>
+                  <span className="text-[11px] text-[#7d8fa3]">
+                    {webResearch.attendee_intelligence?.has_explicit_attendees
+                      ? "Using saved meeting attendees plus suggested gaps"
+                      : "No attendees saved yet, using best-fit stakeholder recommendations"}
+                  </span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
+                  {stakeholderCards.map((card, i) => {
+                    const personaKey = canonicalPersona(card.persona);
+                    const ps = PERSONA_STYLE[personaKey];
+                    return (
+                      <div key={`${card.name}-${i}`} className="rounded-xl border border-[#e1e8f1] bg-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-[14px] font-bold text-[#24364b]">{card.name}</p>
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                style={{ color: ps.color, background: ps.bg, border: `1px solid ${ps.border}` }}
+                              >
+                                {PERSONA_LABEL[personaKey]}
+                              </span>
+                              {card.status && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-[#d7e2ee] bg-[#f8fbff] text-[10px] font-bold text-[#61788f] capitalize">
+                                  {card.status}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[12px] text-[#6f8399] mt-1">{card.title ?? card.role_label ?? "Stakeholder"}</p>
+                          </div>
+                          {card.linkedin_url && (
+                            <a href={card.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-[#0077b5] font-semibold hover:underline shrink-0">
+                              LinkedIn <ExternalLink size={10} />
+                            </a>
+                          )}
+                        </div>
+                        {card.likely_focus && (
+                          <p className="text-[12px] text-[#30465d] leading-relaxed mt-3">
+                            <span className="font-bold text-[#24364b]">Focus:</span> {card.likely_focus}
+                          </p>
+                        )}
+                        {card.talk_track && (
+                          <p className="text-[12px] text-[#30465d] leading-relaxed mt-2">
+                            <span className="font-bold text-[#24364b]">Talk track:</span> {card.talk_track}
+                          </p>
+                        )}
+                        {(card.questions_to_ask?.length ?? 0) > 0 && (
+                          <div className="mt-3">
+                            <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Questions To Ask</p>
+                            <div className="space-y-1">
+                              {card.questions_to_ask!.map((question, idx) => (
+                                <p key={idx} className="text-[12px] text-[#41556b] leading-relaxed">• {question}</p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {meetingRecommendations.length > 0 && (
+              <div className="rounded-xl border border-[#ffe0cf] bg-[#fff8f4] p-4">
+                <p className="text-[11px] uppercase tracking-wide text-[#b05a2a] font-semibold mb-2">Recommended Meeting Plan</p>
+                <div className="space-y-1.5">
+                  {meetingRecommendations.map((item, i) => (
+                    <p key={i} className="text-[13px] text-[#3d5268] leading-relaxed">• {item}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 1 — Account Intelligence (existing DB data, shown immediately)
@@ -414,7 +750,7 @@ export default function MeetingDetail() {
             {!intelWasRun && (
               <div className="rounded-xl border border-dashed border-[#c9daf0] bg-[#f5f9ff] px-4 py-3 flex items-center justify-between gap-3">
                 <p className="text-[13px] text-[#5a7a99]">
-                  Click <strong>Run Web Intel</strong> to add Wikipedia background, recent news, and milestones.
+                  Click <strong>Run Web Intel</strong> to gather company background, news, intent signals, Hunter contacts, competitors, and an AI executive briefing.
                 </p>
                 <button className="crm-button soft shrink-0" onClick={handleRunIntelligence} disabled={running}>
                   <Sparkles size={13} /> Run Web Intel
@@ -451,7 +787,8 @@ export default function MeetingDetail() {
         ) : (
           <div className="space-y-3" style={{ rowGap: 10, display: "grid" }}>
             {contacts.map((c) => {
-              const ps = PERSONA_STYLE[c.persona ?? "unknown"] ?? PERSONA_STYLE.unknown;
+              const personaKey = canonicalPersona(c.persona, c.persona_type);
+              const ps = PERSONA_STYLE[personaKey] ?? PERSONA_STYLE.unknown;
               return (
                 <div key={c.id} className="flex items-center gap-4 rounded-xl border border-[#e0e8f1] bg-white px-4 py-3" style={{ padding: "12px 14px", gap: 12 }}>
                   <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(`${c.first_name}${c.last_name}`)}`}>
@@ -460,10 +797,10 @@ export default function MeetingDetail() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-[14px] font-bold text-[#26384e]">{c.first_name} {c.last_name}</p>
-                      {c.persona && (
+                      {(c.persona || c.persona_type) && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold"
                           style={{ color: ps.color, background: ps.bg, border: `1px solid ${ps.border}` }}>
-                          {PERSONA_LABEL[c.persona] ?? c.persona}
+                          {PERSONA_LABEL[personaKey] ?? personaKey}
                         </span>
                       )}
                     </div>
@@ -482,6 +819,145 @@ export default function MeetingDetail() {
           </div>
         )}
       </Section>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 2b — Hunter.io Discovered Contacts
+      ══════════════════════════════════════════════════════════════════════ */}
+      {hasHunterContacts && (
+        <Section
+          title="Hunter.io Discovered Contacts"
+          icon={<UserPlus size={15} className="text-[#0d9488]" />}
+          badge={`${webResearch.hunter_contacts!.contacts.length} found`}
+          defaultOpen={false}
+        >
+          <div className="space-y-1 mb-3">
+            {webResearch.hunter_contacts!.pattern && (
+              <p className="text-[12px] text-[#6f8399]">
+                Email pattern: <span className="font-mono font-semibold text-[#2b3f55]">{webResearch.hunter_contacts!.pattern}@{webResearch.hunter_contacts!.domain}</span>
+              </p>
+            )}
+          </div>
+          <div className="space-y-2" style={{ rowGap: 8, display: "grid" }}>
+            {webResearch.hunter_contacts!.contacts.map((hc, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-xl border border-[#d5ebe6] bg-[#f0fdf9] px-4 py-3" style={{ padding: "10px 14px", gap: 10 }}>
+                <Mail size={14} className="text-[#0d9488] shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-bold text-[#26384e]">{hc.first_name} {hc.last_name}</p>
+                  {hc.title && <p className="text-[12px] text-[#7b8fa4]">{hc.title}</p>}
+                  <p className="text-[12px] text-[#4a7fa5]">{hc.email}</p>
+                </div>
+                <span className="text-[11px] font-semibold text-[#0d9488] bg-[#d5ebe6] px-2 py-0.5 rounded-full">{hc.confidence}%</span>
+                {hc.linkedin_url && (
+                  <a href={hc.linkedin_url} target="_blank" rel="noopener noreferrer"
+                    className="text-[11px] text-[#0077b5] font-semibold hover:underline shrink-0">
+                    LinkedIn <ExternalLink size={10} />
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 2c — Intent Signals (hiring, funding, product/growth)
+      ══════════════════════════════════════════════════════════════════════ */}
+      {hasIntentSignals && (
+        <Section title="Buying Intent Signals" icon={<Zap size={15} className="text-[#f59e0b]" />}>
+          <div className="grid gap-4 md:grid-cols-3" style={{ gap: 14 }}>
+            {([
+              { key: "hiring" as const, label: "Hiring Signals", icon: Users, color: "#10b981", bg: "#ecfdf5", border: "#a7f3d0", hint: "Expanding team = budget available" },
+              { key: "funding" as const, label: "Funding Signals", icon: TrendingUp, color: "#f59e0b", bg: "#fffbeb", border: "#fde68a", hint: "Fresh capital = buying power" },
+              { key: "product" as const, label: "Growth Signals", icon: Zap, color: "#8b5cf6", bg: "#f5f3ff", border: "#ddd6fe", hint: "Expansion = new tool needs" },
+            ]).map(({ key, label, icon: Icon, color, bg, border, hint }) => {
+              const items = webResearch.intent_signals?.[key] ?? [];
+              if (items.length === 0) return null;
+              return (
+                <div key={key} className="rounded-xl border p-4" style={{ background: bg, borderColor: border }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Icon size={14} style={{ color }} />
+                    <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>{label}</span>
+                  </div>
+                  <p className="text-[10px] text-[#8fa5bc] mb-2">{hint}</p>
+                  <div className="space-y-2">
+                    {items.map((s, i) => (
+                      <div key={i} className="text-[12px] text-[#3d5268]">
+                        <p className="font-semibold">{s.title}</p>
+                        {s.snippet && <p className="text-[11px] text-[#6f8399] mt-0.5 line-clamp-2">{s.snippet}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 2d — Google News Headlines
+      ══════════════════════════════════════════════════════════════════════ */}
+      {hasGoogleNews && (
+        <Section title="Google News Headlines" icon={<Globe size={15} className="text-[#3b82f6]" />}
+          badge={String(webResearch.google_news!.length)} defaultOpen={false}>
+          <div className="space-y-2" style={{ rowGap: 8, display: "grid" }}>
+            {webResearch.google_news!.map((item, i) => (
+              <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
+                className="flex items-start gap-3 rounded-xl border border-[#e3eaf3] bg-white px-4 py-3 hover:border-[#3b82f6] transition-colors">
+                <Newspaper size={13} className="text-[#9eb0c3] mt-0.5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-[#24364b]">{item.title}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {item.source && <span className="text-[11px] font-semibold text-[#3b82f6]">{item.source}</span>}
+                    {item.published && <span className="text-[11px] text-[#8fa5bc]">{item.published}</span>}
+                  </div>
+                </div>
+                <ExternalLink size={11} className="text-[#9eb0c3] shrink-0 mt-0.5" />
+              </a>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 2e — Website Deep Analysis
+      ══════════════════════════════════════════════════════════════════════ */}
+      {hasWebsiteAnalysis && (
+        <Section title="Website Deep Analysis" icon={<FileText size={15} className="text-[#7c3aed]" />} defaultOpen={false}>
+          <div className="grid gap-3 md:grid-cols-2" style={{ gap: 10 }}>
+            {Object.entries(webResearch.website_analysis!).map(([key, value]) => {
+              const label = key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              return (
+                <div key={key} className="rounded-xl border border-[#e3e8f0] bg-[#f9fbfe] px-4 py-3" style={{ padding: "12px 15px" }}>
+                  <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">{label}</p>
+                  <p className="text-[13px] text-[#2d4258] leading-relaxed">{value}</p>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 2f — Competitive Landscape
+      ══════════════════════════════════════════════════════════════════════ */}
+      {hasCompetitors && (
+        <Section title="Competitive Landscape" icon={<Crosshair size={15} className="text-[#ef4444]" />} defaultOpen={false}>
+          <div className="space-y-2" style={{ rowGap: 8, display: "grid" }}>
+            {webResearch.competitive_landscape!.map((item, i) => (
+              <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
+                className="flex items-start gap-3 rounded-xl border border-[#e3eaf3] bg-white px-4 py-3 hover:border-[#ef4444] transition-colors">
+                <Target size={13} className="text-[#f87171] mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-[#24364b]">{item.title}</p>
+                  {item.snippet && <p className="text-[12px] text-[#6f8399] mt-0.5 line-clamp-2">{item.snippet}</p>}
+                </div>
+                <ExternalLink size={11} className="text-[#9eb0c3] shrink-0 mt-0.5" />
+              </a>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 3 — Demo Strategy & Story Lineup (GPT-4o, on-demand)
@@ -548,12 +1024,12 @@ export default function MeetingDetail() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════════
-          SECTION 6 — AI Account Brief (on-demand, Playwright + GPT-4o)
+          SECTION 6 — AI Account Brief (on-demand account planning brief)
       ══════════════════════════════════════════════════════════════════════ */}
       <Section title="AI Account Brief" icon={<BrainCircuit size={15} className="text-[#ff6b35]" />} defaultOpen={false}>
         <div className="flex items-center justify-between mb-3">
           <p className="text-[13px] text-[#6f8399]">
-            Scrapes the company website live + summarises with GPT-4o. ~10s.
+            Builds a quick account-planning brief from company context, signals, stakeholders, and website research.
           </p>
           <button className="crm-button soft" onClick={handleGetAccountBrief} disabled={loadingBrief || !company}>
             {loadingBrief ? <RefreshCw size={13} className="animate-spin" /> : <BrainCircuit size={13} />}

@@ -130,8 +130,11 @@ async def discover_contacts(company_id: UUID, session: DBSession):
         email = (c.get("email") or "").strip()
         if not email:
             continue
-        existing = await session.execute(select(Contact).where(Contact.email == email))
-        if existing.scalar_one_or_none():
+        # Use first-row existence check to tolerate historical duplicate rows.
+        existing = await session.execute(
+            select(Contact).where(Contact.email == email).limit(1)
+        )
+        if existing.scalars().first():
             continue
         first = (c.get("first_name") or "").strip()
         last = (c.get("last_name") or "").strip()

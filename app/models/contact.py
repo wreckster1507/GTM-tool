@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 
@@ -22,6 +24,10 @@ class Contact(ContactBase, table=True):
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
+    # Account sourcing enrichment fields
+    enriched_at: Optional[datetime] = None
+    enrichment_data: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    persona_type: Optional[str] = None  # champion | buyer | evaluator | blocker
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -34,6 +40,9 @@ class ContactRead(ContactBase):
     id: UUID
     company_id: Optional[UUID] = None
     company_name: Optional[str] = None  # populated via SQL JOIN in ContactRepository
+    enriched_at: Optional[datetime] = None
+    enrichment_data: Optional[Any] = None
+    persona_type: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

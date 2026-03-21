@@ -1,140 +1,413 @@
 """
-Pre-meeting intelligence service.
+Company-level account brief service.
 
-Orchestrates:
-  1. Playwright scrape of company homepage + /about
-  2. Google News RSS signals (already fetched during enrichment, or re-fetched live)
-  3. GPT-4o account brief generation via summarise_account
+This endpoint powers the lightweight "AI Account Brief" used from company and
+meeting detail pages. It is intentionally lighter than the full
+pre-meeting-intelligence pipeline, but it now reuses the same sales logic:
 
-Returns a structured account brief ready to display in the UI.
+  - company profile from DB
+  - saved signals from the CRM
+  - discovered contacts and committee coverage
+  - cached enrichment data
+  - lightweight website summary via httpx + GPT (no Playwright dependency)
+
+The goal is a fast, sales-usable account planning brief, not just a generic
+website summary.
 """
+from __future__ import annotations
+
 import logging
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.clients.azure_openai import AzureOpenAIClient
-from app.clients.playwright_scraper import scrape_company_homepage
+from app.clients.web_search import WebSearchClient
 from app.models.company import Company
+from app.models.contact import Contact
+from app.models.signal import Signal
+from app.services.pre_meeting_intelligence import (
+    _build_attendee_intelligence,
+    _build_why_now_signals,
+    _canonical_persona,
+)
 
 logger = logging.getLogger(__name__)
 
 ai_client = AzureOpenAIClient()
+web_client = WebSearchClient()
 
 
-async def generate_account_brief(company_id: UUID, session: AsyncSession) -> dict:
-    """
-    Full pre-meeting intelligence pipeline for a company.
+def _unwrap_cache_entry(cache: dict[str, Any], key: str) -> Any:
+    value = cache.get(key)
+    if isinstance(value, dict) and "data" in value:
+        return value.get("data")
+    return value
 
-    Returns:
-        {
-            company_id, company_name, domain,
-            scraped: { title, description, body_text, about_text },
-            news_signals: [...],
-            brief: "• bullet 1\n• bullet 2\n• bullet 3",
-            tech_stack: {...},
+
+def _normalize_tech_stack(tech_stack: Any) -> dict[str, str]:
+    if isinstance(tech_stack, dict):
+        return {
+            str(key): str(value)
+            for key, value in tech_stack.items()
+            if value is not None and str(value).strip()
         }
+    if isinstance(tech_stack, list):
+        items = [str(item).strip() for item in tech_stack if str(item).strip()]
+        return {"tools": ", ".join(items)} if items else {}
+    if isinstance(tech_stack, str) and tech_stack.strip():
+        return {"tools": tech_stack.strip()}
+    return {}
+
+
+def _as_text(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _as_list(value: Any) -> list[str]:
+    if isinstance(value, dict) and "items" in value:
+        value = value["items"]
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _signal_to_dict(signal: Signal) -> dict[str, Any]:
+    return {
+        "title": signal.title,
+        "summary": signal.summary,
+        "url": signal.url,
+        "source": signal.source,
+        "signal_type": signal.signal_type,
+        "published_at": signal.published_at.isoformat() if signal.published_at else None,
+    }
+
+
+def _fallback_brief(
+    *,
+    company: Company,
+    company_profile: dict[str, Any],
+    why_now_signals: list[dict[str, Any]],
+    stakeholder_cards: list[dict[str, Any]],
+    missing_roles: list[dict[str, Any]],
+    priorities: list[str],
+) -> str:
+    lines: list[str] = []
+
+    lines.append("## Snapshot")
+    lines.append(
+        f"- {company.name} operates in {company.industry or 'its category'}"
+        + (
+            f" with approximately {company.employee_count:,} employees."
+            if company.employee_count
+            else "."
+        )
+    )
+    if company_profile.get("funding_stage"):
+        lines.append(f"- Funding stage: {company_profile['funding_stage']}.")
+
+    lines.append("")
+    lines.append("## Why Now")
+    if why_now_signals:
+        for item in why_now_signals[:3]:
+            lines.append(f"- {item.get('detail')}")
+    else:
+        lines.append("- No strong timing signal is captured yet; validate urgency live.")
+
+    lines.append("")
+    lines.append("## Who To Engage")
+    if stakeholder_cards:
+        for card in stakeholder_cards[:3]:
+            lines.append(
+                f"- {card.get('name')} ({card.get('title') or card.get('role_label') or 'Stakeholder'}): "
+                f"{card.get('likely_focus') or 'Clarify their role in the buying process.'}"
+            )
+    else:
+        lines.append("- No mapped stakeholders yet; find a champion and implementation owner first.")
+
+    lines.append("")
+    lines.append("## Angle For Beacon")
+    if priorities:
+        for item in priorities[:3]:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- Lead with Beacon's ability to reduce rollout coordination friction and speed time-to-value.")
+
+    lines.append("")
+    lines.append("## Risks / Gaps")
+    if missing_roles:
+        labels = ", ".join(item.get("label", "Unknown role") for item in missing_roles[:3])
+        lines.append(f"- Missing committee coverage: {labels}.")
+    else:
+        lines.append("- Committee coverage looks healthy enough to progress discovery.")
+
+    return "\n".join(lines)
+
+
+async def _generate_sales_ready_brief(
+    *,
+    company: Company,
+    company_profile: dict[str, Any],
+    website_summary: dict[str, Any] | None,
+    cached_ai_summary: dict[str, Any],
+    recent_signals: list[dict[str, Any]],
+    why_now_signals: list[dict[str, Any]],
+    stakeholder_cards: list[dict[str, Any]],
+    committee_coverage: dict[str, Any],
+    priorities: list[str],
+) -> str:
+    if ai_client.mock:
+        return _fallback_brief(
+            company=company,
+            company_profile=company_profile,
+            why_now_signals=why_now_signals,
+            stakeholder_cards=stakeholder_cards,
+            missing_roles=committee_coverage.get("missing_roles", []),
+            priorities=priorities,
+        )
+
+    signal_lines = "\n".join(
+        f"- {item.get('title')}: {item.get('summary') or item.get('detail') or ''}".strip()
+        for item in recent_signals[:5]
+        if item.get("title")
+    ) or "- None captured."
+
+    why_now_lines = "\n".join(
+        f"- {item.get('detail')}"
+        for item in why_now_signals[:5]
+        if item.get("detail")
+    ) or "- No clear timing hook found."
+
+    stakeholder_lines = "\n".join(
+        f"- {card.get('name')} | {card.get('title') or card.get('role_label') or 'Stakeholder'} | "
+        f"Focus: {card.get('likely_focus') or 'Unknown'}"
+        for card in stakeholder_cards[:5]
+    ) or "- No stakeholders mapped yet."
+
+    missing_role_lines = "\n".join(
+        f"- {item.get('label')}: {item.get('why') or 'Role not yet mapped.'}"
+        for item in (committee_coverage.get("missing_roles") or [])[:4]
+        if item.get("label")
+    ) or "- No major committee gaps identified."
+
+    priority_lines = "\n".join(f"- {item}" for item in priorities[:5]) or "- None captured."
+    website_extract = (
+        _as_text((website_summary or {}).get("extract"))
+        or _as_text((website_summary or {}).get("description"))
+        or _as_text(cached_ai_summary.get("description"))
+        or "No website summary available."
+    )
+
+    system = (
+        "You are a senior enterprise AE preparing for outbound and first-meeting prep at Beacon.li. "
+        "Write a concise but useful account brief in markdown. "
+        "Use exactly these sections:\n"
+        "## Snapshot\n"
+        "## Why Now\n"
+        "## Who To Engage\n"
+        "## Angle For Beacon\n"
+        "## Risks / Gaps\n\n"
+        "Rules:\n"
+        "- Be specific and grounded in the provided evidence.\n"
+        "- Use bullets under each section.\n"
+        "- Favor practical sales guidance over generic company summaries.\n"
+        "- Mention uncertainty where the evidence is thin.\n"
+    )
+    user = f"""
+Company Profile:
+- Name: {company_profile.get('name')}
+- Domain: {company_profile.get('domain')}
+- Industry: {company_profile.get('industry') or 'Unknown'}
+- Employees: {company_profile.get('employee_count') or 'Unknown'}
+- Funding: {company_profile.get('funding_stage') or 'Unknown'}
+- ICP Score: {company_profile.get('icp_score') or 'Unknown'}
+- ICP Tier: {company_profile.get('icp_tier') or 'Unknown'}
+- Tech Stack: {", ".join(f"{k}: {v}" for k, v in (company_profile.get('tech_stack') or {}).items()) or 'Unknown'}
+
+Website Summary:
+{website_extract}
+
+Recent Signals:
+{signal_lines}
+
+Why Now Signals:
+{why_now_lines}
+
+Stakeholder Coverage:
+{stakeholder_lines}
+
+Committee Coverage Score:
+{committee_coverage.get('coverage_score', 0)}%
+
+Missing Roles:
+{missing_role_lines}
+
+Prospecting Priorities:
+{priority_lines}
+"""
+
+    try:
+        response = await ai_client.complete(system, user, max_tokens=650)
+        if response:
+            return response
+    except Exception as exc:
+        logger.warning("Account brief generation failed, using fallback: %s", exc)
+
+    return _fallback_brief(
+        company=company,
+        company_profile=company_profile,
+        why_now_signals=why_now_signals,
+        stakeholder_cards=stakeholder_cards,
+        missing_roles=committee_coverage.get("missing_roles", []),
+        priorities=priorities,
+    )
+
+
+async def generate_account_brief(company_id: UUID, session: AsyncSession) -> dict[str, Any]:
     """
-    # Load company from DB
+    Generate a company-level account brief for outreach and first-meeting prep.
+    """
     company = await session.get(Company, company_id)
     if not company:
         return {"error": "Company not found"}
 
-    result = {
+    cache = (company.enrichment_cache or {}) if isinstance(company.enrichment_cache, dict) else {}
+    cached_ai_summary = _unwrap_cache_entry(cache, "ai_summary")
+    cached_ai_summary = cached_ai_summary if isinstance(cached_ai_summary, dict) else {}
+    cached_web_scrape = _unwrap_cache_entry(cache, "web_scrape")
+    cached_web_scrape = cached_web_scrape if isinstance(cached_web_scrape, dict) else {}
+    cached_committee = _unwrap_cache_entry(cache, "committee_coverage")
+    cached_committee = cached_committee if isinstance(cached_committee, dict) else {}
+    cached_priorities = _unwrap_cache_entry(cache, "prospecting_priorities")
+    cached_intent = _unwrap_cache_entry(cache, "intent_signals") or company.intent_signals or {}
+
+    tech_stack = _normalize_tech_stack(company.tech_stack)
+
+    company_profile = {
+        "name": company.name,
+        "domain": company.domain,
+        "industry": company.industry,
+        "vertical": company.vertical,
+        "employee_count": company.employee_count,
+        "funding_stage": company.funding_stage,
+        "arr_estimate": company.arr_estimate,
+        "icp_score": company.icp_score,
+        "icp_tier": company.icp_tier,
+        "has_dap": company.has_dap,
+        "dap_tool": company.dap_tool,
+        "tech_stack": tech_stack,
+    }
+
+    signals_result = await session.execute(
+        select(Signal)
+        .where(Signal.company_id == company_id)
+        .order_by(Signal.created_at.desc())
+        .limit(6)
+    )
+    signal_rows = list(signals_result.scalars().all())
+    recent_signals = [_signal_to_dict(signal) for signal in signal_rows]
+
+    if not recent_signals and company.name:
+        try:
+            live_news = await web_client.recent_news(company.name, company.domain or "")
+            recent_signals = [
+                {
+                    "title": item.get("title"),
+                    "summary": item.get("snippet"),
+                    "url": item.get("url"),
+                    "source": "live_search",
+                    "signal_type": "news",
+                    "published_at": None,
+                }
+                for item in live_news[:4]
+                if item.get("title")
+            ]
+        except Exception as exc:
+            logger.warning("Live news lookup failed for %s: %s", company.name, exc)
+
+    contacts_result = await session.execute(
+        select(Contact)
+        .where(Contact.company_id == company_id)
+        .order_by(Contact.created_at.desc())
+        .limit(20)
+    )
+    contacts = list(contacts_result.scalars().all())
+
+    stakeholders = [
+        {
+            "id": str(contact.id),
+            "name": f"{contact.first_name} {contact.last_name}".strip(),
+            "title": contact.title,
+            "email": contact.email,
+            "persona": _canonical_persona(contact.persona, contact.persona_type),
+            "persona_type": contact.persona_type,
+            "seniority": contact.seniority,
+            "linkedin_url": contact.linkedin_url,
+            "email_verified": contact.email_verified,
+        }
+        for contact in contacts
+    ]
+    stakeholder_intelligence = _build_attendee_intelligence([], stakeholders)
+
+    website_summary: dict[str, Any] | None = None
+    if company.domain and not company.domain.endswith(".unknown"):
+        try:
+            website_summary = await web_client.company_website_summary(
+                company.domain,
+                company.name,
+                ai_client,
+            )
+        except Exception as exc:
+            logger.warning("Website summary lookup failed for %s: %s", company.domain, exc)
+
+    why_now_signals = _build_why_now_signals(
+        company_profile=company_profile,
+        website_analysis=None,
+        recent_news=recent_signals,
+        intent_signals=cached_intent if isinstance(cached_intent, dict) else {},
+        google_news=[],
+    )
+
+    committee_coverage = (
+        cached_committee
+        if isinstance(cached_committee, dict) and cached_committee.get("coverage_score") is not None
+        else stakeholder_intelligence.get("committee_coverage", {})
+    )
+    stakeholder_cards = stakeholder_intelligence.get("stakeholder_cards", [])
+    priorities = _as_list(cached_priorities)
+
+    brief_text = await _generate_sales_ready_brief(
+        company=company,
+        company_profile=company_profile,
+        website_summary=website_summary,
+        cached_ai_summary=cached_ai_summary if isinstance(cached_ai_summary, dict) else {},
+        recent_signals=recent_signals,
+        why_now_signals=why_now_signals,
+        stakeholder_cards=stakeholder_cards,
+        committee_coverage=committee_coverage if isinstance(committee_coverage, dict) else {},
+        priorities=priorities,
+    )
+
+    scraped = {
+        "title": (website_summary or {}).get("title") or company.name,
+        "description": (website_summary or {}).get("description") or _as_text(cached_ai_summary.get("description")) or "",
+        "body_text": (website_summary or {}).get("extract") or _as_text(cached_web_scrape.get("text")) or "",
+        "about_text": _as_text(cached_web_scrape.get("about_text")) or "",
+        "error": None if website_summary or cached_web_scrape else "Website summary unavailable",
+    }
+
+    return {
         "company_id": str(company_id),
         "company_name": company.name,
         "domain": company.domain,
-        "scraped": {},
-        "news_signals": [],
-        "tech_stack": company.tech_stack or {},
-        "brief": None,
+        "scraped": scraped,
+        "news_signals": recent_signals,
+        "tech_stack": tech_stack,
+        "brief": brief_text,
+        "stakeholder_summary": stakeholder_intelligence,
+        "committee_coverage": committee_coverage,
+        "why_now_signals": why_now_signals,
+        "prospecting_priorities": priorities,
     }
-
-    # 1. Playwright scrape
-    logger.info(f"Scraping {company.domain} with Playwright…")
-    scraped = await scrape_company_homepage(company.domain)
-    result["scraped"] = scraped
-
-    # 2. Pull news signals from enrichment_sources if already saved
-    news_signals = []
-    enrichment_sources = company.enrichment_sources or {}
-    if "news" in enrichment_sources:
-        news_data = enrichment_sources["news"]
-        funding = news_data.get("funding_signals", [])
-        pr = news_data.get("pr_signals", [])
-        news_signals = funding + pr
-    else:
-        # Re-fetch live
-        from app.clients.news import NewsClient
-        news_client = NewsClient()
-        news_data = await news_client.get_company_signals(company.name, company.domain) or {}
-        news_signals = news_data.get("funding_signals", []) + news_data.get("pr_signals", [])
-
-    result["news_signals"] = news_signals[:6]
-
-    # 3. Build enriched context for GPT-4o
-    # Combine scraped website text with DB data for richer prompt
-    homepage_context = ""
-    if scraped.get("description"):
-        homepage_context += f"Website description: {scraped['description']}\n"
-    if scraped.get("body_text"):
-        homepage_context += f"Homepage content: {scraped['body_text'][:800]}\n"
-    if scraped.get("about_text"):
-        homepage_context += f"About page: {scraped['about_text'][:600]}\n"
-
-    # Extend the standard summarise_account with scraped web content
-    brief_text = await _generate_rich_brief(
-        company_name=company.name,
-        news_signals=news_signals,
-        tech_stack=company.tech_stack or {},
-        homepage_context=homepage_context,
-        industry=company.industry or "",
-        funding_stage=company.funding_stage or "",
-        employee_count=company.employee_count,
-    )
-
-    result["brief"] = brief_text
-    return result
-
-
-async def _generate_rich_brief(
-    company_name: str,
-    news_signals: list,
-    tech_stack: dict,
-    homepage_context: str,
-    industry: str = "",
-    funding_stage: str = "",
-    employee_count: Optional[int] = None,
-) -> Optional[str]:
-    """GPT-4o prompt enriched with Playwright-scraped website content."""
-    if ai_client.mock:
-        return (
-            f"• {company_name} operates in {industry or 'SaaS'} — review their website for current positioning.\n"
-            "• No recent news signals found — research manually before the call.\n"
-            "• Suggested angle: lead with implementation speed and reduced IT overhead."
-        )
-
-    news_text = "\n".join(f"- {a['title']}" for a in news_signals[:5]) or "No recent news."
-    tech_text = ", ".join(f"{k}: {v}" for k, v in (tech_stack or {}).items()) or "Unknown"
-    size_text = f"{employee_count:,} employees" if employee_count else "Unknown size"
-
-    system = (
-        "You are a sales intelligence analyst preparing a rep for a first meeting. "
-        "Write exactly 3 bullet points (start each with •). Be specific, actionable, and concise. "
-        "Each bullet: max 2 sentences."
-    )
-    user = (
-        f"Company: {company_name}\n"
-        f"Industry: {industry} | Size: {size_text} | Funding: {funding_stage}\n"
-        f"Tech stack: {tech_text}\n"
-        f"Recent news:\n{news_text}\n"
-        f"Website intel:\n{homepage_context or 'Not available.'}\n\n"
-        "Write 3 bullets covering:\n"
-        "1. Business context & what they do (use website intel)\n"
-        "2. Buying signal or trigger event (use news)\n"
-        "3. Recommended conversation angle for Beacon.li (AI implementation orchestration)"
-    )
-
-    return await ai_client.complete(system, user, max_tokens=350)

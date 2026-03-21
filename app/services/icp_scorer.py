@@ -6,6 +6,7 @@ Scores companies 0–100 across 5 dimensions and maps to tiers:
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -30,8 +31,10 @@ def score_company(company: "Company") -> tuple[int, str]:
         score += 12
 
     # 2. Funding stage (25 pts max)
-    funding = (company.funding_stage or "").lower()
-    if any(s in funding for s in ["series b", "series c", "series d", "series e", "growth"]):
+    funding = (company.funding_stage or "").lower().strip()
+    # Match "Series B" through any later letter (C, D, E, F, G, H...)
+    late_series = re.search(r"series\s+([b-z])", funding)
+    if late_series or any(s in funding for s in ["growth", "ipo", "public", "late stage", "private equity"]):
         score += 25
     elif "series a" in funding:
         score += 18
@@ -47,12 +50,18 @@ def score_company(company: "Company") -> tuple[int, str]:
     # 4. Industry fit (15 pts max)
     industry = (company.industry or "").lower()
     vertical = (company.vertical or "").lower()
-    icp_industries = [
-        "hr", "human resource", "hcm", "fintech", "finance",
-        "healthtech", "health", "edtech", "saas", "enterprise software",
-        "payroll", "recruitment",
+    combined = f"{industry} {vertical}"
+    icp_keywords = [
+        "hr", "human resource", "hcm", "people", "talent",
+        "fintech", "finance", "banking", "insurance", "payment",
+        "healthtech", "health", "medical", "pharma",
+        "edtech", "education", "learning",
+        "saas", "enterprise software", "software", "cloud",
+        "payroll", "recruitment", "staffing",
+        "technology", "information technology", "it services",
+        "proptech", "legaltech",
     ]
-    if any(i in industry or i in vertical for i in icp_industries):
+    if any(kw in combined for kw in icp_keywords):
         score += 15
     elif industry or vertical:
         score += 5

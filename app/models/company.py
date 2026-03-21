@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column
+from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -28,6 +28,11 @@ class Company(CompanyBase, table=True):
     icp_tier: Optional[str] = None
     enrichment_sources: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     enriched_at: Optional[datetime] = None
+    # Account sourcing fields
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    intent_signals: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    sourcing_batch_id: Optional[UUID] = Field(default=None, foreign_key="sourcing_batches.id", index=True)
+    enrichment_cache: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -43,6 +48,10 @@ class CompanyRead(CompanyBase):
     icp_tier: Optional[str] = None
     enrichment_sources: Optional[Any] = None
     enriched_at: Optional[datetime] = None
+    description: Optional[str] = None
+    intent_signals: Optional[Any] = None
+    sourcing_batch_id: Optional[UUID] = None
+    enrichment_cache: Optional[Any] = None
     created_at: datetime
     updated_at: datetime
 
