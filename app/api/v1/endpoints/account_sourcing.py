@@ -23,11 +23,11 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
 from app.core.dependencies import DBSession, Pagination
-from app.database import AsyncSessionLocal
 from app.models.company import Company, CompanyRead, CompanyUpdate
 from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.repositories.company import CompanyRepository
+from app.tasks.enrichment import enrich_batch_task, re_enrich_company_task, re_enrich_contact_task
 from app.services.account_sourcing import (
     account_priority_snapshot,
     merge_company_from_upload,
@@ -37,7 +37,6 @@ from app.services.account_sourcing import (
     row_to_company_fields,
     row_to_contact_fields,
 )
-from app.services.background_jobs import clear_background_jobs, queue_job
 from app.services.data_reset import (
     reset_account_sourcing_data,
     reset_prospecting_data,
@@ -60,7 +59,6 @@ async def reset_sourcing_data(scope: str, session: DBSession = None):
     else:
         raise HTTPException(status_code=400, detail="Unsupported reset scope")
 
-    clear_background_jobs()
     return {"scope": normalized, "summary": summary}
 
 
@@ -313,31 +311,15 @@ async def upload_csv(
     session.add(batch)
     await session.commit()
 
-    async def run_batch() -> dict:
-        from app.services.account_sourcing import process_batch
-
-        try:
-            async with AsyncSessionLocal() as background_session:
-                processed = await process_batch(batch.id, background_session)
-                return {
-                    "batch_id": str(batch.id),
-                    "status": processed.status if processed else "failed",
-                }
-        except Exception:
-            async with AsyncSessionLocal() as background_session:
-                batch_record = await background_session.get(SourcingBatch, batch.id)
-                if batch_record:
-                    batch_record.status = "failed"
-                    batch_record.updated_at = datetime.utcnow()
-                    background_session.add(batch_record)
-                    await background_session.commit()
-            raise
-
-    queue_job(
-        kind="sourcing_batch_enrichment",
-        runner=run_batch,
-        metadata={"batch_id": str(batch.id), "filename": batch.filename},
-    )
+    try:
+        enrich_batch_task.delay(str(batch.id))
+    except Exception as exc:
+        batch.status = "failed"
+        batch.updated_at = datetime.utcnow()
+        batch.error_log = [*(batch.error_log or []), {"batch_id": str(batch.id), "error": str(exc)}]
+        session.add(batch)
+        await session.commit()
+        raise HTTPException(status_code=500, detail="Failed to queue batch enrichment") from exc
 
     await session.refresh(batch)
     return batch
@@ -535,21 +517,13 @@ async def re_enrich_company(company_id: UUID, session: DBSession = None):
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    async def run() -> dict:
-        from app.services.account_sourcing import re_enrich_company as re_enrich_company_service
-
-        async with AsyncSessionLocal() as background_session:
-            refreshed = await re_enrich_company_service(company_id, background_session)
-            return {"company_id": str(company_id), "enriched": bool(refreshed)}
-
-    task_id = queue_job(
-        kind="company_re_enrichment",
-        runner=run,
-        metadata={"company_id": str(company_id), "domain": company.domain},
-    )
+    try:
+        task = re_enrich_company_task.delay(str(company_id))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to queue company re-enrichment") from exc
     return {
         "company_id": str(company_id),
-        "task_id": task_id,
+        "task_id": task.id,
         "status": "queued",
         "message": "Re-enrichment started",
     }
@@ -626,21 +600,13 @@ async def re_enrich_contact(contact_id: UUID, session: DBSession = None):
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
-    async def run() -> dict:
-        from app.services.account_sourcing import re_enrich_contact_service
-
-        async with AsyncSessionLocal() as background_session:
-            refreshed = await re_enrich_contact_service(contact_id, background_session)
-            return {"contact_id": str(contact_id), "enriched": bool(refreshed)}
-
-    task_id = queue_job(
-        kind="contact_re_enrichment",
-        runner=run,
-        metadata={"contact_id": str(contact_id)},
-    )
+    try:
+        task = re_enrich_contact_task.delay(str(contact_id))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to queue contact re-enrichment") from exc
     return {
         "contact_id": str(contact_id),
-        "task_id": task_id,
+        "task_id": task.id,
         "status": "queued",
         "message": "Contact re-enrichment started",
     }

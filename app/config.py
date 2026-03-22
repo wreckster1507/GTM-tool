@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://beacon:beacon_dev@localhost:5432/beacon_crm"
     SYNC_DATABASE_URL: str = "postgresql://beacon:beacon_dev@localhost:5432/beacon_crm"
 
-    # Legacy background queue setting (no longer required for deployment)
+    # Background queue
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # App
