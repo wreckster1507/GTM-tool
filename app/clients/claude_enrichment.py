@@ -74,13 +74,14 @@ async def summarize_company(
     search_results: dict,
     company_name: str,
     domain: str,
+    upload_context: dict[str, Any] | None = None,
 ) -> dict:
     """
     Single-turn Claude call to synthesize all collected data into a comprehensive
     sales intelligence report for a company.
     """
     if not settings.claude_api_key:
-        return _fallback_summary(scraped_data, apollo_data, company_name)
+        return _fallback_summary(scraped_data, apollo_data, company_name, upload_context)
 
     client = _get_client()
 
@@ -117,6 +118,8 @@ async def summarize_company(
     )
 
     user_data = f"Company: {company_name}\nDomain: {domain}\n\n"
+    if upload_context:
+        user_data += f"Imported Analyst Context:\n{json.dumps(upload_context, default=str)}\n\n"
     if apollo_data:
         user_data += f"Apollo Firmographic Data:\n{json.dumps(apollo_data, default=str)}\n\n"
     if scraped_data.get("text"):
@@ -146,14 +149,14 @@ async def summarize_company(
         payload = _extract_json_object(text)
         if payload is None:
             logger.warning(f"Claude summarization returned non-JSON payload for {company_name}; using fallback")
-            fallback = _fallback_summary(scraped_data, apollo_data, company_name)
+            fallback = _fallback_summary(scraped_data, apollo_data, company_name, upload_context)
             fallback["_error"] = "non_json_response"
             return fallback
         payload.setdefault("_source", "claude")
         return payload
     except Exception as e:
         logger.error(f"Claude summarization failed for {company_name}: {e}")
-        fallback = _fallback_summary(scraped_data, apollo_data, company_name)
+        fallback = _fallback_summary(scraped_data, apollo_data, company_name, upload_context)
         fallback["_error"] = str(e)
         return fallback
 
@@ -194,7 +197,12 @@ async def classify_contact_persona(
 
 # ── Fallbacks ──────────────────────────────────────────────────────────────────
 
-def _fallback_summary(scraped_data: dict, apollo_data: dict | None, company_name: str) -> dict:
+def _fallback_summary(
+    scraped_data: dict,
+    apollo_data: dict | None,
+    company_name: str,
+    upload_context: dict[str, Any] | None = None,
+) -> dict:
     """Rule-based summary when Claude API is unavailable."""
     desc = ""
     if scraped_data.get("text"):
@@ -206,12 +214,35 @@ def _fallback_summary(scraped_data: dict, apollo_data: dict | None, company_name
                 break
     if not desc and apollo_data:
         desc = f"{company_name} is a {apollo_data.get('industry', 'technology')} company."
+    if not desc and upload_context:
+        desc = (
+            str(upload_context.get("description") or "").strip()
+            or str(upload_context.get("core_focus") or "").strip()
+            or str(upload_context.get("account_thesis") or "").strip()
+        )
 
     return {
         "description": desc or f"{company_name} — description pending enrichment.",
-        "icp_fit_reasoning": "Automated analysis unavailable — review manually.",
-        "industry": (apollo_data or {}).get("industry", "Unknown"),
-        "intent_signals_summary": "No AI analysis available.",
+        "icp_fit_reasoning": (
+            str((upload_context or {}).get("icp_why") or "").strip()
+            or str((upload_context or {}).get("intent_why") or "").strip()
+            or "Automated analysis unavailable — review manually."
+        ),
+        "industry": (apollo_data or {}).get("industry") or str((upload_context or {}).get("industry") or "Unknown"),
+        "intent_signals_summary": (
+            str((upload_context or {}).get("intent_why") or "").strip()
+            or "No AI analysis available."
+        ),
+        "recommended_approach": str((upload_context or {}).get("beacon_angle") or "").strip(),
+        "talking_points": [
+            value
+            for value in [
+                str((upload_context or {}).get("why_now") or "").strip(),
+                str((upload_context or {}).get("recommended_outreach_strategy") or "").strip(),
+                str((upload_context or {}).get("account_thesis") or "").strip(),
+            ]
+            if value
+        ][:4],
         "confidence": 20,
         "_source": "fallback",
     }

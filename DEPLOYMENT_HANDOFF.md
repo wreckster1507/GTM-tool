@@ -4,16 +4,14 @@
 
 - `frontend/`: React + Vite frontend
 - `app/`: FastAPI backend
-- `app/celery_app.py`: Celery app configuration
-- `app/tasks/`: Background workers for enrichment and health jobs
-- `docker-compose.yml`: local/container stack for backend API + Celery worker + Redis + Postgres
-- `Dockerfile`: shared image for the API and worker
+- `docker-compose.yml`: local/container stack for frontend + backend + Postgres
+- `Dockerfile`: backend image
+- `frontend/Dockerfile`: frontend image
 
 ## Runtime Architecture
 
-- `api`: FastAPI application
-- `worker`: Celery worker for account sourcing and enrichment jobs
-- `redis`: Celery broker/result backend
+- `frontend`: static React app served by Nginx
+- `backend`: FastAPI application
 - `postgres`: application database
 
 ## Backend Endpoints To Return After Deployment
@@ -33,10 +31,13 @@ Required for backend:
 
 - `DATABASE_URL`
 - `SYNC_DATABASE_URL`
-- `REDIS_URL`
 - `SECRET_KEY`
 - `ENVIRONMENT`
 - `CORS_ORIGINS`
+
+Required for frontend build:
+
+- `VITE_API_URL`
 
 Optional provider integrations:
 
@@ -67,16 +68,16 @@ docker compose up --build
 
 Services:
 
-- API: `http://localhost:8000`
+- Frontend: `http://localhost:8080`
+- Backend API: `http://localhost:8000`
 - Swagger docs: `http://localhost:8000/docs`
 - Postgres: `localhost:5432`
-- Redis: `localhost:6379`
 
 ## Notes For Infra / Deployment
 
-- The API and worker should use the same image and the same environment variables.
-- Celery must point to a live Redis instance through `REDIS_URL`.
-- The API is not the worker; long-running account sourcing and enrichment tasks are executed by Celery.
+- This deployment shape is intentionally simple: frontend, backend, and Postgres only.
+- The current upload and enrichment flows run inside the backend process using in-memory background jobs.
+- For production-scale heavy enrichment, a dedicated worker/queue would be more durable, but it is not required for this deployment shape.
 - Run database migrations before or during API startup:
 
 ```bash
@@ -85,8 +86,6 @@ alembic upgrade head
 
 ## Recommended Production Shape
 
-- Frontend: Vercel or static hosting
+- Frontend: static container or Vercel
 - Backend API: container host / Azure Container Apps / App Service container
-- Celery worker: separate container/service
-- Redis: managed Redis
 - Postgres: managed Postgres

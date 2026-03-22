@@ -10,6 +10,7 @@ Used across the CRM wherever AI reasoning is needed:
 
 Mock mode: returns None when AZURE_OPENAI_API_KEY is empty.
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -37,16 +38,19 @@ class AzureOpenAIClient:
             return None
 
         try:
-            client = self._get_client()
-            response = client.chat.completions.create(
-                model=settings.AZURE_OPENAI_DEPLOYMENT,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                max_tokens=max_tokens,
-                temperature=0.3,
-            )
+            def _call_model():
+                client = self._get_client()
+                return client.chat.completions.create(
+                    model=settings.AZURE_OPENAI_DEPLOYMENT,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=0.3,
+                )
+
+            response = await asyncio.wait_for(asyncio.to_thread(_call_model), timeout=20)
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"Azure OpenAI call failed: {e}")

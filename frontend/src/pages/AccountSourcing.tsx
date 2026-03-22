@@ -370,7 +370,7 @@ function BatchBar({ batch }: { batch: SourcingBatch }) {
             {batch.status.toUpperCase()}
           </span>
           <div style={{ color: colors.faint, fontSize: 13 }}>
-            {batch.processed_rows}/{batch.total_rows} enriched
+            {batch.processed_rows}/{batch.total_rows} processed
           </div>
         </div>
       </div>

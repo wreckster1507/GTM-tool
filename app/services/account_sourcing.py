@@ -34,6 +34,7 @@ from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.database import AsyncSessionLocal
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.sourcing_batch import SourcingBatch
@@ -1409,6 +1410,9 @@ def _cache_entry_is_fresh(cache: dict[str, Any], key: str, ttl_hours: int) -> bo
 
 
 def _should_run_paid_enrichment(company: Company, cache: dict[str, Any], force_paid_refresh: bool) -> tuple[bool, str]:
+    if company.domain.endswith(".unknown"):
+        return False, "unresolved_domain"
+
     if force_paid_refresh:
         return True, "forced_refresh"
 
@@ -1463,6 +1467,9 @@ def _should_run_hunter(
     contact_coverage: dict[str, int],
     force_paid_refresh: bool,
 ) -> tuple[bool, str]:
+    if company.domain.endswith(".unknown"):
+        return False, "unresolved_domain"
+
     if force_paid_refresh:
         return True, "forced_refresh"
 
@@ -1713,6 +1720,68 @@ def row_to_company_fields(row: dict[str, str]) -> dict:
 
 # ── Tiered Enrichment Pipeline ──────────────────────────────────────────────
 
+_DOMAIN_RESOLUTION_TIMEOUT_SECONDS = 15
+_FREE_ENRICHMENT_TIMEOUT_SECONDS = 20
+_PAID_ENRICHMENT_TIMEOUT_SECONDS = 30
+_AI_SUMMARY_TIMEOUT_SECONDS = 25
+
+
+def _pipeline_stamp(cache: dict[str, Any], stage: str, status: str, detail: str | None = None) -> None:
+    pipeline = cache.get("pipeline") if isinstance(cache.get("pipeline"), dict) else {}
+    events = pipeline.get("events") if isinstance(pipeline.get("events"), list) else []
+    events.append(
+        {
+            "stage": stage,
+            "status": status,
+            "detail": detail,
+            "at": datetime.utcnow().isoformat(),
+        }
+    )
+    pipeline["events"] = events[-20:]
+    pipeline["current_stage"] = stage
+    pipeline["status"] = status
+    if detail:
+        pipeline["detail"] = detail
+    cache["pipeline"] = pipeline
+
+
+def _set_pipeline_final_status(cache: dict[str, Any], status: str, detail: str | None = None) -> None:
+    pipeline = cache.get("pipeline") if isinstance(cache.get("pipeline"), dict) else {}
+    pipeline["status"] = status
+    pipeline["finished_at"] = datetime.utcnow().isoformat()
+    if detail:
+        pipeline["detail"] = detail
+    cache["pipeline"] = pipeline
+
+
+def _pipeline_has_degraded_stage(cache: dict[str, Any]) -> bool:
+    pipeline = cache.get("pipeline") if isinstance(cache.get("pipeline"), dict) else {}
+    events = pipeline.get("events") if isinstance(pipeline.get("events"), list) else []
+    degraded_statuses = {"fallback", "timeout", "failed"}
+    return any(
+        isinstance(event, dict) and str(event.get("status") or "").lower() in degraded_statuses
+        for event in events
+    )
+
+
+def _summary_upload_context(company: Company) -> dict[str, Any]:
+    import_block = company.enrichment_sources if isinstance(company.enrichment_sources, dict) else {}
+    import_block = import_block.get("import") if isinstance(import_block.get("import"), dict) else {}
+    analyst = import_block.get("analyst") if isinstance(import_block.get("analyst"), dict) else {}
+    prospecting = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
+    return {
+        "industry": company.industry,
+        "description": company.description,
+        "core_focus": analyst.get("core_focus"),
+        "category": analyst.get("category"),
+        "icp_why": analyst.get("icp_why"),
+        "intent_why": analyst.get("intent_why"),
+        "account_thesis": company.account_thesis or prospecting.get("account_thesis"),
+        "why_now": company.why_now or prospecting.get("why_now"),
+        "beacon_angle": company.beacon_angle or prospecting.get("beacon_angle"),
+        "recommended_outreach_strategy": prospecting.get("recommended_outreach_strategy"),
+    }
+
 async def enrich_company_tiered(
     company_id: UUID,
     session: AsyncSession,
@@ -1729,17 +1798,44 @@ async def enrich_company_tiered(
         logger.warning(f"enrich_company_tiered: company {company_id} not found")
         return None
 
-    # Resolve .unknown domain first
-    if company.domain.endswith(".unknown"):
-        from app.services.domain_resolver import resolve_and_update_domain
-        resolved = await resolve_and_update_domain(company, session)
-        if not resolved:
-            logger.warning(f"Could not resolve domain for '{company.name}', skipping enrichment")
-            return company
-
     # JSONB is not mutation-tracked by default; always work on a deep copy so
     # assignment marks the field dirty and persists new cache content.
     cache: dict = copy.deepcopy(company.enrichment_cache or {})
+    summary_context = _summary_upload_context(company)
+    _pipeline_stamp(cache, "start", "started", "Beginning enrichment pipeline")
+    domain_available = not company.domain.endswith(".unknown")
+
+    # Resolve .unknown domain first, but do not block the whole company if it fails.
+    if not domain_available:
+        from app.services.domain_resolver import resolve_and_update_domain
+
+        _pipeline_stamp(cache, "domain_resolution", "started", f"Resolving domain for {company.name}")
+        resolved = False
+        resolution_detail = None
+        try:
+            resolved = await asyncio.wait_for(
+                resolve_and_update_domain(company, session),
+                timeout=_DOMAIN_RESOLUTION_TIMEOUT_SECONDS,
+            )
+            if resolved:
+                company = await session.get(Company, company_id)
+                domain_available = bool(company and not company.domain.endswith(".unknown"))
+                resolution_detail = f"Resolved domain to {company.domain}" if company else "Resolved domain"
+            else:
+                resolution_detail = "Domain unresolved; continuing with company-name-only enrichment"
+        except asyncio.TimeoutError:
+            resolution_detail = "Domain resolution timed out; continuing without a resolved domain"
+            logger.warning(f"Domain resolution timed out for '{company.name}'")
+        except Exception as exc:
+            resolution_detail = f"Domain resolution failed: {exc}"
+            logger.warning(f"Domain resolution failed for '{company.name}': {exc}")
+
+        _pipeline_stamp(
+            cache,
+            "domain_resolution",
+            "resolved" if domain_available else "fallback",
+            resolution_detail,
+        )
 
     # ── Tier 1: Free sources ────────────────────────────────────────────────
     from app.clients.web_search import WebSearchClient
@@ -1747,11 +1843,23 @@ async def enrich_company_tiered(
     scraped: dict[str, Any] = {"text": "", "pages_scraped": 0}
     intent: dict[str, Any] = {}
 
-    scraped_result, intent_result = await asyncio.gather(
-        ws.scrape_company_pages(company.domain),
-        ws.search_intent_signals(company.name, company.domain),
-        return_exceptions=True,
-    )
+    free_research_mode = "website + company-name signals" if domain_available else "company-name signals only"
+    _pipeline_stamp(cache, "free_research", "started", f"Collecting {free_research_mode}")
+    try:
+        scraped_result, intent_result = await asyncio.wait_for(
+            asyncio.gather(
+                ws.scrape_company_pages(company.domain) if domain_available else asyncio.sleep(0, result={"text": "", "pages_scraped": 0}),
+                ws.search_intent_signals(company.name, company.domain),
+                return_exceptions=True,
+            ),
+            timeout=_FREE_ENRICHMENT_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        scraped_result = {"text": "", "pages_scraped": 0}
+        intent_result = {}
+        _pipeline_stamp(cache, "free_research", "timeout", "Free research timed out; continuing with uploaded context")
+    else:
+        _pipeline_stamp(cache, "free_research", "completed", f"Collected {free_research_mode}")
 
     if isinstance(scraped_result, Exception):
         logger.error(f"Website scrape failed for {company.domain}: {scraped_result}")
@@ -1784,6 +1892,8 @@ async def enrich_company_tiered(
     should_run_paid, paid_reason = _should_run_paid_enrichment(company, cache, force_paid_refresh)
     cache["cost_controls"] = {
         "data": {
+            "domain_available": domain_available,
+            "research_mode": free_research_mode,
             "paid_enrichment": "allowed" if should_run_paid else "skipped",
             "paid_reason": paid_reason,
         },
@@ -1795,6 +1905,7 @@ async def enrich_company_tiered(
 
     # ── Tier 2: Apollo (paid, gated) ────────────────────────────────────────
     if should_run_paid:
+        _pipeline_stamp(cache, "paid_enrichment", "started", f"Paid enrichment allowed: {paid_reason}")
         from app.clients.apollo import ApolloClient
         apollo = ApolloClient()
 
@@ -1804,15 +1915,24 @@ async def enrich_company_tiered(
         apollo_company_result = None
         apollo_contacts_result = None
         if run_apollo_company or run_apollo_contacts:
-            apollo_company_result, apollo_contacts_result = await asyncio.gather(
-                apollo.enrich_company(company.domain) if run_apollo_company else asyncio.sleep(0, result=None),
-                apollo.search_people(
-                    domain=company.domain,
-                    limit=10,
-                    seniorities=["c_suite", "vp", "director"],
-                ) if run_apollo_contacts else asyncio.sleep(0, result=[]),
-                return_exceptions=True,
-            )
+            try:
+                apollo_company_result, apollo_contacts_result = await asyncio.wait_for(
+                    asyncio.gather(
+                        apollo.enrich_company(company.domain) if run_apollo_company else asyncio.sleep(0, result=None),
+                        apollo.search_people(
+                            domain=company.domain,
+                            limit=10,
+                            seniorities=["c_suite", "vp", "director"],
+                        ) if run_apollo_contacts else asyncio.sleep(0, result=[]),
+                        return_exceptions=True,
+                    ),
+                    timeout=_PAID_ENRICHMENT_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                apollo_company_result = None
+                apollo_contacts_result = []
+                logger.warning(f"Apollo enrichment timed out for {company.name} ({company.domain})")
+                _pipeline_stamp(cache, "paid_enrichment", "timeout", "Apollo enrichment timed out; continuing")
 
         if isinstance(apollo_company_result, Exception):
             logger.error(f"Apollo company enrichment failed for {company.domain}: {apollo_company_result}")
@@ -1859,11 +1979,20 @@ async def enrich_company_tiered(
             hunter_contacts_result = None
             hunter_company_result = None
             if run_hunter_contacts or run_hunter_company:
-                hunter_contacts_result, hunter_company_result = await asyncio.gather(
-                    hunter.domain_search(company.domain) if run_hunter_contacts else asyncio.sleep(0, result=None),
-                    hunter.company_enrichment(company.domain) if run_hunter_company else asyncio.sleep(0, result=None),
-                    return_exceptions=True,
-                )
+                try:
+                    hunter_contacts_result, hunter_company_result = await asyncio.wait_for(
+                        asyncio.gather(
+                            hunter.domain_search(company.domain) if run_hunter_contacts else asyncio.sleep(0, result=None),
+                            hunter.company_enrichment(company.domain) if run_hunter_company else asyncio.sleep(0, result=None),
+                            return_exceptions=True,
+                        ),
+                        timeout=_PAID_ENRICHMENT_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    hunter_contacts_result = None
+                    hunter_company_result = None
+                    logger.warning(f"Hunter enrichment timed out for {company.name} ({company.domain})")
+                    _pipeline_stamp(cache, "paid_enrichment", "timeout", "Hunter enrichment timed out; continuing")
 
             if isinstance(hunter_contacts_result, Exception):
                 logger.error(f"Hunter domain search failed for {company.domain}: {hunter_contacts_result}")
@@ -1879,16 +2008,24 @@ async def enrich_company_tiered(
             elif hunter_company_result:
                 cache["hunter_company"] = {"data": hunter_company_result, "fetched_at": datetime.utcnow().isoformat()}
                 logger.info(f"Hunter enriched company: {company.domain}")
+        _pipeline_stamp(cache, "paid_enrichment", "completed", "Finished paid enrichment stage")
+    else:
+        _pipeline_stamp(cache, "paid_enrichment", "skipped", paid_reason)
 
     # ── AI Tier: Claude summarization ───────────────────────────────────────
     from app.clients.claude_enrichment import summarize_company
+    _pipeline_stamp(cache, "ai_summary", "started", "Generating AI summary")
     try:
-        summary = await summarize_company(
-            scraped_data=scraped,
-            apollo_data=apollo_data,
-            search_results=intent,
-            company_name=company.name,
-            domain=company.domain,
+        summary = await asyncio.wait_for(
+            summarize_company(
+                scraped_data=scraped,
+                apollo_data=apollo_data,
+                search_results=intent,
+                company_name=company.name,
+                domain=company.domain,
+                upload_context=summary_context,
+            ),
+            timeout=_AI_SUMMARY_TIMEOUT_SECONDS,
         )
         summary_source = summary.get("_source", "unknown")
         is_fallback = summary_source == "fallback"
@@ -1912,10 +2049,16 @@ async def enrich_company_tiered(
             cache["ai_summary"] = {"data": summary, "fetched_at": datetime.utcnow().isoformat()}
 
         logger.info(f"AI summary generated for {company.name} from source={summary_source} with {len(summary)} fields")
+        _pipeline_stamp(cache, "ai_summary", "completed", f"AI summary source={summary_source}")
+    except asyncio.TimeoutError:
+        logger.error(f"Claude summarization timed out for {company.name}")
+        _pipeline_stamp(cache, "ai_summary", "timeout", "AI summary timed out")
     except Exception as e:
         logger.error(f"Claude summarization failed for {company.name}: {e}")
+        _pipeline_stamp(cache, "ai_summary", "failed", str(e))
 
     # ── Committee coverage & prospecting priorities ─────────────────────────
+    _pipeline_stamp(cache, "committee_analysis", "started", "Building committee coverage and priorities")
     try:
         committee_coverage = await _build_committee_coverage(company, session)
         cache["committee_coverage"] = {
@@ -1926,8 +2069,10 @@ async def enrich_company_tiered(
             "data": _build_prospecting_priorities(company, committee_coverage, intent),
             "fetched_at": datetime.utcnow().isoformat(),
         }
+        _pipeline_stamp(cache, "committee_analysis", "completed", "Built committee coverage and prospecting priorities")
     except Exception as e:
         logger.error(f"Committee coverage analysis failed for {company.name}: {e}")
+        _pipeline_stamp(cache, "committee_analysis", "failed", str(e))
 
     # ── Persist ─────────────────────────────────────────────────────────────
     contacts = (
@@ -1937,6 +2082,9 @@ async def enrich_company_tiered(
     for contact in contacts:
         refresh_contact_sequence_plan(contact, company)
         session.add(contact)
+    final_status = "completed_partial" if _pipeline_has_degraded_stage(cache) else "completed"
+    final_detail = "Completed with resolved domain" if domain_available else "Completed without resolved domain"
+    _set_pipeline_final_status(cache, final_status, final_detail)
     company.enrichment_cache = cache
     company.enriched_at = datetime.utcnow()
     company.icp_score, company.icp_tier = score_company(company)
@@ -1949,6 +2097,7 @@ async def enrich_company_tiered(
         .values(enrichment_cache=cache)
     )
 
+    company.enrichment_cache = cache
     session.add(company)
     await session.commit()
     await session.refresh(company)
@@ -2065,22 +2214,29 @@ async def process_batch(batch_id: UUID, session: AsyncSession) -> SourcingBatch 
     companies = result.scalars().all()
 
     processed = 0
-    for company in companies:
+    failed = int(batch.failed_rows or 0)
+    total_companies = len(companies)
+    for index, company in enumerate(companies, start=1):
         try:
-            await enrich_company_tiered(company.id, session)
-            processed += 1
+            logger.info(f"Batch {batch_id}: starting company {index}/{total_companies} -> {company.name} ({company.domain})")
+            async with AsyncSessionLocal() as company_session:
+                await enrich_company_tiered(company.id, company_session)
+            logger.info(f"Batch {batch_id}: finished company {index}/{total_companies} -> {company.name}")
         except Exception as e:
             logger.error(f"Batch enrichment failed for {company.name}: {e}")
             errors = batch.error_log or []
             errors.append({"company": company.name, "error": str(e)})
             batch.error_log = errors
+            failed += 1
 
+        processed = index
         batch.processed_rows = processed
+        batch.failed_rows = failed
         batch.updated_at = datetime.utcnow()
         session.add(batch)
         await session.commit()
 
-    batch.status = "completed"
+    batch.status = "failed" if failed == total_companies and total_companies > 0 else "completed"
     batch.updated_at = datetime.utcnow()
     session.add(batch)
     await session.commit()
