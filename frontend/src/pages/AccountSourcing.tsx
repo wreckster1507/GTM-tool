@@ -867,6 +867,7 @@ export default function AccountSourcing() {
   const [checkingBatch, setCheckingBatch] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
+  const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -881,6 +882,26 @@ export default function AccountSourcing() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
+    if (scope === "workspace") {
+      const confirmation = window.prompt('Type RESET to clear workspace data (companies, contacts, deals, meetings, demos, sourcing).');
+      if (confirmation !== "RESET") return;
+    } else {
+      const ok = window.confirm("Clear all Account Sourcing imports, sourced companies, related contacts, and batches?");
+      if (!ok) return;
+    }
+
+    setResettingScope(scope);
+    try {
+      const result = await accountSourcingApi.resetData(scope);
+      setActiveBatch(null);
+      await load();
+      window.alert(`${scope === "workspace" ? "Workspace" : "Account Sourcing"} cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
+    } finally {
+      setResettingScope("");
+    }
   }, [load]);
 
   const checkActiveBatchStatus = useCallback(async () => {
@@ -963,6 +984,46 @@ export default function AccountSourcing() {
               </p>
             </div>
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => void runReset("account-sourcing")}
+                disabled={Boolean(resettingScope)}
+                style={{
+                  border: "1px solid #f0c2c8",
+                  background: "#fff6f7",
+                  color: colors.red,
+                  borderRadius: 12,
+                  padding: "10px 14px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontWeight: 700,
+                  cursor: resettingScope ? "not-allowed" : "pointer",
+                  opacity: resettingScope ? 0.7 : 1,
+                }}
+              >
+                {resettingScope === "account-sourcing" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
+                Clear Account Sourcing
+              </button>
+              <button
+                onClick={() => void runReset("workspace")}
+                disabled={Boolean(resettingScope)}
+                style={{
+                  border: "1px solid #f5d4d8",
+                  background: "#fffafb",
+                  color: colors.red,
+                  borderRadius: 12,
+                  padding: "10px 14px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontWeight: 700,
+                  cursor: resettingScope ? "not-allowed" : "pointer",
+                  opacity: resettingScope ? 0.7 : 1,
+                }}
+              >
+                {resettingScope === "workspace" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
+                Clear Workspace
+              </button>
               <button
                 onClick={async () => {
                   setExportingContacts(true);

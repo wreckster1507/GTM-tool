@@ -537,6 +537,12 @@ export const accountSourcingApi = {
     }
     return res.blob();
   },
+
+  resetData: (scope: "account-sourcing" | "prospecting" | "workspace") =>
+    request<{ scope: string; summary: Record<string, number> }>(
+      `/api/v1/account-sourcing/reset/${scope}`,
+      { method: "POST" }
+    ),
 };
 
 // ── Workspace ────────────────────────────────────────────────────────────────

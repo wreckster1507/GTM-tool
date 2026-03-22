@@ -87,3 +87,8 @@ def get_prospecting_batch(batch_id: str) -> dict[str, Any] | None:
         "companies": companies,
         "completed_enrichments": completed,
     }
+
+
+def clear_background_jobs() -> None:
+    _jobs.clear()
+    _prospecting_batches.clear()

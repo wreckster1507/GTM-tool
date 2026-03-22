@@ -37,10 +37,31 @@ from app.services.account_sourcing import (
     row_to_company_fields,
     row_to_contact_fields,
 )
-from app.services.background_jobs import queue_job
+from app.services.background_jobs import clear_background_jobs, queue_job
+from app.services.data_reset import (
+    reset_account_sourcing_data,
+    reset_prospecting_data,
+    reset_workspace_data,
+)
 from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
+
+
+@router.post("/reset/{scope}")
+async def reset_sourcing_data(scope: str, session: DBSession = None):
+    normalized = (scope or "").strip().lower()
+    if normalized == "account-sourcing":
+        summary = await reset_account_sourcing_data(session)
+    elif normalized == "prospecting":
+        summary = await reset_prospecting_data(session)
+    elif normalized == "workspace":
+        summary = await reset_workspace_data(session)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported reset scope")
+
+    clear_background_jobs()
+    return {"scope": normalized, "summary": summary}
 
 
 def _joined_signal_values(items: object) -> str:

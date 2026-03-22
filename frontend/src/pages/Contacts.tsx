@@ -1,8 +1,8 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
-import { companiesApi, contactsApi } from "../lib/api";
+import { accountSourcingApi, companiesApi, contactsApi } from "../lib/api";
 import type { Company, Contact } from "../types";
-import { Search, Users, CheckCircle2, XCircle, Sparkles, Trash2 } from "lucide-react";
+import { Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 
@@ -28,13 +28,19 @@ export default function Contacts() {
   const [emailFilter, setEmailFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [resetting, setResetting] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     Promise.all([contactsApi.list(), companiesApi.list()]).then(([cs, co]) => {
       setContacts(cs);
       setCompanyNameById(Object.fromEntries(co.map((c: Company) => [c.id, c.name])));
       setLoading(false);
     });
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   const companyOptions = Array.from(
@@ -80,6 +86,25 @@ export default function Contacts() {
             <span className="crm-chip">Persona-aware outreach</span>
           </div>
           <div className="crm-toolbar-actions">
+            <button
+              type="button"
+              className="crm-button soft h-12 px-4 text-[13px] border-[#f2cfd4] text-[#b42336] hover:bg-[#fff6f7]"
+              disabled={resetting}
+              onClick={async () => {
+                if (!window.confirm("Clear all Prospecting contacts, outreach sequences, and contact activities while keeping companies?")) return;
+                setResetting(true);
+                try {
+                  const result = await accountSourcingApi.resetData("prospecting");
+                  load();
+                  window.alert(`Prospecting cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
+                } finally {
+                  setResetting(false);
+                }
+              }}
+            >
+              {resetting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertCircle className="h-3.5 w-3.5" />}
+              Clear Prospecting
+            </button>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8094a8] pointer-events-none" />
               <input
