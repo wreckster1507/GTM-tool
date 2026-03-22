@@ -24,26 +24,22 @@ Flow:
 """
 import csv
 import io
-import json
 import re
 import uuid
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from app.config import settings
 from app.core.dependencies import DBSession
+from app.database import AsyncSessionLocal
 from app.models.company import Company
 from app.repositories.company import CompanyRepository
+from app.services.background_jobs import create_prospecting_batch, get_prospecting_batch, queue_job
 from app.services.icp_scorer import score_company
-from app.tasks.enrichment import enrich_company_task
 
 router = APIRouter(prefix="/prospecting", tags=["prospecting"])
-
-_BATCH_TTL = 86_400  # 24 hours
 
 # ── Column alias map ─────────────────────────────────────────────────────────
 # Maps our internal field → list of acceptable CSV column names (lowercase)
@@ -62,11 +58,6 @@ _ALIASES: dict[str, list[str]] = {
     "total_funding":  ["total funding (usd)", "total funding",
                        "annual revenue (usd)", "annual revenue", "arr", "revenue"],
 }
-
-
-def _get_redis():
-    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-
 
 def _find(row: dict, field: str) -> str:
     """Return the first non-empty value matching any alias for field."""
@@ -247,12 +238,23 @@ async def bulk_prospect(file: UploadFile = File(...), session: DBSession = None)
             await session.commit()
             await session.refresh(company)
 
-            task = enrich_company_task.delay(str(company.id))
+            async def run(company_id: str = str(company.id)) -> dict:
+                from app.services.enrichment_orchestrator import enrich_company_by_id
+
+                async with AsyncSessionLocal() as background_session:
+                    enriched = await enrich_company_by_id(uuid.UUID(company_id), background_session)
+                    return {"company_id": company_id, "enriched": bool(enriched)}
+
+            task_id = queue_job(
+                kind="company_enrichment",
+                runner=run,
+                metadata={"company_id": str(company.id), "domain": domain},
+            )
             created.append({
                 "name": name,
                 "domain": domain,
                 "company_id": str(company.id),
-                "task_id": task.id,
+                "task_id": task_id,
                 "status": "queued",
             })
 
@@ -272,9 +274,7 @@ async def bulk_prospect(file: UploadFile = File(...), session: DBSession = None)
         "failed_rows": failed,
     }
 
-    r = _get_redis()
-    await r.setex(f"batch:{batch_id}", _BATCH_TTL, json.dumps(batch))
-    await r.aclose()
+    create_prospecting_batch(batch)
 
     return batch
 
@@ -282,26 +282,7 @@ async def bulk_prospect(file: UploadFile = File(...), session: DBSession = None)
 @router.get("/status/{batch_id}")
 async def batch_status(batch_id: str):
     """Poll enrichment progress for a bulk import batch."""
-    r = _get_redis()
-    raw = await r.get(f"batch:{batch_id}")
-    await r.aclose()
-
-    if not raw:
-        raise HTTPException(status_code=404, detail="Batch not found or expired (24h TTL)")
-
-    batch = json.loads(raw)
-
-    from app.celery_app import celery_app
-    from celery.result import AsyncResult
-
-    completed = 0
-    for company in batch.get("companies", []):
-        task_id = company.get("task_id")
-        if task_id:
-            result = AsyncResult(task_id, app=celery_app)
-            company["status"] = result.state.lower()
-            if result.state == "SUCCESS":
-                completed += 1
-
-    batch["completed_enrichments"] = completed
+    batch = get_prospecting_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
     return batch

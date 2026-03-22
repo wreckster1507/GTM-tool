@@ -3,8 +3,6 @@ uvicorn[standard]==0.30.6
 sqlmodel==0.0.21
 asyncpg==0.29.0
 alembic==1.13.2
-celery[redis]==5.4.0
-redis==5.0.8
 python-dotenv==1.0.1
 pydantic-settings==2.4.0
 faker==26.0.0

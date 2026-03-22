@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
 from app.core.dependencies import DBSession, Pagination
+from app.database import AsyncSessionLocal
 from app.models.company import Company, CompanyRead, CompanyUpdate
 from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
@@ -36,6 +37,7 @@ from app.services.account_sourcing import (
     row_to_company_fields,
     row_to_contact_fields,
 )
+from app.services.background_jobs import queue_job
 from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
@@ -290,9 +292,31 @@ async def upload_csv(
     session.add(batch)
     await session.commit()
 
-    # Queue batch enrichment task
-    from app.tasks.enrichment import enrich_batch_task
-    enrich_batch_task.delay(str(batch.id))
+    async def run_batch() -> dict:
+        from app.services.account_sourcing import process_batch
+
+        try:
+            async with AsyncSessionLocal() as background_session:
+                processed = await process_batch(batch.id, background_session)
+                return {
+                    "batch_id": str(batch.id),
+                    "status": processed.status if processed else "failed",
+                }
+        except Exception:
+            async with AsyncSessionLocal() as background_session:
+                batch_record = await background_session.get(SourcingBatch, batch.id)
+                if batch_record:
+                    batch_record.status = "failed"
+                    batch_record.updated_at = datetime.utcnow()
+                    background_session.add(batch_record)
+                    await background_session.commit()
+            raise
+
+    queue_job(
+        kind="sourcing_batch_enrichment",
+        runner=run_batch,
+        metadata={"batch_id": str(batch.id), "filename": batch.filename},
+    )
 
     await session.refresh(batch)
     return batch
@@ -490,11 +514,21 @@ async def re_enrich_company(company_id: UUID, session: DBSession = None):
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    from app.tasks.enrichment import re_enrich_company_task
-    task = re_enrich_company_task.delay(str(company_id))
+    async def run() -> dict:
+        from app.services.account_sourcing import re_enrich_company as re_enrich_company_service
+
+        async with AsyncSessionLocal() as background_session:
+            refreshed = await re_enrich_company_service(company_id, background_session)
+            return {"company_id": str(company_id), "enriched": bool(refreshed)}
+
+    task_id = queue_job(
+        kind="company_re_enrichment",
+        runner=run,
+        metadata={"company_id": str(company_id), "domain": company.domain},
+    )
     return {
         "company_id": str(company_id),
-        "task_id": task.id,
+        "task_id": task_id,
         "status": "queued",
         "message": "Re-enrichment started",
     }
@@ -571,11 +605,21 @@ async def re_enrich_contact(contact_id: UUID, session: DBSession = None):
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
-    from app.tasks.enrichment import re_enrich_contact_task
-    task = re_enrich_contact_task.delay(str(contact_id))
+    async def run() -> dict:
+        from app.services.account_sourcing import re_enrich_contact_service
+
+        async with AsyncSessionLocal() as background_session:
+            refreshed = await re_enrich_contact_service(contact_id, background_session)
+            return {"contact_id": str(contact_id), "enriched": bool(refreshed)}
+
+    task_id = queue_job(
+        kind="contact_re_enrichment",
+        runner=run,
+        metadata={"contact_id": str(contact_id)},
+    )
     return {
         "contact_id": str(contact_id),
-        "task_id": task.id,
+        "task_id": task_id,
         "status": "queued",
         "message": "Contact re-enrichment started",
     }
