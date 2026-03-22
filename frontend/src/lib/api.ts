@@ -470,11 +470,17 @@ export const accountSourcingApi = {
   batchCompanies: (batchId: string) =>
     requestList<Company>(`/api/v1/account-sourcing/batches/${batchId}/companies`),
 
-  listCompanies: (skip = 0, limit = 200) =>
-    requestList<Company>(`/api/v1/account-sourcing/companies?skip=${skip}&limit=${limit}`),
+  listCompanies: (skip = 0, limit = 200, assignedRepEmail?: string) =>
+    requestList<Company>(`/api/v1/account-sourcing/companies?skip=${skip}&limit=${limit}${assignedRepEmail ? `&assigned_rep_email=${encodeURIComponent(assignedRepEmail)}` : ""}`),
 
   getCompany: (companyId: string) =>
     request<Company>(`/api/v1/account-sourcing/companies/${companyId}`),
+
+  updateCompany: (companyId: string, data: Record<string, unknown>) =>
+    request<Company>(`/api/v1/account-sourcing/companies/${companyId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   reEnrichCompany: (companyId: string) =>
     request<{ company_id: string; task_id: string; status: string; message: string }>(
@@ -484,6 +490,15 @@ export const accountSourcingApi = {
 
   getContacts: (companyId: string) =>
     requestList<Contact>(`/api/v1/account-sourcing/companies/${companyId}/contacts`),
+
+  getContact: (contactId: string) =>
+    request<Contact>(`/api/v1/account-sourcing/contacts/${contactId}`),
+
+  updateContact: (contactId: string, data: Record<string, unknown>) =>
+    request<Contact>(`/api/v1/account-sourcing/contacts/${contactId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   reEnrichContact: (contactId: string) =>
     request<{ contact_id: string; task_id: string; status: string; message: string }>(
@@ -496,6 +511,32 @@ export const accountSourcingApi = {
       `/api/v1/account-sourcing/companies/${companyId}/push-instantly?campaign_id=${campaignId}`,
       { method: "POST" }
     ),
+
+  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.assignedRep) search.set("assigned_rep", params.assignedRep);
+    if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
+    if (params?.disposition) search.set("disposition", params.disposition);
+    const qs = search.toString();
+    const res = await fetch(`${BASE}/api/v1/account-sourcing/export${qs ? `?${qs}` : ""}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail ?? "Export failed");
+    }
+    return res.blob();
+  },
+
+  exportContactsCsv: async (params?: { assignedRepEmail?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
+    const qs = search.toString();
+    const res = await fetch(`${BASE}/api/v1/account-sourcing/export-contacts${qs ? `?${qs}` : ""}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail ?? "Contact export failed");
+    }
+    return res.blob();
+  },
 };
 
 // ── Workspace ────────────────────────────────────────────────────────────────

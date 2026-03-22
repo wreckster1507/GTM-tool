@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to this file so it works regardless of CWD
@@ -18,6 +19,14 @@ class Settings(BaseSettings):
     # App
     SECRET_KEY: str = "dev_secret_key"
     ENVIRONMENT: str = "development"
+    CORS_ORIGINS: str = ",".join([
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ])
 
     # External API keys (empty string = mock mode)
     APOLLO_API_KEY: str = ""
@@ -48,6 +57,10 @@ class Settings(BaseSettings):
     def claude_api_key(self) -> str:
         """Return whichever Claude key is set (ANTHROPIC_API_KEY or CLAUDE_API_KEY)."""
         return self.ANTHROPIC_API_KEY or self.CLAUDE_API_KEY
+
+    @property
+    def cors_origins(self) -> List[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     # Resend (email sending)
     RESEND_API_KEY: str = ""

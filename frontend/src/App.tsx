@@ -15,6 +15,7 @@ import SalesWorkspace from "./pages/SalesWorkspace";
 import CustomDemoAssistance from "./pages/CustomDemoAssistance";
 import AccountSourcing from "./pages/AccountSourcing";
 import AccountSourcingCompanyDetail from "./pages/AccountSourcingCompanyDetail";
+import AccountSourcingContactDetail from "./pages/AccountSourcingContactDetail";
 import KnowledgeBase from "./pages/KnowledgeBase";
 
 export default function App() {
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="companies" element={<Companies />} />
           <Route path="account-sourcing" element={<AccountSourcing />} />
           <Route path="account-sourcing/:id" element={<AccountSourcingCompanyDetail />} />
+          <Route path="account-sourcing/contacts/:id" element={<AccountSourcingContactDetail />} />
           <Route path="companies/:id" element={<CompanyDetail />} />
           <Route path="contacts" element={<Contacts />} />
           <Route path="prospecting" element={<Contacts />} />

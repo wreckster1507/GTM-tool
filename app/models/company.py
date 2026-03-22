@@ -33,6 +33,20 @@ class Company(CompanyBase, table=True):
     intent_signals: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     sourcing_batch_id: Optional[UUID] = Field(default=None, foreign_key="sourcing_batches.id", index=True)
     enrichment_cache: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    assigned_rep: Optional[str] = None
+    assigned_rep_email: Optional[str] = None
+    assigned_rep_name: Optional[str] = None
+    outreach_status: Optional[str] = None
+    disposition: Optional[str] = None
+    rep_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
+    account_thesis: Optional[str] = Field(default=None, sa_column=Column(Text))
+    why_now: Optional[str] = Field(default=None, sa_column=Column(Text))
+    beacon_angle: Optional[str] = Field(default=None, sa_column=Column(Text))
+    recommended_outreach_lane: Optional[str] = None
+    instantly_campaign_id: Optional[str] = None
+    prospecting_profile: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    outreach_plan: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    last_outreach_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -52,6 +66,20 @@ class CompanyRead(CompanyBase):
     intent_signals: Optional[Any] = None
     sourcing_batch_id: Optional[UUID] = None
     enrichment_cache: Optional[Any] = None
+    assigned_rep: Optional[str] = None
+    assigned_rep_email: Optional[str] = None
+    assigned_rep_name: Optional[str] = None
+    outreach_status: Optional[str] = None
+    disposition: Optional[str] = None
+    rep_feedback: Optional[str] = None
+    account_thesis: Optional[str] = None
+    why_now: Optional[str] = None
+    beacon_angle: Optional[str] = None
+    recommended_outreach_lane: Optional[str] = None
+    instantly_campaign_id: Optional[str] = None
+    prospecting_profile: Optional[Any] = None
+    outreach_plan: Optional[Any] = None
+    last_outreach_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -71,3 +99,21 @@ class CompanyUpdate(SQLModel):
     icp_tier: Optional[str] = None
     enrichment_sources: Optional[Any] = None
     enriched_at: Optional[datetime] = None
+    intent_signals: Optional[Any] = None
+    description: Optional[str] = None
+    sourcing_batch_id: Optional[UUID] = None
+    enrichment_cache: Optional[Any] = None
+    assigned_rep: Optional[str] = None
+    assigned_rep_email: Optional[str] = None
+    assigned_rep_name: Optional[str] = None
+    outreach_status: Optional[str] = None
+    disposition: Optional[str] = None
+    rep_feedback: Optional[str] = None
+    account_thesis: Optional[str] = None
+    why_now: Optional[str] = None
+    beacon_angle: Optional[str] = None
+    recommended_outreach_lane: Optional[str] = None
+    instantly_campaign_id: Optional[str] = None
+    prospecting_profile: Optional[Any] = None
+    outreach_plan: Optional[Any] = None
+    last_outreach_at: Optional[datetime] = None

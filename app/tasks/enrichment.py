@@ -7,6 +7,7 @@ error on Windows when the global engine's connection pool outlives the loop.
 """
 import asyncio
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from app.celery_app import celery_app
@@ -92,12 +93,69 @@ def enrich_batch_task(self, batch_id: str) -> dict:
 
 
 async def _async_enrich_batch(batch_id: UUID) -> None:
-    from app.services.account_sourcing import process_batch
+    from sqlmodel import select
+
+    from app.models.company import Company
+    from app.models.sourcing_batch import SourcingBatch
+    from app.services.account_sourcing import enrich_company_tiered
+
     engine, SessionLocal = _make_session()
     try:
         async with SessionLocal() as session:
-            batch = await process_batch(batch_id, session)
+            batch = await session.get(SourcingBatch, batch_id)
+            if not batch:
+                return
+
+            batch.status = "processing"
+            batch.updated_at = datetime.utcnow()
+            session.add(batch)
+            await session.commit()
+
+            result = await session.execute(
+                select(Company.id).where(Company.sourcing_batch_id == batch_id)
+            )
+            company_ids = list(result.scalars().all())
+
+        semaphore = asyncio.Semaphore(3)
+        progress_lock = asyncio.Lock()
+        processed = 0
+
+        async def enrich_one(company_id: UUID) -> None:
+            nonlocal processed
+            error_payload = None
+
+            async with semaphore:
+                try:
+                    async with SessionLocal() as company_session:
+                        await enrich_company_tiered(company_id, company_session, force_paid_refresh=False)
+                except Exception as exc:
+                    logger.error(f"Batch enrichment failed for {company_id}: {exc}")
+                    error_payload = {"company_id": str(company_id), "error": str(exc)}
+
+                async with progress_lock:
+                    processed += 1
+                    async with SessionLocal() as progress_session:
+                        progress_batch = await progress_session.get(SourcingBatch, batch_id)
+                        if not progress_batch:
+                            return
+                        progress_batch.processed_rows = processed
+                        if error_payload:
+                            existing_errors = list(progress_batch.error_log or [])
+                            existing_errors.append(error_payload)
+                            progress_batch.error_log = existing_errors
+                        progress_batch.updated_at = datetime.utcnow()
+                        progress_session.add(progress_batch)
+                        await progress_session.commit()
+
+        await asyncio.gather(*(enrich_one(company_id) for company_id in company_ids))
+
+        async with SessionLocal() as session:
+            batch = await session.get(SourcingBatch, batch_id)
             if batch:
+                batch.status = "completed"
+                batch.updated_at = datetime.utcnow()
+                session.add(batch)
+                await session.commit()
                 logger.info(f"Batch {batch_id} complete: {batch.processed_rows}/{batch.total_rows}")
     finally:
         await engine.dispose()
@@ -163,5 +221,4 @@ async def _async_re_enrich_contact(contact_id: UUID) -> None:
             await re_enrich_contact_service(contact_id, session)
     finally:
         await engine.dispose()
-
 

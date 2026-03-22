@@ -18,6 +18,20 @@ export interface Company {
   intent_signals?: Record<string, unknown>;
   sourcing_batch_id?: string;
   enrichment_cache?: Record<string, unknown>;
+  assigned_rep?: string;
+  assigned_rep_email?: string;
+  assigned_rep_name?: string;
+  outreach_status?: string;
+  disposition?: string;
+  rep_feedback?: string;
+  account_thesis?: string;
+  why_now?: string;
+  beacon_angle?: string;
+  recommended_outreach_lane?: string;
+  instantly_campaign_id?: string;
+  prospecting_profile?: Record<string, unknown>;
+  outreach_plan?: Record<string, unknown>;
+  last_outreach_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -38,6 +52,16 @@ export interface Contact {
   enriched_at?: string;
   enrichment_data?: Record<string, unknown>;
   persona_type?: string; // champion | buyer | evaluator | blocker
+  assigned_rep_email?: string;
+  outreach_lane?: string;
+  sequence_status?: string;
+  instantly_status?: string;
+  instantly_campaign_id?: string;
+  warm_intro_strength?: number;
+  warm_intro_path?: Record<string, unknown>;
+  conversation_starter?: string;
+  personalization_notes?: string;
+  talking_points?: string[];
   created_at: string;
   updated_at: string;
 }

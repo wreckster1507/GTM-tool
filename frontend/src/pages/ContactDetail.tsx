@@ -5,6 +5,7 @@ import { activitiesApi, companiesApi, contactsApi, outreachApi } from "../lib/ap
 import type { Activity, Company, Contact, OutreachSequence } from "../types";
 import { avatarColor, formatDate, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
+import AccountSourcingContactDetail from "./AccountSourcingContactDetail";
 
 export default function ContactDetail() {
   const { id } = useParams<{ id: string }>();
@@ -79,6 +80,20 @@ export default function ContactDetail() {
 
   if (!contact) {
     return <div className="crm-panel p-14 text-center crm-muted">Contact not found.</div>;
+  }
+
+  const isSourcedContact = Boolean(
+    company?.sourcing_batch_id
+    || (contact.enrichment_data && typeof contact.enrichment_data === "object" && (
+      (contact.enrichment_data as Record<string, unknown>).raw_row
+      || (contact.enrichment_data as Record<string, unknown>).sequence_plan
+    ))
+    || contact.outreach_lane
+    || contact.warm_intro_path
+  );
+
+  if (isSourcedContact) {
+    return <AccountSourcingContactDetail />;
   }
 
   return (

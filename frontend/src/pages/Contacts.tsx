@@ -21,6 +21,11 @@ export default function Contacts() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companyNameById, setCompanyNameById] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
+  const [companyFilter, setCompanyFilter] = useState("");
+  const [personaFilter, setPersonaFilter] = useState("");
+  const [laneFilter, setLaneFilter] = useState("");
+  const [sequenceFilter, setSequenceFilter] = useState("");
+  const [emailFilter, setEmailFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
@@ -32,11 +37,36 @@ export default function Contacts() {
     });
   }, []);
 
-  const filtered = contacts.filter((c) =>
-    `${c.first_name} ${c.last_name}`.toLowerCase().includes(search.toLowerCase()) ||
-    c.email?.toLowerCase().includes(search.toLowerCase()) ||
-    c.title?.toLowerCase().includes(search.toLowerCase())
-  );
+  const companyOptions = Array.from(
+    new Set(
+      contacts
+        .map((c) => c.company_name || (c.company_id ? companyNameById[c.company_id] : ""))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  const filtered = contacts.filter((c) => {
+    const companyLabel = c.company_name || (c.company_id ? companyNameById[c.company_id] : "") || "";
+    const matchesSearch =
+      !search.trim()
+      || `${c.first_name} ${c.last_name}`.toLowerCase().includes(search.toLowerCase())
+      || (c.email || "").toLowerCase().includes(search.toLowerCase())
+      || (c.title || "").toLowerCase().includes(search.toLowerCase())
+      || companyLabel.toLowerCase().includes(search.toLowerCase());
+
+    const matchesCompany = !companyFilter || companyLabel === companyFilter;
+    const matchesPersona = !personaFilter || (c.persona || "unknown") === personaFilter;
+    const matchesLane = !laneFilter || (c.outreach_lane || "") === laneFilter;
+    const matchesSequence = !sequenceFilter || (c.sequence_status || "") === sequenceFilter;
+    const matchesEmail =
+      !emailFilter
+      || (emailFilter === "has_email" && Boolean(c.email))
+      || (emailFilter === "missing_email" && !c.email)
+      || (emailFilter === "verified" && c.email_verified)
+      || (emailFilter === "unverified" && !c.email_verified);
+
+    return matchesSearch && matchesCompany && matchesPersona && matchesLane && matchesSequence && matchesEmail;
+  });
 
   return (
     <>
@@ -58,6 +88,66 @@ export default function Contacts() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+            </div>
+          </div>
+        </div>
+
+        <div className="crm-panel px-6 py-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <select className="h-11 min-w-[170px] px-3 text-[13px]" value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
+                <option value="">All companies</option>
+                {companyOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+              <select className="h-11 min-w-[150px] px-3 text-[13px]" value={personaFilter} onChange={(e) => setPersonaFilter(e.target.value)}>
+                <option value="">All personas</option>
+                <option value="economic_buyer">Economic Buyer</option>
+                <option value="champion">Champion</option>
+                <option value="technical_evaluator">Technical Evaluator</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <select className="h-11 min-w-[150px] px-3 text-[13px]" value={laneFilter} onChange={(e) => setLaneFilter(e.target.value)}>
+                <option value="">All lanes</option>
+                <option value="warm_intro">Warm Intro</option>
+                <option value="event_follow_up">Event Follow-up</option>
+                <option value="cold_operator">Cold Operator</option>
+                <option value="cold_strategic">Cold Strategic</option>
+              </select>
+              <select className="h-11 min-w-[150px] px-3 text-[13px]" value={sequenceFilter} onChange={(e) => setSequenceFilter(e.target.value)}>
+                <option value="">All sequence states</option>
+                <option value="research_needed">Research Needed</option>
+                <option value="ready">Ready</option>
+                <option value="queued_instantly">Queued in Instantly</option>
+                <option value="sent">Sent</option>
+                <option value="replied">Replied</option>
+                <option value="meeting_booked">Meeting Booked</option>
+              </select>
+              <select className="h-11 min-w-[145px] px-3 text-[13px]" value={emailFilter} onChange={(e) => setEmailFilter(e.target.value)}>
+                <option value="">All email states</option>
+                <option value="has_email">Has email</option>
+                <option value="missing_email">Missing email</option>
+                <option value="verified">Verified</option>
+                <option value="unverified">Unverified</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="crm-chip">{filtered.length} shown</span>
+              <button
+                type="button"
+                className="crm-button soft h-11 px-4 text-[13px]"
+                onClick={() => {
+                  setSearch("");
+                  setCompanyFilter("");
+                  setPersonaFilter("");
+                  setLaneFilter("");
+                  setSequenceFilter("");
+                  setEmailFilter("");
+                }}
+              >
+                Reset filters
+              </button>
             </div>
           </div>
         </div>

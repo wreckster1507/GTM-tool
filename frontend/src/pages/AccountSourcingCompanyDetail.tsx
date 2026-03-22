@@ -1,5 +1,5 @@
 import { CSSProperties, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Brain,
@@ -21,7 +21,7 @@ import {
 
 import { accountSourcingApi } from "../lib/api";
 import type { Company, Contact } from "../types";
-import { formatDate } from "../lib/utils";
+import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
 
 const colors = {
   bg: "#f4f7fb",
@@ -64,6 +64,44 @@ const PERSONA_LABEL: Record<string, string> = {
   unknown: "Unknown",
 };
 
+const PRIORITY_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
+  high: { background: "#e8f8f0", color: "#1f8f5f" },
+  medium: { background: "#fff4df", color: "#b56d00" },
+  low: { background: "#eef2f7", color: "#5e6d83" },
+};
+
+const INTEREST_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
+  high: { background: "#eef5ff", color: "#1f6feb" },
+  medium: { background: "#f3eaff", color: "#7a2dd9" },
+  low: { background: "#ffecef", color: "#b42336" },
+};
+
+const DISPOSITION_OPTIONS = [
+  { value: "", label: "Unreviewed" },
+  { value: "working", label: "Working" },
+  { value: "interested", label: "Interested" },
+  { value: "nurture", label: "Nurture" },
+  { value: "not_interested", label: "Not Interested" },
+  { value: "bad_fit", label: "Bad Fit" },
+  { value: "do_not_target", label: "Do Not Target" },
+];
+
+const OUTREACH_STATUS_OPTIONS = [
+  { value: "", label: "Unknown" },
+  { value: "not_started", label: "Not Started" },
+  { value: "contacted", label: "Contacted" },
+  { value: "replied", label: "Replied" },
+  { value: "meeting_booked", label: "Meeting Booked" },
+];
+
+const OUTREACH_LANE_OPTIONS = [
+  { value: "", label: "Auto / Unset" },
+  { value: "warm_intro", label: "Warm Intro" },
+  { value: "event_follow_up", label: "Event Follow-up" },
+  { value: "cold_operator", label: "Cold Operator" },
+  { value: "cold_strategic", label: "Cold Strategic" },
+];
+
 const pageStyle: CSSProperties = {
   background: colors.bg,
   minHeight: "100%",
@@ -104,6 +142,11 @@ function unwrapCache(cache: Record<string, unknown>, key: string): Record<string
 function cacheTs(cache: Record<string, unknown>, key: string): string | undefined {
   const e = cache[key] as Record<string, unknown> | undefined;
   return typeof e?.fetched_at === "string" ? e.fetched_at : undefined;
+}
+
+function importBlock(company?: Company | null): Record<string, unknown> | undefined {
+  const block = company?.enrichment_sources?.import;
+  return block && typeof block === "object" ? (block as Record<string, unknown>) : undefined;
 }
 
 function canonicalPersona(persona?: string | null, personaType?: string | null): keyof typeof PERSONA_STYLE | "unknown" {
@@ -168,6 +211,13 @@ function asList(value: unknown): string[] {
   return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
+function asSignalList(value: unknown): Array<{ key?: string; value?: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => item as { key?: string; value?: string });
+}
+
 function ParagraphBlock({ text, tone = "default" }: { text?: string; tone?: "default" | "soft" }) {
   if (!text) return <div style={{ color: colors.faint }}>No insight available yet.</div>;
 
@@ -215,18 +265,55 @@ function ContactItem({ contact }: { contact: Contact }) {
   const [re, setRe] = useState(false);
 
   const persona = canonicalPersona(contact.persona, contact.persona_type);
+  const talkingPoints = Array.isArray(contact.talking_points) ? contact.talking_points : [];
+  const warmPath = (contact.warm_intro_path || {}) as Record<string, unknown>;
 
   return (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div>
-          <div style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>
+          <Link
+            to={`/account-sourcing/contacts/${contact.id}`}
+            style={{ color: colors.text, fontWeight: 800, fontSize: 15, textDecoration: "none" }}
+          >
             {contact.first_name} {contact.last_name}
-          </div>
+          </Link>
           <div style={{ color: colors.sub, marginTop: 3 }}>{contact.title || "No title"}</div>
           <div style={{ color: colors.faint, marginTop: 4, fontSize: 13 }}>
             {contact.email || "No email"}
           </div>
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {contact.outreach_lane ? (
+              <span style={{ background: "#eef5ff", color: colors.primary, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
+                {contact.outreach_lane.replace(/_/g, " ")}
+              </span>
+            ) : null}
+            {contact.sequence_status ? (
+              <span style={{ background: "#f3eaff", color: colors.violet, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
+                {contact.sequence_status.replace(/_/g, " ")}
+              </span>
+            ) : null}
+            {contact.assigned_rep_email ? (
+              <span style={{ background: "#f7f9fc", color: colors.sub, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
+                {contact.assigned_rep_email}
+              </span>
+            ) : null}
+          </div>
+          {contact.conversation_starter ? (
+            <div style={{ marginTop: 10, color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
+              <strong style={{ color: colors.text }}>Starter:</strong> {contact.conversation_starter}
+            </div>
+          ) : null}
+          {warmPath.connection_path ? (
+            <div style={{ marginTop: 8, color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
+              <strong style={{ color: colors.text }}>Warm Path:</strong> {String(warmPath.connection_path)}
+            </div>
+          ) : null}
+          {talkingPoints.length > 0 ? (
+            <div style={{ marginTop: 8, color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
+              <strong style={{ color: colors.text }}>Talking Points:</strong> {talkingPoints.slice(0, 2).join(" | ")}
+            </div>
+          ) : null}
         </div>
 
         <div style={{ display: "grid", justifyItems: "end", alignContent: "start", gap: 8 }}>
@@ -274,6 +361,20 @@ export default function AccountSourcingCompanyDetail() {
 
   const [re, setRe] = useState(false);
   const [push, setPush] = useState(false);
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
+  const [workflow, setWorkflow] = useState({
+    assigned_rep: "",
+    assigned_rep_name: "",
+    assigned_rep_email: "",
+    outreach_status: "",
+    disposition: "",
+    recommended_outreach_lane: "",
+    instantly_campaign_id: "",
+    account_thesis: "",
+    why_now: "",
+    beacon_angle: "",
+    rep_feedback: "",
+  });
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -294,7 +395,40 @@ export default function AccountSourcingCompanyDetail() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    setWorkflow({
+      assigned_rep: company?.assigned_rep || "",
+      assigned_rep_name: company?.assigned_rep_name || "",
+      assigned_rep_email: company?.assigned_rep_email || "",
+      outreach_status: company?.outreach_status || "",
+      disposition: company?.disposition || "",
+      recommended_outreach_lane: company?.recommended_outreach_lane || "",
+      instantly_campaign_id: company?.instantly_campaign_id || "",
+      account_thesis: company?.account_thesis || "",
+      why_now: company?.why_now || "",
+      beacon_angle: company?.beacon_angle || "",
+      rep_feedback: company?.rep_feedback || "",
+    });
+  }, [
+    company?.assigned_rep,
+    company?.assigned_rep_name,
+    company?.assigned_rep_email,
+    company?.outreach_status,
+    company?.disposition,
+    company?.recommended_outreach_lane,
+    company?.instantly_campaign_id,
+    company?.account_thesis,
+    company?.why_now,
+    company?.beacon_angle,
+    company?.rep_feedback,
+  ]);
+
   const cache = useMemo(() => (company?.enrichment_cache || {}) as Record<string, unknown>, [company]);
+  const imported = useMemo(() => importBlock(company), [company]);
+  const importedAnalyst = (imported?.analyst as Record<string, unknown> | undefined) || undefined;
+  const importedSignals = (imported?.uploaded_signals as Record<string, unknown> | undefined) || undefined;
+  const prospectingProfile = (company?.prospecting_profile || {}) as Record<string, unknown>;
+  const outreachPlan = (company?.outreach_plan || {}) as Record<string, unknown>;
   const ai = unwrapCache(cache, "ai_summary");
   const web = unwrapCache(cache, "web_scrape");
   const apollo = unwrapCache(cache, "apollo_company");
@@ -316,6 +450,16 @@ export default function AccountSourcingCompanyDetail() {
   const competitors = asList(ai?.competitive_landscape);
   const techSignals = asList(ai?.tech_stack_signals);
   const websiteText = asText(web?.text);
+  const positiveImportedSignals = asSignalList(importedSignals?.positive);
+  const negativeImportedSignals = asSignalList(importedSignals?.negative);
+  const warmPaths = Array.isArray(prospectingProfile.warm_paths)
+    ? prospectingProfile.warm_paths as Array<Record<string, unknown>>
+    : [];
+  const conversationStarter = asText(prospectingProfile.conversation_starter);
+  const recommendedStrategy = asText(prospectingProfile.recommended_outreach_strategy);
+  const sequenceFamily = asText(outreachPlan.sequence_family);
+  const nextBestAction = asText(outreachPlan.next_best_action);
+  const priority = company ? getAccountPrioritySnapshot(company) : null;
 
   if (loading) {
     return (
@@ -336,6 +480,28 @@ export default function AccountSourcingCompanyDetail() {
       </div>
     );
   }
+
+  const saveWorkflow = async () => {
+    setSavingWorkflow(true);
+    try {
+      await accountSourcingApi.updateCompany(company.id, {
+        assigned_rep: workflow.assigned_rep.trim() || null,
+        assigned_rep_name: workflow.assigned_rep_name.trim() || null,
+        assigned_rep_email: workflow.assigned_rep_email.trim() || null,
+        outreach_status: workflow.outreach_status || null,
+        disposition: workflow.disposition || null,
+        recommended_outreach_lane: workflow.recommended_outreach_lane || null,
+        instantly_campaign_id: workflow.instantly_campaign_id.trim() || null,
+        account_thesis: workflow.account_thesis.trim() || null,
+        why_now: workflow.why_now.trim() || null,
+        beacon_angle: workflow.beacon_angle.trim() || null,
+        rep_feedback: workflow.rep_feedback.trim() || null,
+      });
+      await load();
+    } finally {
+      setSavingWorkflow(false);
+    }
+  };
 
   const tier = company.icp_tier || "cold";
 
@@ -379,6 +545,16 @@ export default function AccountSourcingCompanyDetail() {
                 <span style={{ ...ICP_STYLE[tier], borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 800 }}>
                   {tier.toUpperCase()} · {company.icp_score ?? 0}/100
                 </span>
+                {priority ? (
+                  <>
+                    <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 800 }}>
+                      Priority {priority.priorityBand} · {priority.priorityScore}
+                    </span>
+                    <span style={{ ...INTEREST_STYLE[priority.interestLevel], borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 800 }}>
+                      Interest {priority.interestLevel}
+                    </span>
+                  </>
+                ) : null}
               </div>
 
               <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap", color: colors.sub, fontSize: 14 }}>
@@ -388,11 +564,20 @@ export default function AccountSourcingCompanyDetail() {
                 {company.industry ? <span>{company.industry}</span> : null}
                 {company.funding_stage ? <span>{company.funding_stage}</span> : null}
                 {company.employee_count ? <span>{company.employee_count.toLocaleString()} employees</span> : null}
+                {typeof importedAnalyst?.category === "string" ? <span>{String(importedAnalyst.category)}</span> : null}
               </div>
 
               <p style={{ marginTop: 14, marginBottom: 0, color: colors.sub, lineHeight: 1.75, fontSize: 15, maxWidth: 920 }}>
                 {companySummary || "This account is in sourcing. Use the sections below to quickly decide fit, identify missing stakeholders, and shape the next prospecting move."}
               </p>
+
+              {(company.domain.endsWith(".unknown") || !company.enriched_at) ? (
+                <div style={{ marginTop: 14, border: `1px solid #ffe0b2`, background: "#fff9f0", borderRadius: 12, padding: "10px 12px", color: colors.amber, fontSize: 13, lineHeight: 1.55 }}>
+                  {company.domain.endsWith(".unknown")
+                    ? "This account still has an unresolved domain placeholder, so some web and paid enrichment may be incomplete."
+                    : "This account has not completed enrichment yet."}
+                </div>
+              ) : null}
             </div>
 
             <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
@@ -417,7 +602,7 @@ export default function AccountSourcingCompanyDetail() {
                 onClick={async () => {
                   setPush(true);
                   try {
-                    await accountSourcingApi.pushToInstantly(company.id);
+                    await accountSourcingApi.pushToInstantly(company.id, workflow.instantly_campaign_id || company.instantly_campaign_id || "default");
                   } finally {
                     setTimeout(() => setPush(false), 1800);
                   }
@@ -460,6 +645,18 @@ export default function AccountSourcingCompanyDetail() {
             hint="Roles still worth finding before pushing a multi-threaded motion."
             tone={missingRoles.length === 0 ? "green" : "warm"}
           />
+          <MetricCard
+            label="Priority"
+            value={priority ? `${priority.priorityScore}` : "0"}
+            hint={priority ? `${priority.priorityBand} priority based on fit, intent, committee, and sales feedback.` : "Priority unavailable"}
+            tone={priority?.priorityBand === "high" ? "green" : "primary"}
+          />
+          <MetricCard
+            label="Interest"
+            value={priority ? priority.interestLevel : "low"}
+            hint={company.last_outreach_at ? `Last outreach ${formatDate(company.last_outreach_at)}` : "No outreach feedback logged yet."}
+            tone={priority?.interestLevel === "high" ? "green" : priority?.interestLevel === "medium" ? "primary" : "warm"}
+          />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(320px, 0.95fr)", gap: 16, alignItems: "start" }}>
@@ -490,6 +687,264 @@ export default function AccountSourcingCompanyDetail() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
                 <ListCard title="Intent Summary" items={intentSummary ? [intentSummary] : []} empty="No intent summary available." />
                 <ListCard title="Recommended Approach" items={recommendedApproach ? [recommendedApproach] : []} empty="No recommended approach generated yet." />
+              </div>
+            </Section>
+
+            <Section title="Uploaded Research" icon={<TrendingUp size={15} color={colors.primary} />}>
+              {importedAnalyst ? (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                    <MetricCard
+                      label="Uploaded ICP"
+                      value={typeof importedAnalyst.icp_fit_score === "number" ? `${importedAnalyst.icp_fit_score}/10` : "N/A"}
+                      hint={typeof importedAnalyst.classification === "string" ? String(importedAnalyst.classification) : "Analyst input"}
+                      tone="primary"
+                    />
+                    <MetricCard
+                      label="Uploaded Intent"
+                      value={typeof importedAnalyst.intent_score === "number" ? `${importedAnalyst.intent_score}/10` : "N/A"}
+                      hint={typeof importedAnalyst.fit_type === "string" ? String(importedAnalyst.fit_type) : "Intent view"}
+                      tone="warm"
+                    />
+                    <MetricCard
+                      label="Confidence"
+                      value={typeof importedAnalyst.confidence === "string" ? String(importedAnalyst.confidence) : "N/A"}
+                      hint={typeof importedAnalyst.revenue_funding === "string" ? String(importedAnalyst.revenue_funding) : "Uploaded evidence"}
+                      tone="green"
+                    />
+                  </div>
+
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <KV label="Region" value={typeof importedAnalyst.region === "string" ? importedAnalyst.region : undefined} />
+                    <KV label="Headquarters" value={typeof importedAnalyst.headquarters === "string" ? importedAnalyst.headquarters : undefined} />
+                    <KV label="Category" value={typeof importedAnalyst.category === "string" ? importedAnalyst.category : undefined} />
+                    <KV label="Fit Type" value={typeof importedAnalyst.fit_type === "string" ? importedAnalyst.fit_type : undefined} />
+                    <KV label="Core Focus" value={typeof importedAnalyst.core_focus === "string" ? importedAnalyst.core_focus : undefined} />
+                    <KV label="Financial Signal" value={typeof importedAnalyst.revenue_funding === "string" ? importedAnalyst.revenue_funding : undefined} />
+                    <KV label="Final Qual" value={typeof importedAnalyst.final_qual === "string" ? importedAnalyst.final_qual : undefined} />
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                    <ListCard
+                      title="Uploaded ICP Why"
+                      items={typeof importedAnalyst.icp_why === "string" ? [String(importedAnalyst.icp_why)] : []}
+                      empty="No uploaded ICP reasoning."
+                    />
+                    <ListCard
+                      title="Uploaded Intent Why"
+                      items={typeof importedAnalyst.intent_why === "string" ? [String(importedAnalyst.intent_why)] : []}
+                      empty="No uploaded intent reasoning."
+                    />
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                    <ListCard
+                      title="Positive Signals"
+                      items={positiveImportedSignals.map((item) => item.value || item.key || "").filter(Boolean)}
+                      empty="No positive uploaded signals."
+                    />
+                    <ListCard
+                      title="Negative Signals"
+                      items={negativeImportedSignals.map((item) => item.value || item.key || "").filter(Boolean)}
+                      empty="No negative uploaded signals."
+                    />
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: colors.faint }}>No structured uploaded analyst research on this account yet.</div>
+              )}
+            </Section>
+
+            <Section title="Prospecting Workflow" icon={<MessageSquare size={15} color={colors.primary} />}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                <MetricCard
+                  label="Assigned Owner"
+                  value={company.assigned_rep_name || company.assigned_rep || "Unassigned"}
+                  hint={company.assigned_rep_email || "Set the rep email now so future login-based ownership lines up cleanly."}
+                  tone="neutral"
+                />
+                <MetricCard
+                  label="Outreach Lane"
+                  value={company.recommended_outreach_lane ? company.recommended_outreach_lane.replace(/_/g, " ") : "Auto"}
+                  hint={sequenceFamily || "Lane determines whether this should go through a connector, event follow-up, or Instantly."}
+                  tone="primary"
+                />
+                <MetricCard
+                  label="Leverage"
+                  value={priority ? `${priority.outreachLeverage}` : "0"}
+                  hint={
+                    warmPaths.length > 0
+                      ? `${warmPaths.length} warm paths available. ${company.disposition ? `Disposition: ${company.disposition.replace(/_/g, " ")}.` : ""}`
+                      : company.disposition ? `Disposition: ${company.disposition.replace(/_/g, " ")}` : "No warm path captured yet."
+                  }
+                  tone="green"
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                <input
+                  value={workflow.assigned_rep_name}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_name: e.target.value }))}
+                  placeholder="Assigned rep name"
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+                />
+                <input
+                  value={workflow.assigned_rep_email}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_email: e.target.value }))}
+                  placeholder="Assigned rep email"
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+                />
+                <input
+                  value={workflow.assigned_rep}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep: e.target.value }))}
+                  placeholder="Legacy owner label"
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                <select
+                  value={workflow.outreach_status}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, outreach_status: e.target.value }))}
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
+                >
+                  {OUTREACH_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value || "blank"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={workflow.recommended_outreach_lane}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, recommended_outreach_lane: e.target.value }))}
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
+                >
+                  {OUTREACH_LANE_OPTIONS.map((option) => (
+                    <option key={option.value || "blank"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={workflow.instantly_campaign_id}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, instantly_campaign_id: e.target.value }))}
+                  placeholder="Instantly campaign ID"
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+                />
+                <select
+                  value={workflow.disposition}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, disposition: e.target.value }))}
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
+                >
+                  {DISPOSITION_OPTIONS.map((option) => (
+                    <option key={option.value || "blank"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <textarea
+                value={workflow.account_thesis}
+                onChange={(e) => setWorkflow((current) => ({ ...current, account_thesis: e.target.value }))}
+                placeholder="Account thesis: why this company is a real Beacon fit"
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 84, resize: "vertical" }}
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                <textarea
+                  value={workflow.why_now}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, why_now: e.target.value }))}
+                  placeholder="Why now: timing trigger for outreach"
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 96, resize: "vertical" }}
+                />
+                <textarea
+                  value={workflow.beacon_angle}
+                  onChange={(e) => setWorkflow((current) => ({ ...current, beacon_angle: e.target.value }))}
+                  placeholder="Beacon angle: implementation/orchestration angle to lead with"
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 96, resize: "vertical" }}
+                />
+              </div>
+
+              <textarea
+                value={workflow.rep_feedback}
+                onChange={(e) => setWorkflow((current) => ({ ...current, rep_feedback: e.target.value }))}
+                placeholder="What happened in outreach? Why is this account worth pushing, pausing, or dropping?"
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 92, resize: "vertical" }}
+              />
+
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ color: colors.faint, fontSize: 12 }}>
+                  {company.last_outreach_at ? `Last outreach saved on ${formatDate(company.last_outreach_at)}.` : "Rep feedback will shape the interest and priority indicators for this account."}
+                </div>
+                <button
+                  onClick={saveWorkflow}
+                  disabled={savingWorkflow}
+                  style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center" }}
+                >
+                  {savingWorkflow ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                  Save workflow
+                </button>
+              </div>
+            </Section>
+
+            <Section title="Warm Intro Map" icon={<Users size={15} color={colors.primary} />}>
+              {warmPaths.length === 0 ? (
+                <div style={{ color: colors.faint }}>No connector paths captured for this account yet.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {warmPaths.map((item, idx) => (
+                    <div key={`warm-path-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ color: colors.text, fontWeight: 800 }}>{String(item.name || `Connector ${idx + 1}`)}</div>
+                        {item.strength ? (
+                          <span style={{ borderRadius: 999, padding: "4px 8px", background: "#eef5ff", color: colors.primary, fontSize: 11, fontWeight: 800 }}>
+                            Strength {String(item.strength)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {item.connection_path ? (
+                        <div style={{ marginTop: 8, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
+                          <strong style={{ color: colors.text }}>Path:</strong> {String(item.connection_path)}
+                        </div>
+                      ) : null}
+                      {item.why_it_works ? (
+                        <div style={{ marginTop: 6, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
+                          <strong style={{ color: colors.text }}>Why it works:</strong> {String(item.why_it_works)}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Section>
+
+            <Section title="Outbound Plan" icon={<Send size={15} color={colors.primary} />}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                <ListCard
+                  title="Account Thesis"
+                  items={workflow.account_thesis ? [workflow.account_thesis] : company.account_thesis ? [company.account_thesis] : []}
+                  empty="No account thesis saved yet."
+                />
+                <ListCard
+                  title="Why Now"
+                  items={workflow.why_now ? [workflow.why_now] : company.why_now ? [company.why_now] : []}
+                  empty="No timing trigger saved yet."
+                />
+                <ListCard
+                  title="Beacon Angle"
+                  items={workflow.beacon_angle ? [workflow.beacon_angle] : company.beacon_angle ? [company.beacon_angle] : []}
+                  empty="No Beacon angle saved yet."
+                />
+                <ListCard
+                  title="Next Best Action"
+                  items={nextBestAction ? [nextBestAction] : []}
+                  empty="No next-best action generated yet."
+                />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                <ListCard title="Conversation Starter" items={conversationStarter ? [conversationStarter] : []} empty="No conversation starter captured yet." />
+                <ListCard title="Recommended Strategy" items={recommendedStrategy ? [recommendedStrategy] : []} empty="No recommended outreach strategy captured yet." />
+                <ListCard title="Sequence Family" items={sequenceFamily ? [sequenceFamily] : []} empty="No sequence family set yet." />
               </div>
             </Section>
 
@@ -542,6 +997,15 @@ export default function AccountSourcingCompanyDetail() {
               <KV label="Funding" value={company.funding_stage} />
               <KV label="Employees" value={company.employee_count ? company.employee_count.toLocaleString() : undefined} />
               <KV label="ICP Score" value={company.icp_score ? `${company.icp_score}/100` : undefined} />
+              <KV label="Assigned Rep" value={company.assigned_rep} />
+              <KV label="Assigned Rep Name" value={company.assigned_rep_name} />
+              <KV label="Assigned Rep Email" value={company.assigned_rep_email} />
+              <KV label="Disposition" value={company.disposition ? company.disposition.replace(/_/g, " ") : undefined} />
+              <KV label="Outreach Status" value={company.outreach_status ? company.outreach_status.replace(/_/g, " ") : undefined} />
+              <KV label="Outreach Lane" value={company.recommended_outreach_lane ? company.recommended_outreach_lane.replace(/_/g, " ") : undefined} />
+              <KV label="Instantly Campaign" value={company.instantly_campaign_id} />
+              <KV label="Uploaded SDR" value={typeof importedAnalyst?.sdr === "string" ? importedAnalyst.sdr : undefined} />
+              <KV label="Uploaded AE" value={typeof importedAnalyst?.ae === "string" ? importedAnalyst.ae : undefined} />
             </Section>
 
             <Section title="Committee Readiness" icon={<Users size={15} color={colors.primary} />}>

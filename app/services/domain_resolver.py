@@ -11,6 +11,7 @@ services (Hunter, BuiltWith, enrichment) can proceed with a real domain.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.company import Company
 
 logger = logging.getLogger(__name__)
+
+
+def _company_name_variants(name: str) -> list[str]:
+    raw = (name or "").strip()
+    variants: list[str] = []
+    if raw:
+        variants.append(raw)
+
+    without_parens = re.sub(r"\s*\([^)]*\)", "", raw).strip()
+    if without_parens and without_parens not in variants:
+        variants.append(without_parens)
+
+    for separator in (" - ", " / ", " | "):
+        if separator in without_parens:
+            first = without_parens.split(separator)[0].strip()
+            if first and first not in variants:
+                variants.append(first)
+
+    return variants[:3]
 
 
 async def resolve_and_update_domain(company: Company, session: AsyncSession) -> bool:
@@ -32,17 +52,30 @@ async def resolve_and_update_domain(company: Company, session: AsyncSession) -> 
 
     from app.clients.azure_openai import AzureOpenAIClient
 
-    # Pull description from enrichment_sources if available (set during CSV import)
-    description: str | None = None
+    # Pull the strongest imported context first, then fall back to any existing company description.
+    description: str | None = company.description
     if isinstance(company.enrichment_sources, dict):
-        description = (company.enrichment_sources.get("import") or {}).get("description")
+        import_block = company.enrichment_sources.get("import") or {}
+        if isinstance(import_block, dict):
+            analyst = import_block.get("analyst") or {}
+            if isinstance(analyst, dict):
+                description = (
+                    analyst.get("core_focus")
+                    or analyst.get("icp_why")
+                    or analyst.get("intent_why")
+                    or description
+                )
 
     ai = AzureOpenAIClient()
-    resolved = await ai.resolve_domain(
-        company_name=company.name,
-        industry=company.industry,
-        description=description,
-    )
+    resolved = None
+    for candidate_name in _company_name_variants(company.name):
+        resolved = await ai.resolve_domain(
+            company_name=candidate_name,
+            industry=company.industry,
+            description=description,
+        )
+        if resolved:
+            break
 
     if not resolved:
         logger.info(f"Domain resolver: no confident domain found for '{company.name}'")

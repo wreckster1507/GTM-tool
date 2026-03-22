@@ -11,6 +11,7 @@ import {
   Sparkles,
   Swords,
   LayoutPanelTop,
+  Settings,
 } from "lucide-react";
 
 const NAV = [
@@ -30,11 +31,11 @@ export default function Sidebar() {
     <aside className="crm-sidebar">
       <div className="crm-brand">
         <div className="crm-brand-mark">
-          <Sparkles size={17} />
+          <Sparkles size={16} />
         </div>
         <div>
-          <p className="crm-brand-title">Beacon CRM</p>
-          <p className="crm-brand-sub">GTM command center</p>
+          <p className="crm-brand-title">beacon.li</p>
+          <p className="crm-brand-sub">Execution workspace</p>
         </div>
       </div>
 
@@ -48,19 +49,20 @@ export default function Sidebar() {
               to={item.to}
               className={({ isActive }) => `crm-nav-link ${isActive ? "active" : ""}`}
             >
-              <Icon size={16} />
+              <span className="crm-nav-icon">
+                <Icon size={16} />
+              </span>
               {item.label}
             </NavLink>
           );
         })}
       </nav>
 
-      <div className="mt-auto p-4 border-t border-[#25364e]">
-        <div className="rounded-2xl bg-[#173149] px-4 py-4 border border-[#294764]">
-          <p className="text-[13px] font-semibold text-[#f4f8ff]">Execution Workflow</p>
-          <p className="text-[11px] text-[#9cb3ca] mt-1">9 GTM stages mapped in this workspace</p>
-          <p className="text-[11px] text-[#9cb3ca]">Use Sales Workspace for full journey view</p>
-        </div>
+      <div className="crm-sidebar-footer">
+        <button type="button" className="crm-sidebar-settings">
+          <Settings size={16} />
+          Settings
+        </button>
       </div>
     </aside>
   );

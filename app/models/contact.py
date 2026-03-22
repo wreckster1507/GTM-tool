@@ -28,6 +28,16 @@ class Contact(ContactBase, table=True):
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     persona_type: Optional[str] = None  # champion | buyer | evaluator | blocker
+    assigned_rep_email: Optional[str] = None
+    outreach_lane: Optional[str] = None
+    sequence_status: Optional[str] = None
+    instantly_status: Optional[str] = None
+    instantly_campaign_id: Optional[str] = None
+    warm_intro_strength: Optional[int] = None
+    warm_intro_path: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    conversation_starter: Optional[str] = None
+    personalization_notes: Optional[str] = None
+    talking_points: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -43,6 +53,16 @@ class ContactRead(ContactBase):
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
     persona_type: Optional[str] = None
+    assigned_rep_email: Optional[str] = None
+    outreach_lane: Optional[str] = None
+    sequence_status: Optional[str] = None
+    instantly_status: Optional[str] = None
+    instantly_campaign_id: Optional[str] = None
+    warm_intro_strength: Optional[int] = None
+    warm_intro_path: Optional[Any] = None
+    conversation_starter: Optional[str] = None
+    personalization_notes: Optional[str] = None
+    talking_points: Optional[Any] = None
     created_at: datetime
     updated_at: datetime
 
@@ -58,3 +78,16 @@ class ContactUpdate(SQLModel):
     linkedin_url: Optional[str] = None
     persona: Optional[str] = None
     company_id: Optional[UUID] = None
+    enriched_at: Optional[datetime] = None
+    enrichment_data: Optional[Any] = None
+    persona_type: Optional[str] = None
+    assigned_rep_email: Optional[str] = None
+    outreach_lane: Optional[str] = None
+    sequence_status: Optional[str] = None
+    instantly_status: Optional[str] = None
+    instantly_campaign_id: Optional[str] = None
+    warm_intro_strength: Optional[int] = None
+    warm_intro_path: Optional[Any] = None
+    conversation_starter: Optional[str] = None
+    personalization_notes: Optional[str] = None
+    talking_points: Optional[Any] = None
