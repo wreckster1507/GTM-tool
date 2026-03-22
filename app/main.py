@@ -4,7 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
-from app.services.background_jobs import shutdown_background_workers, start_background_workers
 
 app = FastAPI(
     title="Beacon CRM API",
@@ -32,16 +31,6 @@ register_exception_handlers(app)
 # ── API v1 router ────────────────────────────────────────────────────────────
 # All routes live under /api/v1/.  Adding v2 later = mount a second router.
 app.include_router(v1_router, prefix="/api/v1")
-
-
-@app.on_event("startup")
-async def startup_background_workers() -> None:
-    await start_background_workers()
-
-
-@app.on_event("shutdown")
-async def stop_background_workers() -> None:
-    await shutdown_background_workers()
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

@@ -12,6 +12,9 @@
 
 - `frontend`: static React app served by Nginx
 - `backend`: FastAPI application
+- `worker`: Celery worker for enrichment and re-enrichment
+- `beat`: Celery beat for scheduled jobs
+- `redis`: Celery broker/result backend
 - `postgres`: application database
 
 ## Backend Endpoints To Return After Deployment
@@ -31,6 +34,7 @@ Required for backend:
 
 - `DATABASE_URL`
 - `SYNC_DATABASE_URL`
+- `REDIS_URL`
 - `SECRET_KEY`
 - `ENVIRONMENT`
 - `CORS_ORIGINS`
@@ -60,7 +64,7 @@ Optional provider integrations:
 
 1. Copy `.env.example` to `.env`
 2. Fill API keys in `.env`
-3. Start the backend stack:
+3. Start the stack:
 
 ```bash
 docker compose up --build
@@ -71,13 +75,13 @@ Services:
 - Frontend: `http://localhost:8080`
 - Backend API: `http://localhost:8000`
 - Swagger docs: `http://localhost:8000/docs`
+- Redis: `localhost:6379`
 - Postgres: `localhost:5432`
 
 ## Notes For Infra / Deployment
 
-- This deployment shape is intentionally simple: frontend, backend, and Postgres only.
-- The current upload and enrichment flows run inside the backend process using in-memory background jobs.
-- For production-scale heavy enrichment, a dedicated worker/queue would be more durable, but it is not required for this deployment shape.
+- This branch uses Celery + Redis for background enrichment work.
+- The backend queues jobs; the `worker` service processes them; `beat` handles scheduled jobs.
 - Run database migrations before or during API startup:
 
 ```bash
@@ -88,4 +92,6 @@ alembic upgrade head
 
 - Frontend: static container or Vercel
 - Backend API: container host / Azure Container Apps / App Service container
+- Celery worker: separate container app / worker process
+- Redis: managed Redis or containerized Redis
 - Postgres: managed Postgres

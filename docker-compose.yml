@@ -15,6 +15,16 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: .
@@ -23,17 +33,60 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
       SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     command: >
       sh -c "alembic upgrade head &&
              python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
+      SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo"
+
+  beat:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
+      SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "celery -A app.celery_app.celery_app beat --loglevel=info"
 
   frontend:
     build:

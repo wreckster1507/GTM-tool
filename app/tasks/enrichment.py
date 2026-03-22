@@ -119,9 +119,10 @@ async def _async_enrich_batch(batch_id: UUID) -> None:
         semaphore = asyncio.Semaphore(3)
         progress_lock = asyncio.Lock()
         processed = 0
+        failed = 0
 
         async def enrich_one(company_id: UUID) -> None:
-            nonlocal processed
+            nonlocal processed, failed
             error_payload = None
 
             async with semaphore:
@@ -134,11 +135,14 @@ async def _async_enrich_batch(batch_id: UUID) -> None:
 
                 async with progress_lock:
                     processed += 1
+                    if error_payload:
+                        failed += 1
                     async with SessionLocal() as progress_session:
                         progress_batch = await progress_session.get(SourcingBatch, batch_id)
                         if not progress_batch:
                             return
                         progress_batch.processed_rows = processed
+                        progress_batch.failed_rows = failed
                         if error_payload:
                             existing_errors = list(progress_batch.error_log or [])
                             existing_errors.append(error_payload)
@@ -152,7 +156,8 @@ async def _async_enrich_batch(batch_id: UUID) -> None:
         async with SessionLocal() as session:
             batch = await session.get(SourcingBatch, batch_id)
             if batch:
-                batch.status = "completed"
+                batch.failed_rows = failed
+                batch.status = "failed" if failed == len(company_ids) and company_ids else "completed"
                 batch.updated_at = datetime.utcnow()
                 session.add(batch)
                 await session.commit()
@@ -221,4 +226,3 @@ async def _async_re_enrich_contact(contact_id: UUID) -> None:
             await re_enrich_contact_service(contact_id, session)
     finally:
         await engine.dispose()
-
