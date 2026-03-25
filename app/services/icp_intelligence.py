@@ -1337,8 +1337,13 @@ async def research_company_and_update(
         "implementation_cycle": icp.get("implementation_cycle"),
     }
     import_data["generated_analyst"] = generated_analyst
-    if not existing_uploaded_analyst:
-        import_data["analyst"] = generated_analyst
+    # Merge generated analyst into analyst — uploaded values take precedence,
+    # but Claude fills in any fields the CSV didn't provide.
+    merged_analyst = dict(generated_analyst)
+    for key, value in existing_uploaded_analyst.items():
+        if value is not None and value != "":
+            merged_analyst[key] = value
+    import_data["analyst"] = merged_analyst
 
     existing_uploaded_signals = (
         import_data.get("uploaded_signals")

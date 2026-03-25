@@ -1379,6 +1379,7 @@ export default function AccountSourcing() {
           const enrichedCt = companies.filter((c) => c.enriched_at).length;
           const icpDoneCt = researchedCount;
           const totalCt = companies.length;
+          const totalContacts = companies.reduce((sum, c) => sum + ((c.outreach_plan as Record<string, unknown>)?.contact_count as number || 0), 0);
           const allDone = enrichedCt === totalCt && icpDoneCt === totalCt;
           const pct = totalCt ? Math.round((icpDoneCt / totalCt) * 100) : 0;
           return (
@@ -1405,6 +1406,7 @@ export default function AccountSourcing() {
                 <div style={{ display: "flex", gap: 16, fontSize: 12, color: colors.sub }}>
                   <span>Enriched: <b>{enrichedCt}/{totalCt}</b></span>
                   <span>ICP Analyzed: <b>{icpDoneCt}/{totalCt}</b></span>
+                  <span>Contacts: <b>{totalContacts}</b></span>
                   <span>Pending: <b>{totalCt - icpDoneCt}</b></span>
                 </div>
                 <div style={{ marginTop: 8, height: 6, borderRadius: 3, background: "#e5e7eb", overflow: "hidden" }}>

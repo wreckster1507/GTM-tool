@@ -238,13 +238,13 @@ async def _fetch_domain_evidence(domain: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
-def _token_match_score(company_name: str, host: str, title: str, body: str) -> int:
-    tokens = _name_tokens(company_name)
+def _token_match_score_single(name: str, host: str, title: str, body: str, blob: str) -> int:
+    """Score a single name variant against the domain evidence."""
+    tokens = _name_tokens(name)
     if not tokens:
         return 0
 
-    blob = " ".join(part for part in (host, title, body) if part).lower()
-    company_canonical = _canonicalize_text(_trim_legal_suffixes(company_name))
+    company_canonical = _canonicalize_text(_trim_legal_suffixes(name))
     host_root = _canonicalize_text(host.split(".")[0].replace("-", " "))
 
     score = 0
@@ -262,6 +262,23 @@ def _token_match_score(company_name: str, host: str, title: str, body: str) -> i
         score += 12
 
     return score
+
+
+def _token_match_score(company_name: str, host: str, title: str, body: str) -> int:
+    blob = " ".join(part for part in (host, title, body) if part).lower()
+
+    # Try each name variant (including parenthetical content) and take the best
+    best = _token_match_score_single(company_name, host, title, body, blob)
+    for variant in _company_name_variants(company_name):
+        best = max(best, _token_match_score_single(variant, host, title, body, blob))
+
+    # Also try parenthetical content as standalone name (e.g. "Dayforce" from "Ceridian (Dayforce)")
+    for paren in re.findall(r"\(([^)]+)\)", company_name or ""):
+        paren_stripped = paren.strip()
+        if len(paren_stripped) >= 3 and paren_stripped.lower() not in _LEGAL_SUFFIXES:
+            best = max(best, _token_match_score_single(paren_stripped, host, title, body, blob))
+
+    return best
 
 
 def _names_roughly_match(reference: str, candidate: str) -> bool:
