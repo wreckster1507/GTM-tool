@@ -32,7 +32,10 @@
       "WebFetch(domain:www.figma.com)",
       "WebFetch(domain:medium.com)",
       "WebFetch(domain:www.uidesign.tips)",
-      "WebFetch(domain:uxplanet.org)"
+      "WebFetch(domain:uxplanet.org)",
+      "Bash(chcp 65001)",
+      "Bash(python -u -c \":*)",
+      "Bash(grep -l \"enrich\\\\|score\\\\|icp\\\\|ai\" /c/gtm-prototype/app/services/*.py)"
     ]
   },
   "outputStyle": "Explanatory"

@@ -10,6 +10,9 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     account_sourcing,
     activities,
+    angel_mapping,
+    assignments,
+    auth,
     battlecards,
     companies,
     contacts,
@@ -28,6 +31,8 @@ from app.api.v1.endpoints import (
 
 router = APIRouter()
 
+router.include_router(auth.router)
+router.include_router(assignments.router)
 router.include_router(companies.router)
 router.include_router(contacts.router)
 router.include_router(deals.router)
@@ -44,3 +49,4 @@ router.include_router(workspace.router)
 router.include_router(custom_demo.router)
 router.include_router(sales_resources.router)
 router.include_router(account_sourcing.router)
+router.include_router(angel_mapping.router)

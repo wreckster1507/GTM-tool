@@ -5,13 +5,17 @@ All route files should import from here — not from app.database directly.
 This single import point makes it trivial to swap the DB backend, add auth,
 rate-limiting, or request-scoped tracing in one place later.
 """
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import Depends, Query
+from fastapi import Depends, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 # Re-export the session dependency so routes only need this module
 from app.database import get_session
+from app.models.user import User
+from app.services.auth import decode_access_token
+from app.core.exceptions import UnauthorizedError, ForbiddenError
 
 # ── Typed shorthand ──────────────────────────────────────────────────────────
 # Use as: async def my_route(session: DBSession): ...
@@ -32,4 +36,50 @@ class PaginationParams:
 Pagination = Annotated[PaginationParams, Depends(PaginationParams)]
 
 
-__all__ = ["get_session", "DBSession", "PaginationParams", "Pagination"]
+# ── Auth dependencies ────────────────────────────────────────────────────────
+
+
+async def get_current_user(
+    session: DBSession,
+    authorization: Optional[str] = Header(default=None),
+) -> User:
+    """
+    Extract and validate JWT from the Authorization header.
+    Returns the authenticated User or raises UnauthorizedError.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise UnauthorizedError("Missing or invalid authorization header")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    payload = decode_access_token(token)
+    if payload is None:
+        raise UnauthorizedError("Invalid or expired token")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise UnauthorizedError("Invalid token payload")
+
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user or not user.is_active:
+        raise UnauthorizedError("User not found or deactivated")
+
+    return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def require_admin(user: CurrentUser) -> User:
+    """Dependency that ensures the current user has admin role."""
+    if user.role != "admin":
+        raise ForbiddenError("Admin access required")
+    return user
+
+
+AdminUser = Annotated[User, Depends(require_admin)]
+
+
+__all__ = [
+    "get_session", "DBSession", "PaginationParams", "Pagination",
+    "get_current_user", "CurrentUser", "require_admin", "AdminUser",
+]

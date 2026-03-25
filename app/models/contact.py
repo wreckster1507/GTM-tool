@@ -28,6 +28,7 @@ class Contact(ContactBase, table=True):
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     persona_type: Optional[str] = None  # champion | buyer | evaluator | blocker
+    assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     assigned_rep_email: Optional[str] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
@@ -53,6 +54,8 @@ class ContactRead(ContactBase):
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
     persona_type: Optional[str] = None
+    assigned_to_id: Optional[UUID] = None
+    assigned_to_name: Optional[str] = None  # populated via JOIN
     assigned_rep_email: Optional[str] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
@@ -81,6 +84,7 @@ class ContactUpdate(SQLModel):
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
     persona_type: Optional[str] = None
+    assigned_to_id: Optional[UUID] = None
     assigned_rep_email: Optional[str] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None

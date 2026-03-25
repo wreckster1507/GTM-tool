@@ -3,7 +3,11 @@
     "allow": [
       "Bash(grep -E \"\\\\.py$\")",
       "Bash(curl -s http://localhost:8000/api/v1/meetings/70a7227a-79a5-48ea-8883-ffa736602062/demo-strategy -X POST -H \"Content-Type: application/json\")",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(python -c \"from app.clients.web_search import WebSearchClient; print\\(''web_search OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''c:/gtm-prototype/app/services/icp_intelligence.py''\\).read\\(\\)\\); print\\(''icp_intelligence.py: OK''\\)\")",
+      "Bash(curl -s http://localhost:8000/api/v1/account-sourcing/companies?size=100)",
+      "Bash(curl -s http://localhost:8000/api/v1/account-sourcing/batches)"
     ]
   }
 }

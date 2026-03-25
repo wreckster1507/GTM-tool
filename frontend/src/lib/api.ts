@@ -10,6 +10,9 @@ import type {
   Paginated,
   SourcingBatch,
   SalesResource,
+  User,
+  AngelInvestor,
+  AngelMapping,
 } from "../types";
 
 /**
@@ -38,11 +41,21 @@ async function requestPaginated<T>(path: string): Promise<Paginated<T>> {
 
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem("beacon_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...options?.headers },
     ...options,
   });
+  if (res.status === 401) {
+    localStorage.removeItem("beacon_token");
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Request failed");
@@ -318,6 +331,7 @@ export const prospectingApi = {
 
     const res = await fetch(`${BASE}/api/v1/prospecting/bulk`, {
       method: "POST",
+      headers: getAuthHeaders(),
       body: form,
     });
 
@@ -398,6 +412,7 @@ export const customDemoApi = {
     if (dealId) form.append("deal_id", dealId);
     return fetch(`${BASE}/api/v1/custom-demos/generate-from-file`, {
       method: "POST",
+      headers: getAuthHeaders(),
       body: form,
     }).then(async (r) => {
       if (!r.ok) {
@@ -452,6 +467,7 @@ export const accountSourcingApi = {
     form.append("file", file);
     const res = await fetch(`${BASE}/api/v1/account-sourcing/upload`, {
       method: "POST",
+      headers: getAuthHeaders(),
       body: form,
     });
     if (!res.ok) {
@@ -488,6 +504,12 @@ export const accountSourcingApi = {
       { method: "POST" }
     ),
 
+  icpResearch: (companyId: string) =>
+    request<{ company_id: string; task_id: string; status: string; message: string }>(
+      `/api/v1/account-sourcing/companies/${companyId}/icp-research`,
+      { method: "POST" }
+    ),
+
   getContacts: (companyId: string) =>
     requestList<Contact>(`/api/v1/account-sourcing/companies/${companyId}/contacts`),
 
@@ -518,7 +540,9 @@ export const accountSourcingApi = {
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
     if (params?.disposition) search.set("disposition", params.disposition);
     const qs = search.toString();
-    const res = await fetch(`${BASE}/api/v1/account-sourcing/export${qs ? `?${qs}` : ""}`);
+    const res = await fetch(`${BASE}/api/v1/account-sourcing/export${qs ? `?${qs}` : ""}`, {
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail ?? "Export failed");
@@ -530,7 +554,9 @@ export const accountSourcingApi = {
     const search = new URLSearchParams();
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
     const qs = search.toString();
-    const res = await fetch(`${BASE}/api/v1/account-sourcing/export-contacts${qs ? `?${qs}` : ""}`);
+    const res = await fetch(`${BASE}/api/v1/account-sourcing/export-contacts${qs ? `?${qs}` : ""}`, {
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail ?? "Contact export failed");
@@ -646,4 +672,112 @@ export const resourcesApi = {
     request<void>(`/api/v1/resources/${id}`, { method: "DELETE" }),
   options: () =>
     request<{ categories: string[]; modules: string[] }>("/api/v1/resources/meta/options"),
+};
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+export const authApi = {
+  me: () => request<User>("/api/v1/auth/me"),
+  googleLoginUrl: () => `${BASE}/api/v1/auth/google/login`,
+  listAllUsers: () => request<User[]>("/api/v1/auth/users/all"),
+  listUsers: () => request<User[]>("/api/v1/auth/users"),
+  updateUser: (userId: string, data: { name?: string; role?: string; is_active?: boolean }) =>
+    request<User>(`/api/v1/auth/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+};
+
+// ── Assignments ──────────────────────────────────────────────────────────────
+
+export const angelMappingApi = {
+  // Angel Investors
+  listInvestors: () =>
+    request<AngelInvestor[]>("/api/v1/angel-mapping/investors?limit=500"),
+  getInvestor: (id: string) =>
+    request<AngelInvestor>(`/api/v1/angel-mapping/investors/${id}`),
+  createInvestor: (data: Partial<AngelInvestor>) =>
+    request<AngelInvestor>("/api/v1/angel-mapping/investors", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateInvestor: (id: string, data: Partial<AngelInvestor>) =>
+    request<AngelInvestor>(`/api/v1/angel-mapping/investors/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteInvestor: (id: string) =>
+    request<void>(`/api/v1/angel-mapping/investors/${id}`, { method: "DELETE" }),
+
+  // Angel Mappings
+  listMappings: (params?: {
+    contact_id?: string;
+    company_id?: string;
+    angel_investor_id?: string;
+    min_strength?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set("limit", "500");
+    if (params?.contact_id) qs.set("contact_id", params.contact_id);
+    if (params?.company_id) qs.set("company_id", params.company_id);
+    if (params?.angel_investor_id) qs.set("angel_investor_id", params.angel_investor_id);
+    if (params?.min_strength) qs.set("min_strength", String(params.min_strength));
+    return request<AngelMapping[]>(`/api/v1/angel-mapping/mappings?${qs}`);
+  },
+  createMapping: (data: {
+    contact_id: string;
+    company_id?: string;
+    angel_investor_id: string;
+    strength: number;
+    rank: number;
+    connection_path?: string;
+    why_it_works?: string;
+    recommended_strategy?: string;
+  }) =>
+    request<AngelMapping>("/api/v1/angel-mapping/mappings", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateMapping: (id: string, data: Partial<AngelMapping>) =>
+    request<AngelMapping>(`/api/v1/angel-mapping/mappings/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteMapping: (id: string) =>
+    request<void>(`/api/v1/angel-mapping/mappings/${id}`, { method: "DELETE" }),
+
+  // Bulk Import
+  bulkImport: (rows: Array<Record<string, unknown>>) =>
+    request<{
+      investors_created: number;
+      mappings_created: number;
+      companies_updated: number;
+      errors: string[];
+    }>("/api/v1/angel-mapping/import", {
+      method: "POST",
+      body: JSON.stringify({ rows }),
+    }),
+};
+
+export const assignmentsApi = {
+  assignCompany: (companyId: string, userId: string | null) =>
+    request<Company>(`/api/v1/assignments/company/${companyId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+  assignContact: (contactId: string, userId: string | null) =>
+    request<Contact>(`/api/v1/assignments/contact/${contactId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+  bulkAssignCompanies: (ids: string[], userId: string | null) =>
+    request<{ updated: number; user_id: string | null }>("/api/v1/assignments/bulk-companies", {
+      method: "PATCH",
+      body: JSON.stringify({ ids, user_id: userId }),
+    }),
+  bulkAssignContacts: (ids: string[], userId: string | null) =>
+    request<{ updated: number; user_id: string | null }>("/api/v1/assignments/bulk-contacts", {
+      method: "PATCH",
+      body: JSON.stringify({ ids, user_id: userId }),
+    }),
 };

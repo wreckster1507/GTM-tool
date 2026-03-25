@@ -226,3 +226,141 @@ async def _async_re_enrich_contact(contact_id: UUID) -> None:
             await re_enrich_contact_service(contact_id, session)
     finally:
         await engine.dispose()
+
+
+# ── ICP Intelligence Pipeline Tasks ──────────────────────────────────────────
+
+@celery_app.task(
+    name="app.tasks.enrichment.icp_research_batch_task",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def icp_research_batch_task(self, batch_id: str) -> dict:
+    """
+    Run the full ICP intelligence pipeline for all companies in a batch.
+    This replaces the standard enrichment for 'minimal' uploads (company names only).
+    Each company goes through: web research → Apollo → Claude ICP analysis.
+    """
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_async_icp_research_batch(UUID(batch_id)))
+        finally:
+            loop.close()
+        return {"status": "completed", "batch_id": batch_id}
+    except Exception as exc:
+        logger.error(f"ICP research batch task failed for {batch_id}: {exc}")
+        raise self.retry(exc=exc)
+
+
+async def _async_icp_research_batch(batch_id: UUID) -> None:
+    from sqlmodel import select
+    from app.models.company import Company
+    from app.models.sourcing_batch import SourcingBatch
+    from app.services.icp_intelligence import research_company_and_update
+
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            batch = await session.get(SourcingBatch, batch_id)
+            if not batch:
+                return
+
+            batch.status = "processing"
+            batch.updated_at = datetime.utcnow()
+            session.add(batch)
+            await session.commit()
+
+            result = await session.execute(
+                select(Company.id).where(Company.sourcing_batch_id == batch_id)
+            )
+            company_ids = list(result.scalars().all())
+
+        # Process companies with concurrency limit (2 at a time — each does
+        # many web requests + a Claude API call, so keep it conservative)
+        semaphore = asyncio.Semaphore(2)
+        progress_lock = asyncio.Lock()
+        processed = 0
+        failed = 0
+
+        async def research_one(company_id: UUID) -> None:
+            nonlocal processed, failed
+            error_payload = None
+
+            async with semaphore:
+                try:
+                    async with SessionLocal() as company_session:
+                        await research_company_and_update(company_id, company_session)
+                except Exception as exc:
+                    import traceback
+                    logger.error(f"ICP research failed for {company_id}: {exc}\n{traceback.format_exc()}")
+                    error_payload = {"company_id": str(company_id), "error": str(exc)}
+
+                async with progress_lock:
+                    processed += 1
+                    if error_payload:
+                        failed += 1
+                    async with SessionLocal() as progress_session:
+                        progress_batch = await progress_session.get(SourcingBatch, batch_id)
+                        if not progress_batch:
+                            return
+                        progress_batch.processed_rows = processed
+                        progress_batch.failed_rows = failed
+                        if error_payload:
+                            existing_errors = list(progress_batch.error_log or [])
+                            existing_errors.append(error_payload)
+                            progress_batch.error_log = existing_errors
+                        progress_batch.updated_at = datetime.utcnow()
+                        progress_session.add(progress_batch)
+                        await progress_session.commit()
+
+        await asyncio.gather(*(research_one(cid) for cid in company_ids))
+
+        async with SessionLocal() as session:
+            batch = await session.get(SourcingBatch, batch_id)
+            if batch:
+                batch.failed_rows = failed
+                batch.status = "failed" if failed == len(company_ids) and company_ids else "completed"
+                batch.updated_at = datetime.utcnow()
+                session.add(batch)
+                await session.commit()
+                logger.info(
+                    f"ICP research batch {batch_id} complete: "
+                    f"{batch.processed_rows}/{batch.total_rows} "
+                    f"({failed} failed)"
+                )
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(
+    name="app.tasks.enrichment.icp_research_single_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def icp_research_single_task(self, company_id: str) -> dict:
+    """Run ICP intelligence pipeline for a single company."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_async_icp_research_single(UUID(company_id)))
+        finally:
+            loop.close()
+        return {"status": "completed", "company_id": company_id}
+    except Exception as exc:
+        logger.error(f"ICP research task failed for {company_id}: {exc}")
+        raise self.retry(exc=exc)
+
+
+async def _async_icp_research_single(company_id: UUID) -> None:
+    from app.services.icp_intelligence import research_company_and_update
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await research_company_and_update(company_id, session)
+    finally:
+        await engine.dispose()

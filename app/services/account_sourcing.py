@@ -1782,6 +1782,77 @@ def _summary_upload_context(company: Company) -> dict[str, Any]:
         "recommended_outreach_strategy": prospecting.get("recommended_outreach_strategy"),
     }
 
+
+def _research_quality_snapshot(
+    *,
+    company: Company,
+    cache: dict[str, Any],
+    scraped: dict[str, Any],
+    intent: dict[str, Any],
+    domain_available: bool,
+    apollo_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    apollo_contacts_entry = cache.get("apollo_contacts") if isinstance(cache.get("apollo_contacts"), dict) else {}
+    apollo_contacts = apollo_contacts_entry.get("data") if isinstance(apollo_contacts_entry, dict) else []
+    hunter_contacts_entry = cache.get("hunter_contacts") if isinstance(cache.get("hunter_contacts"), dict) else {}
+    hunter_contacts_data = hunter_contacts_entry.get("data") if isinstance(hunter_contacts_entry, dict) else {}
+    hunter_contacts = hunter_contacts_data.get("contacts") if isinstance(hunter_contacts_data, dict) else []
+    hunter_company_entry = cache.get("hunter_company") if isinstance(cache.get("hunter_company"), dict) else {}
+    hunter_company = hunter_company_entry.get("data") if isinstance(hunter_company_entry, dict) else None
+
+    website_pages = int(scraped.get("pages_scraped", 0) or 0)
+    intent_hits = len(intent.get("raw_results", [])) if isinstance(intent.get("raw_results"), list) else 0
+    apollo_contacts_count = len(apollo_contacts) if isinstance(apollo_contacts, list) else 0
+    hunter_contacts_count = len(hunter_contacts) if isinstance(hunter_contacts, list) else 0
+
+    evidence_score = 0
+    evidence_score += 2 if domain_available else 0
+    evidence_score += 2 if website_pages > 0 else 0
+    evidence_score += 1 if intent_hits > 0 else 0
+    evidence_score += 2 if isinstance(apollo_data, dict) and bool(apollo_data) else 0
+    evidence_score += 1 if isinstance(hunter_company, dict) and bool(hunter_company) else 0
+    evidence_score += 2 if apollo_contacts_count > 0 else 0
+    evidence_score += 1 if hunter_contacts_count > 0 else 0
+
+    if evidence_score >= 6:
+        evidence_level = "strong"
+    elif evidence_score >= 3:
+        evidence_level = "partial"
+    else:
+        evidence_level = "thin"
+
+    live_research_sources = [
+        name
+        for name, active in (
+            ("website", website_pages > 0),
+            ("web_search", intent_hits > 0),
+            ("apollo_company", isinstance(apollo_data, dict) and bool(apollo_data)),
+            ("apollo_contacts", apollo_contacts_count > 0),
+            ("hunter_company", isinstance(hunter_company, dict) and bool(hunter_company)),
+            ("hunter_contacts", hunter_contacts_count > 0),
+        )
+        if active
+    ]
+
+    return {
+        "domain_available": domain_available,
+        "website_pages_scraped": website_pages,
+        "intent_result_count": intent_hits,
+        "apollo_company_found": isinstance(apollo_data, dict) and bool(apollo_data),
+        "apollo_contacts_found": apollo_contacts_count,
+        "hunter_company_found": isinstance(hunter_company, dict) and bool(hunter_company),
+        "hunter_contacts_found": hunter_contacts_count,
+        "live_research_sources": live_research_sources,
+        "evidence_score": evidence_score,
+        "evidence_level": evidence_level,
+        "allow_ai_summary": evidence_level != "thin",
+        "summary_note": (
+            "Live research evidence is thin; avoid treating AI summarization as grounded research."
+            if evidence_level == "thin"
+            else "Live research captured enough evidence for AI synthesis."
+        ),
+    }
+
 async def enrich_company_tiered(
     company_id: UUID,
     session: AsyncSession,
@@ -1874,9 +1945,9 @@ async def enrich_company_tiered(
         cache["intent_signals"] = {"data": intent, "fetched_at": datetime.utcnow().isoformat()}
         existing_intent = copy.deepcopy(company.intent_signals or {})
         company.intent_signals = {
-            "hiring": max(int(existing_intent.get("hiring", 0) or 0), len(intent.get("hiring", []))),
-            "funding": max(int(existing_intent.get("funding", 0) or 0), len(intent.get("funding", []))),
-            "product": max(int(existing_intent.get("product", 0) or 0), len(intent.get("product", []))),
+            "hiring": max(int(existing_intent.get("hiring", 0) or 0), len(intent.get("hiring") or [])),
+            "funding": max(int(existing_intent.get("funding", 0) or 0), len(intent.get("funding") or [])),
+            "product": max(int(existing_intent.get("product", 0) or 0), len(intent.get("product") or [])),
             "uploaded_intent_score": existing_intent.get("uploaded_intent_score"),
             "uploaded_fit_type": existing_intent.get("uploaded_fit_type"),
             "uploaded_classification": existing_intent.get("uploaded_classification"),
@@ -2012,50 +2083,81 @@ async def enrich_company_tiered(
     else:
         _pipeline_stamp(cache, "paid_enrichment", "skipped", paid_reason)
 
+    # ── Email verification for top contacts (Hunter) ──────────────────────
+    await _verify_top_contact_emails(company.id, session, cache)
+
+    research_quality = _research_quality_snapshot(
+        company=company,
+        cache=cache,
+        scraped=scraped,
+        intent=intent,
+        domain_available=domain_available,
+        apollo_data=apollo_data if isinstance(apollo_data, dict) else None,
+    )
+    cache["research_quality"] = {
+        "data": research_quality,
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+
     # ── AI Tier: Claude summarization ───────────────────────────────────────
     from app.clients.claude_enrichment import summarize_company
     _pipeline_stamp(cache, "ai_summary", "started", "Generating AI summary")
-    try:
-        summary = await asyncio.wait_for(
-            summarize_company(
-                scraped_data=scraped,
-                apollo_data=apollo_data,
-                search_results=intent,
-                company_name=company.name,
-                domain=company.domain,
-                upload_context=summary_context,
-            ),
-            timeout=_AI_SUMMARY_TIMEOUT_SECONDS,
-        )
-        summary_source = summary.get("_source", "unknown")
-        is_fallback = summary_source == "fallback"
+    if not research_quality["allow_ai_summary"]:
+        cache["ai_summary"] = {
+            "data": {
+                "_source": "skipped_thin_research",
+                "confidence": 0,
+                "description": company.description or "",
+                "industry": company.industry or "Unknown",
+                "research_quality": research_quality,
+                "note": research_quality["summary_note"],
+            },
+            "fetched_at": datetime.utcnow().isoformat(),
+        }
+        _pipeline_stamp(cache, "ai_summary", "fallback", str(research_quality["summary_note"]))
+    else:
+        try:
+            summary = await asyncio.wait_for(
+                summarize_company(
+                    scraped_data=scraped,
+                    apollo_data=apollo_data,
+                    search_results=intent,
+                    company_name=company.name,
+                    domain=company.domain,
+                    upload_context=summary_context,
+                ),
+                timeout=_AI_SUMMARY_TIMEOUT_SECONDS,
+            )
+            summary_source = summary.get("_source", "unknown")
+            is_fallback = summary_source == "fallback"
+            summary["research_quality"] = research_quality
 
-        if not is_fallback and summary.get("description"):
-            company.description = summary["description"]
-        if not is_fallback and summary.get("industry") and summary["industry"] != "Unknown":
-            company.industry = summary["industry"]
-        # Apply tech stack if discovered by AI
-        if not is_fallback and summary.get("tech_stack_signals") and not company.tech_stack:
-            company.tech_stack = summary["tech_stack_signals"]
+            if not is_fallback and summary.get("description"):
+                company.description = summary["description"]
+            if not is_fallback and summary.get("industry") and summary["industry"] != "Unknown":
+                company.industry = summary["industry"]
+            # Apply tech stack if discovered by AI
+            if not is_fallback and summary.get("tech_stack_signals") and not company.tech_stack:
+                company.tech_stack = summary["tech_stack_signals"]
 
-        prev_ai_entry = cache.get("ai_summary") if isinstance(cache.get("ai_summary"), dict) else None
-        prev_ai_data = prev_ai_entry.get("data") if isinstance(prev_ai_entry, dict) else None
-        prev_ai_source = prev_ai_data.get("_source") if isinstance(prev_ai_data, dict) else None
+            prev_ai_entry = cache.get("ai_summary") if isinstance(cache.get("ai_summary"), dict) else None
+            prev_ai_data = prev_ai_entry.get("data") if isinstance(prev_ai_entry, dict) else None
+            prev_ai_source = prev_ai_data.get("_source") if isinstance(prev_ai_data, dict) else None
 
-        # Keep last good Claude payload when a fallback response is generated.
-        if is_fallback and prev_ai_source == "claude":
-            logger.warning(f"Keeping previous Claude AI summary for {company.name}; new summary was fallback")
-        else:
-            cache["ai_summary"] = {"data": summary, "fetched_at": datetime.utcnow().isoformat()}
+            # Keep last good Claude payload when a fallback response is generated.
+            if is_fallback and prev_ai_source == "claude":
+                logger.warning(f"Keeping previous Claude AI summary for {company.name}; new summary was fallback")
+            else:
+                cache["ai_summary"] = {"data": summary, "fetched_at": datetime.utcnow().isoformat()}
 
-        logger.info(f"AI summary generated for {company.name} from source={summary_source} with {len(summary)} fields")
-        _pipeline_stamp(cache, "ai_summary", "completed", f"AI summary source={summary_source}")
-    except asyncio.TimeoutError:
-        logger.error(f"Claude summarization timed out for {company.name}")
-        _pipeline_stamp(cache, "ai_summary", "timeout", "AI summary timed out")
-    except Exception as e:
-        logger.error(f"Claude summarization failed for {company.name}: {e}")
-        _pipeline_stamp(cache, "ai_summary", "failed", str(e))
+            logger.info(f"AI summary generated for {company.name} from source={summary_source} with {len(summary)} fields")
+            _pipeline_stamp(cache, "ai_summary", "completed", f"AI summary source={summary_source}")
+        except asyncio.TimeoutError:
+            logger.error(f"Claude summarization timed out for {company.name}")
+            _pipeline_stamp(cache, "ai_summary", "timeout", "AI summary timed out")
+        except Exception as e:
+            logger.error(f"Claude summarization failed for {company.name}: {e}")
+            _pipeline_stamp(cache, "ai_summary", "failed", str(e))
 
     # ── Committee coverage & prospecting priorities ─────────────────────────
     _pipeline_stamp(cache, "committee_analysis", "started", "Building committee coverage and priorities")
@@ -2356,3 +2458,76 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
     if created:
         await session.commit()
     return created
+
+
+_SENIORITY_RANK = {
+    "c_suite": 1, "executive": 1, "vp": 2, "director": 3,
+    "senior": 4, "manager": 5, "entry": 6,
+}
+_MAX_VERIFY_EMAILS = 5
+
+
+async def _verify_top_contact_emails(
+    company_id: UUID, session: AsyncSession, cache: dict[str, Any]
+) -> None:
+    """
+    Verify email deliverability for the top contacts (by seniority) at a company
+    using Hunter.io's email-verifier. Updates contact.email_verified and
+    enrichment_data.confidence. Capped at 5 contacts to control API costs.
+    """
+    from app.clients.hunter import HunterClient
+    hunter = HunterClient()
+    if hunter.mock:
+        return  # No API key — skip verification
+
+    result = await session.execute(
+        select(Contact)
+        .where(Contact.company_id == company_id)
+        .where(Contact.email.isnot(None))
+        .where(Contact.email_verified == False)
+    )
+    contacts = list(result.scalars().all())
+    if not contacts:
+        return
+
+    # Sort by seniority (C-suite first), then take top N
+    contacts.sort(key=lambda c: _SENIORITY_RANK.get(c.seniority or "", 6))
+    to_verify = contacts[:_MAX_VERIFY_EMAILS]
+
+    verified_count = 0
+    for contact in to_verify:
+        try:
+            verification = await hunter.verify_email(contact.email)
+            if not verification:
+                continue
+
+            is_deliverable = verification.get("result") == "deliverable"
+            score = verification.get("score", 0)
+            contact.email_verified = is_deliverable
+
+            # Store verification details in enrichment_data
+            enrich = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+            enrich["email_verification"] = verification
+            enrich["confidence"] = score
+            contact.enrichment_data = enrich
+
+            if is_deliverable:
+                verified_count += 1
+        except Exception as e:
+            logger.warning(f"Email verification failed for {contact.email}: {e}")
+            continue
+
+    if to_verify:
+        await session.commit()
+        cache["email_verification"] = {
+            "data": {
+                "verified": verified_count,
+                "checked": len(to_verify),
+                "total_contacts_with_email": len(contacts),
+            },
+            "fetched_at": datetime.utcnow().isoformat(),
+        }
+        logger.info(
+            f"Email verification: {verified_count}/{len(to_verify)} deliverable "
+            f"for company {company_id}"
+        )

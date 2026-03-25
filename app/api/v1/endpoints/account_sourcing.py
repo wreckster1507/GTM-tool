@@ -20,9 +20,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.core.dependencies import DBSession, Pagination
+from app.models.angel import AngelInvestor, AngelMapping
 from app.models.company import Company, CompanyRead, CompanyUpdate
 from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
@@ -44,6 +46,98 @@ from app.services.data_reset import (
 from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
+
+
+async def _auto_create_angel_records(
+    session,
+    company: Company,
+    contact: Contact,
+) -> int:
+    """
+    Read warm_paths and investor data from company.prospecting_profile,
+    get-or-create AngelInvestor records, and create AngelMapping links.
+    Also populates the company's investor text columns.
+    Returns the number of mappings created.
+    """
+    profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
+    warm_paths = profile.get("warm_paths") if isinstance(profile.get("warm_paths"), list) else []
+    investors = profile.get("investors") if isinstance(profile.get("investors"), dict) else {}
+
+    # ── Populate company investor text columns ──────────────────────────
+    ownership = profile.get("ownership_stage")
+    if ownership and not company.ownership_stage:
+        company.ownership_stage = str(ownership)[:500]
+
+    pe_list = investors.get("pe") if isinstance(investors.get("pe"), list) else []
+    if pe_list and not company.pe_investors:
+        company.pe_investors = "; ".join(str(item).strip() for item in pe_list if str(item).strip())
+
+    vc_list = investors.get("vc_growth") if isinstance(investors.get("vc_growth"), list) else []
+    if vc_list and not company.vc_investors:
+        company.vc_investors = "; ".join(str(item).strip() for item in vc_list if str(item).strip())
+
+    strategic_list = investors.get("strategic") if isinstance(investors.get("strategic"), list) else []
+    if strategic_list and not company.strategic_investors:
+        company.strategic_investors = "; ".join(str(item).strip() for item in strategic_list if str(item).strip())
+
+    if any([pe_list, vc_list, strategic_list, ownership]):
+        session.add(company)
+
+    # ── Create angel investor + mapping records ─────────────────────────
+    mappings_created = 0
+    for rank, connector in enumerate(warm_paths, start=1):
+        if not isinstance(connector, dict):
+            continue
+        angel_name = str(connector.get("name") or "").strip()
+        if not angel_name:
+            continue
+
+        # Get or create angel investor (case-insensitive match)
+        existing_angel = (
+            await session.execute(
+                select(AngelInvestor).where(
+                    func.lower(AngelInvestor.name) == angel_name.lower()
+                ).limit(1)
+            )
+        ).scalars().first()
+
+        if existing_angel:
+            angel = existing_angel
+        else:
+            angel = AngelInvestor(name=angel_name)
+            session.add(angel)
+            await session.flush()
+
+        # Check for duplicate mapping (same contact + angel)
+        existing_mapping = (
+            await session.execute(
+                select(AngelMapping).where(
+                    AngelMapping.contact_id == contact.id,
+                    AngelMapping.angel_investor_id == angel.id,
+                ).limit(1)
+            )
+        ).scalars().first()
+
+        if existing_mapping:
+            continue
+
+        strength_raw = connector.get("strength")
+        strength = int(strength_raw) if strength_raw is not None else 3
+        strength = max(1, min(5, strength))
+
+        mapping = AngelMapping(
+            contact_id=contact.id,
+            company_id=company.id,
+            angel_investor_id=angel.id,
+            strength=strength,
+            rank=min(rank, 10),
+            connection_path=connector.get("connection_path"),
+            why_it_works=connector.get("why_it_works"),
+        )
+        session.add(mapping)
+        mappings_created += 1
+
+    return mappings_created
 
 
 @router.post("/reset/{scope}")
@@ -77,10 +171,18 @@ def _joined_signal_values(items: object) -> str:
 def _company_export_row(company: Company) -> dict[str, str]:
     import_block = company.enrichment_sources.get("import") if isinstance(company.enrichment_sources, dict) else {}
     raw_row = import_block.get("raw_row") if isinstance(import_block, dict) and isinstance(import_block.get("raw_row"), dict) else {}
-    analyst = import_block.get("analyst") if isinstance(import_block, dict) and isinstance(import_block.get("analyst"), dict) else {}
+    uploaded_analyst = import_block.get("uploaded_analyst") if isinstance(import_block, dict) and isinstance(import_block.get("uploaded_analyst"), dict) else {}
+    analyst = uploaded_analyst or (import_block.get("analyst") if isinstance(import_block, dict) and isinstance(import_block.get("analyst"), dict) else {})
+    generated_analyst = import_block.get("generated_analyst") if isinstance(import_block, dict) and isinstance(import_block.get("generated_analyst"), dict) else {}
     uploaded_signals = import_block.get("uploaded_signals") if isinstance(import_block, dict) and isinstance(import_block.get("uploaded_signals"), dict) else {}
+    generated_signals = import_block.get("generated_signals") if isinstance(import_block, dict) and isinstance(import_block.get("generated_signals"), dict) else {}
     profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
     outreach_plan = company.outreach_plan if isinstance(company.outreach_plan, dict) else {}
+    cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+    icp_entry = cache.get("icp_analysis") if isinstance(cache.get("icp_analysis"), dict) else {}
+    icp = icp_entry.get("data") if isinstance(icp_entry, dict) and isinstance(icp_entry.get("data"), dict) else {}
+    research_quality_entry = cache.get("research_quality") if isinstance(cache.get("research_quality"), dict) else {}
+    research_quality = research_quality_entry.get("data") if isinstance(research_quality_entry, dict) and isinstance(research_quality_entry.get("data"), dict) else {}
     priority = account_priority_snapshot(company)
 
     row = {
@@ -124,6 +226,49 @@ def _company_export_row(company: Company) -> dict[str, str]:
         "uploaded_intent_why": str(analyst.get("intent_why") or ""),
         "uploaded_positive_signals": _joined_signal_values(uploaded_signals.get("positive") if isinstance(uploaded_signals, dict) else []),
         "uploaded_negative_signals": _joined_signal_values(uploaded_signals.get("negative") if isinstance(uploaded_signals, dict) else []),
+        "researched_company_overview": str(icp.get("company_overview") or generated_analyst.get("company_overview") or company.description or ""),
+        "researched_industry": str(icp.get("industry") or generated_analyst.get("industry") or company.industry or ""),
+        "researched_category": str(icp.get("category") or generated_analyst.get("category") or company.vertical or ""),
+        "researched_core_focus": str(icp.get("core_focus") or generated_analyst.get("core_focus") or ""),
+        "researched_fit_type": str(icp.get("fit_type") or generated_analyst.get("fit_type") or ""),
+        "researched_classification": str(icp.get("classification") or generated_analyst.get("classification") or ""),
+        "researched_confidence": str(icp.get("confidence") or generated_analyst.get("confidence") or ""),
+        "researched_financial_capacity_met": str(icp.get("financial_capacity_met") or generated_analyst.get("financial_capacity_met") or ""),
+        "researched_revenue_funding": str(icp.get("revenue_funding") or generated_analyst.get("revenue_funding") or ""),
+        "researched_icp_score_0_10": str(icp.get("icp_fit_score") or generated_analyst.get("icp_fit_score") or ""),
+        "researched_icp_why": str(icp.get("icp_why") or generated_analyst.get("icp_why") or ""),
+        "researched_intent_score_0_10": str(icp.get("intent_score") or generated_analyst.get("intent_score") or ""),
+        "researched_intent_why": str(icp.get("intent_why") or generated_analyst.get("intent_why") or ""),
+        "researched_ps_impl_hiring": str(icp.get("ps_impl_hiring") or ""),
+        "researched_leadership_org_moves": str(icp.get("leadership_org_moves") or ""),
+        "researched_pr_funding_expansion": str(icp.get("pr_funding_expansion") or ""),
+        "researched_events_thought_leadership": str(icp.get("events_thought_leadership") or ""),
+        "researched_reviews_case_studies": str(icp.get("reviews_case_studies") or ""),
+        "researched_internal_ai_overlap": str(icp.get("internal_ai_overlap") or ""),
+        "researched_strategic_constraints": str(icp.get("strategic_constraints") or ""),
+        "researched_ps_cs_contraction": str(icp.get("ps_cs_contraction") or ""),
+        "researched_build_vs_buy": str(icp.get("build_vs_buy") or ""),
+        "researched_ai_acquisition": str(icp.get("ai_acquisition") or ""),
+        "researched_employee_count": str(icp.get("employee_count") or generated_analyst.get("employee_count") or company.employee_count or ""),
+        "researched_funding_stage": str(icp.get("funding_stage") or generated_analyst.get("funding_stage") or company.funding_stage or ""),
+        "researched_arr_estimate": str(icp.get("arr_estimate") or generated_analyst.get("arr_estimate") or company.arr_estimate or ""),
+        "researched_committee_coverage": str(icp.get("committee_coverage") or generated_analyst.get("committee_coverage") or profile.get("committee_coverage") or ""),
+        "researched_open_gaps": " | ".join(str(item).strip() for item in (icp.get("open_gaps") or generated_analyst.get("open_gaps") or profile.get("open_gaps") or []) if str(item).strip()) if isinstance((icp.get("open_gaps") or generated_analyst.get("open_gaps") or profile.get("open_gaps")), list) else str(icp.get("open_gaps") or generated_analyst.get("open_gaps") or profile.get("open_gaps") or ""),
+        "researched_icp_personas": " | ".join(
+            " - ".join(part for part in [str(item.get("title") or "").strip(), str(item.get("name") or "").strip(), str(item.get("relevance") or "").strip()] if part)
+            for item in (icp.get("icp_personas") or profile.get("icp_personas") or [])
+            if isinstance(item, dict)
+        ),
+        "researched_account_thesis": str(icp.get("account_thesis") or generated_analyst.get("account_thesis") or company.account_thesis or ""),
+        "researched_why_now": str(icp.get("why_now") or generated_analyst.get("why_now") or company.why_now or ""),
+        "researched_beacon_angle": str(icp.get("beacon_angle") or generated_analyst.get("beacon_angle") or company.beacon_angle or ""),
+        "researched_recommended_outreach_strategy": str(icp.get("recommended_outreach_strategy") or generated_analyst.get("recommended_outreach_strategy") or profile.get("recommended_outreach_strategy") or ""),
+        "researched_conversation_starter": str(icp.get("conversation_starter") or generated_analyst.get("conversation_starter") or profile.get("conversation_starter") or ""),
+        "researched_next_steps": str(icp.get("next_steps") or generated_analyst.get("next_steps") or profile.get("next_steps") or ""),
+        "researched_generated_positive_signals": _joined_signal_values(generated_signals.get("positive") if isinstance(generated_signals, dict) else []),
+        "researched_generated_negative_signals": _joined_signal_values(generated_signals.get("negative") if isinstance(generated_signals, dict) else []),
+        "researched_evidence_level": str(research_quality.get("evidence_level") or ""),
+        "researched_evidence_score": str(research_quality.get("evidence_score") or ""),
         "enriched_at": company.enriched_at.isoformat() if company.enriched_at else "",
         "created_at": company.created_at.isoformat(),
         "updated_at": company.updated_at.isoformat(),
@@ -187,6 +332,48 @@ def _contact_export_row(company: Company, contact: Contact) -> dict[str, str]:
 
 
 # ── CSV Upload ─────────────────────────────────────────────────────────────────
+
+# Headers that indicate the CSV already has rich ICP/analyst data.
+# If a CSV has NONE of these (just company name + maybe domain), we trigger
+# the full ICP intelligence pipeline to research each company from scratch.
+_RICH_DATA_HEADERS = {
+    "industry", "sector", "employee_count", "employees", "headcount",
+    "funding_stage", "stage", "round", "series", "total funding",
+    "annual revenue", "arr", "revenue", "icp fit score", "intent score",
+    "classification", "fit type", "confidence", "core focus",
+    "icp why", "intent why", "ps impl hiring", "reviews case studies",
+    "category", "description", "overview", "what they do",
+}
+
+
+def _is_minimal_upload(rows: list[dict]) -> bool:
+    """
+    Detect if the uploaded CSV is 'minimal' — just company names (and maybe
+    domain/industry) without detailed ICP/analyst columns.
+
+    When minimal, we trigger the full ICP intelligence pipeline that researches
+    each company using web search, Apollo, and Claude.
+    """
+    if not rows:
+        return False
+
+    # Normalize all headers in the first row
+    from app.services.account_sourcing import _normalize_header
+    headers = {_normalize_header(h) for h in rows[0].keys()}
+
+    # Count how many "rich data" headers are present with actual values
+    rich_count = 0
+    for row in rows[:3]:  # Sample first few rows
+        for header, value in row.items():
+            normalized = _normalize_header(header)
+            if normalized in _RICH_DATA_HEADERS and value and str(value).strip():
+                rich_count += 1
+                break  # One rich value per row is enough
+
+    # If fewer than half the sampled rows have rich data, it's minimal
+    sample_size = min(len(rows), 3)
+    return rich_count < (sample_size / 2)
+
 
 @router.post("/upload", response_model=SourcingBatchRead, status_code=202)
 async def upload_csv(
@@ -260,6 +447,25 @@ async def upload_csv(
                 await session.refresh(company)
                 created += 1
 
+            # Populate company investor text columns even if no contact row
+            profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
+            inv = profile.get("investors") if isinstance(profile.get("investors"), dict) else {}
+            ownership = profile.get("ownership_stage")
+            if ownership and not company.ownership_stage:
+                company.ownership_stage = str(ownership)[:500]
+            pe = inv.get("pe") if isinstance(inv.get("pe"), list) else []
+            if pe and not company.pe_investors:
+                company.pe_investors = "; ".join(str(i).strip() for i in pe if str(i).strip())
+            vc = inv.get("vc_growth") if isinstance(inv.get("vc_growth"), list) else []
+            if vc and not company.vc_investors:
+                company.vc_investors = "; ".join(str(i).strip() for i in vc if str(i).strip())
+            strat = inv.get("strategic") if isinstance(inv.get("strategic"), list) else []
+            if strat and not company.strategic_investors:
+                company.strategic_investors = "; ".join(str(i).strip() for i in strat if str(i).strip())
+            if any([pe, vc, strat, ownership]):
+                session.add(company)
+                await session.commit()
+
             contact_fields = row_to_contact_fields(row, fields)
             if contact_fields:
                 existing_contact = None
@@ -286,11 +492,21 @@ async def upload_csv(
                             setattr(existing_contact, key, value)
                     refresh_contact_sequence_plan(existing_contact, company)
                     session.add(existing_contact)
+                    resolved_contact = existing_contact
                 else:
                     contact = Contact(**contact_fields, company_id=company.id)
                     refresh_contact_sequence_plan(contact, company)
                     session.add(contact)
+                    resolved_contact = contact
                 await session.commit()
+                await session.refresh(resolved_contact)
+
+                # Auto-create angel investor + mapping records from warm_paths
+                try:
+                    await _auto_create_angel_records(session, company, resolved_contact)
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
 
                 company_contacts = (
                     await session.execute(select(Contact).where(Contact.company_id == company.id))
@@ -317,9 +533,8 @@ async def upload_csv(
     batch_id = batch.id
 
     try:
-        from app.tasks.enrichment import enrich_batch_task
-
-        enrich_batch_task.delay(str(batch_id))
+        from app.tasks.enrichment import icp_research_batch_task
+        icp_research_batch_task.delay(str(batch_id))
     except Exception as exc:
         batch.status = "failed"
         batch.error_log = [*(batch.error_log or []), {"batch": str(batch_id), "error": str(exc)}]
@@ -519,21 +734,45 @@ async def export_sourced_contacts(
 
 @router.post("/companies/{company_id}/re-enrich")
 async def re_enrich_company(company_id: UUID, session: DBSession = None):
-    """Re-run the standard tiered enrichment pipeline for a company."""
+    """Re-run the deep TAL / ICP research pipeline for a company."""
     company = await session.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     try:
-        from app.tasks.enrichment import re_enrich_company_task
+        from app.tasks.enrichment import icp_research_single_task
 
-        task = re_enrich_company_task.delay(str(company_id))
+        task = icp_research_single_task.delay(str(company_id))
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to queue company re-enrichment") from exc
     return {
         "company_id": str(company_id),
         "task_id": task.id,
         "status": "queued",
-        "message": "Re-enrichment started",
+        "message": "Deep research re-enrichment started",
+    }
+
+
+@router.post("/companies/{company_id}/icp-research")
+async def icp_research_company(company_id: UUID, session: DBSession = None):
+    """Run the full ICP intelligence pipeline for a single company.
+
+    Uses web search, Apollo, website scraping, and Claude AI to produce
+    comprehensive ICP analysis with TAL filtering and intent scoring.
+    """
+    company = await session.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    try:
+        from app.tasks.enrichment import icp_research_single_task
+
+        task = icp_research_single_task.delay(str(company_id))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to queue ICP research") from exc
+    return {
+        "company_id": str(company_id),
+        "task_id": task.id,
+        "status": "queued",
+        "message": "ICP intelligence research started — this takes 15-30 seconds per company",
     }
 
 

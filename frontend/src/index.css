@@ -43,9 +43,14 @@ body {
 .crm-shell {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
-  height: 100vh;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
   overflow: hidden;
+  transition: grid-template-columns 0.2s ease;
+}
+
+.crm-shell.sidebar-collapsed {
+  grid-template-columns: 84px minmax(0, 1fr);
 }
 
 .crm-sidebar {
@@ -56,8 +61,12 @@ body {
   color: #d6dbf4;
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
+}
+
+.crm-brand-copy {
+  min-width: 0;
 }
 
 .crm-brand {
@@ -67,6 +76,25 @@ body {
   gap: 14px;
   padding: 0 20px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.crm-sidebar-collapse-button {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d6dbf4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.crm-sidebar-collapse-button:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .crm-brand-mark {
@@ -117,6 +145,14 @@ body {
   gap: 6px;
 }
 
+.crm-nav-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #87a3c0;
+  padding: 0 8px 4px;
+}
+
 .crm-nav-link {
   display: flex;
   align-items: center;
@@ -128,6 +164,10 @@ body {
   font-weight: 600;
   font-size: 13px;
   transition: all 0.16s ease;
+}
+
+.crm-nav-link-label {
+  min-width: 0;
 }
 
 .crm-nav-icon {
@@ -185,12 +225,46 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.crm-shell.sidebar-collapsed .crm-brand {
+  padding: 0 14px;
+  justify-content: center;
+}
+
+.crm-shell.sidebar-collapsed .crm-brand-copy,
+.crm-shell.sidebar-collapsed .crm-nav-section-label,
+.crm-shell.sidebar-collapsed .crm-nav-link-label {
+  display: none;
+}
+
+.crm-shell.sidebar-collapsed .crm-sidebar-collapse-button {
+  margin-left: 0;
+}
+
+.crm-shell.sidebar-collapsed .crm-nav,
+.crm-shell.sidebar-collapsed .crm-sidebar-footer {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.crm-shell.sidebar-collapsed .crm-nav-link,
+.crm-shell.sidebar-collapsed .crm-sidebar-settings {
+  justify-content: center;
+  gap: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.crm-shell.sidebar-collapsed .crm-nav-icon {
+  width: 34px;
+  height: 34px;
+}
+
 .crm-main {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -213,6 +287,10 @@ body {
   gap: 14px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.crm-sidebar-toggle {
+  display: inline-flex;
 }
 
 .crm-workspace-select {
@@ -714,11 +792,15 @@ textarea:focus {
   .crm-shell {
     grid-template-columns: 1fr;
     height: auto;
-    min-height: 100vh;
+    min-height: 100%;
     overflow: visible;
   }
 
   .crm-sidebar {
+    display: none;
+  }
+
+  .crm-sidebar-toggle {
     display: none;
   }
 

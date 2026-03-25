@@ -15,6 +15,8 @@ class CompanyBase(SQLModel):
     employee_count: Optional[int] = None
     arr_estimate: Optional[float] = None
     funding_stage: Optional[str] = None
+    region: Optional[str] = None  # e.g. "US", "EU", "APAC"
+    headquarters: Optional[str] = None  # e.g. "Paris, France"
     has_dap: bool = False
     dap_tool: Optional[str] = None
 
@@ -33,6 +35,7 @@ class Company(CompanyBase, table=True):
     intent_signals: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     sourcing_batch_id: Optional[UUID] = Field(default=None, foreign_key="sourcing_batches.id", index=True)
     enrichment_cache: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     assigned_rep: Optional[str] = None
     assigned_rep_email: Optional[str] = None
     assigned_rep_name: Optional[str] = None
@@ -47,6 +50,11 @@ class Company(CompanyBase, table=True):
     prospecting_profile: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     outreach_plan: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     last_outreach_at: Optional[datetime] = None
+    # Investor mapping fields
+    ownership_stage: Optional[str] = None  # e.g. "PE-backed (KKR)", "Public (NYSE: BILL)"
+    pe_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
+    vc_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
+    strategic_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -66,6 +74,8 @@ class CompanyRead(CompanyBase):
     intent_signals: Optional[Any] = None
     sourcing_batch_id: Optional[UUID] = None
     enrichment_cache: Optional[Any] = None
+    assigned_to_id: Optional[UUID] = None
+    assigned_to_name: Optional[str] = None  # populated via JOIN
     assigned_rep: Optional[str] = None
     assigned_rep_email: Optional[str] = None
     assigned_rep_name: Optional[str] = None
@@ -80,6 +90,10 @@ class CompanyRead(CompanyBase):
     prospecting_profile: Optional[Any] = None
     outreach_plan: Optional[Any] = None
     last_outreach_at: Optional[datetime] = None
+    ownership_stage: Optional[str] = None
+    pe_investors: Optional[str] = None
+    vc_investors: Optional[str] = None
+    strategic_investors: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -92,6 +106,8 @@ class CompanyUpdate(SQLModel):
     employee_count: Optional[int] = None
     arr_estimate: Optional[float] = None
     funding_stage: Optional[str] = None
+    region: Optional[str] = None
+    headquarters: Optional[str] = None
     tech_stack: Optional[Any] = None
     has_dap: Optional[bool] = None
     dap_tool: Optional[str] = None
@@ -103,6 +119,7 @@ class CompanyUpdate(SQLModel):
     description: Optional[str] = None
     sourcing_batch_id: Optional[UUID] = None
     enrichment_cache: Optional[Any] = None
+    assigned_to_id: Optional[UUID] = None
     assigned_rep: Optional[str] = None
     assigned_rep_email: Optional[str] = None
     assigned_rep_name: Optional[str] = None
@@ -117,3 +134,7 @@ class CompanyUpdate(SQLModel):
     prospecting_profile: Optional[Any] = None
     outreach_plan: Optional[Any] = None
     last_outreach_at: Optional[datetime] = None
+    ownership_stage: Optional[str] = None
+    pe_investors: Optional[str] = None
+    vc_investors: Optional[str] = None
+    strategic_investors: Optional[str] = None

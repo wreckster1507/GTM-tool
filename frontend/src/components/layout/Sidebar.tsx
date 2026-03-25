@@ -12,7 +12,11 @@ import {
   Swords,
   LayoutPanelTop,
   Settings,
+  Users,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
+import { useAuth } from "../../lib/AuthContext";
 
 const NAV = [
   { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
@@ -26,21 +30,25 @@ const NAV = [
   { to: "/sales-workspace", label: "Sales Workspace", icon: LayoutPanelTop },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const { isAdmin } = useAuth();
   return (
-    <aside className="crm-sidebar">
+    <aside className={`crm-sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="crm-brand">
         <div className="crm-brand-mark">
           <Sparkles size={16} />
         </div>
-        <div>
+        <div className="crm-brand-copy">
           <p className="crm-brand-title">beacon.li</p>
           <p className="crm-brand-sub">Execution workspace</p>
         </div>
+        <button type="button" className="crm-sidebar-collapse-button" onClick={onToggle} aria-label={collapsed ? "Open sidebar" : "Collapse sidebar"}>
+          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
       </div>
 
       <nav className="crm-nav">
-        <p className="text-[11px] uppercase tracking-[0.12em] text-[#87a3c0] px-2 pb-1">Workspace</p>
+        <p className="crm-nav-section-label">Workspace</p>
         {NAV.map((item) => {
           const Icon = item.icon;
           return (
@@ -48,20 +56,32 @@ export default function Sidebar() {
               key={item.to}
               to={item.to}
               className={({ isActive }) => `crm-nav-link ${isActive ? "active" : ""}`}
+              title={collapsed ? item.label : undefined}
             >
               <span className="crm-nav-icon">
                 <Icon size={16} />
               </span>
-              {item.label}
+              <span className="crm-nav-link-label">{item.label}</span>
             </NavLink>
           );
         })}
       </nav>
 
       <div className="crm-sidebar-footer">
-        <button type="button" className="crm-sidebar-settings">
+        {isAdmin && (
+          <NavLink
+            to="/team"
+            className={({ isActive }) => `crm-nav-link ${isActive ? "active" : ""}`}
+            style={{ marginBottom: 4 }}
+            title={collapsed ? "Team" : undefined}
+          >
+            <span className="crm-nav-icon"><Users size={16} /></span>
+            <span className="crm-nav-link-label">Team</span>
+          </NavLink>
+        )}
+        <button type="button" className="crm-sidebar-settings" title={collapsed ? "Settings" : undefined}>
           <Settings size={16} />
-          Settings
+          <span className="crm-nav-link-label">Settings</span>
         </button>
       </div>
     </aside>

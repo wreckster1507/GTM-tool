@@ -14,6 +14,10 @@ import {
   Phone,
   RefreshCw,
   Send,
+  AlertTriangle,
+  Newspaper,
+  Radar,
+  Shield,
   Target,
   TrendingUp,
   Users,
@@ -22,6 +26,7 @@ import {
 import { accountSourcingApi } from "../lib/api";
 import type { Company, Contact } from "../types";
 import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
+import AssignDropdown from "../components/AssignDropdown";
 
 const colors = {
   bg: "#f4f7fb",
@@ -141,12 +146,9 @@ function unwrapCache(cache: Record<string, unknown>, key: string): Record<string
 
 function cacheTs(cache: Record<string, unknown>, key: string): string | undefined {
   const e = cache[key] as Record<string, unknown> | undefined;
-  return typeof e?.fetched_at === "string" ? e.fetched_at : undefined;
-}
-
-function importBlock(company?: Company | null): Record<string, unknown> | undefined {
-  const block = company?.enrichment_sources?.import;
-  return block && typeof block === "object" ? (block as Record<string, unknown>) : undefined;
+  if (typeof e?.fetched_at === "string") return e.fetched_at;
+  if (typeof e?.analyzed_at === "string") return e.analyzed_at;
+  return undefined;
 }
 
 function canonicalPersona(persona?: string | null, personaType?: string | null): keyof typeof PERSONA_STYLE | "unknown" {
@@ -203,42 +205,37 @@ function KV({ label, value }: { label: string; value?: ReactNode }) {
 }
 
 function asText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  if (typeof value !== "string") return undefined;
+  const cleaned = value
+    .replace(/\s+/g, " ")
+    .replace(/\s*\/\s*/g, " / ")
+    .trim();
+  return cleaned || undefined;
 }
 
 function asList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item).trim()).filter(Boolean);
+  return value.map((item) => asText(String(item))).filter(Boolean) as string[];
 }
 
-function asSignalList(value: unknown): Array<{ key?: string; value?: string }> {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item) => item && typeof item === "object")
-    .map((item) => item as { key?: string; value?: string });
+function toBriefItems(value: unknown, maxItems = 4): string[] {
+  if (typeof value !== "string" || !value.trim()) return [];
+  const normalized = value
+    .replace(/\r/g, "")
+    .replace(/(?:^|\s)(\d+)[.)]\s+/g, "\n$1. ")
+    .replace(/\s+(\d+\))/g, "\n$1")
+    .replace(/\s+[•-]\s+/g, "\n- ")
+    .replace(/\s+(?=(?:PRIMARY|SECONDARY|TERTIARY|BACKUP|ALT(?:ERNATE)?|RISK|PROOF|ANGLE|PATH|HOOK)\s*:)/gi, "\n")
+    .split(/\n+/)
+    .map((item) => item.replace(/^\d+[.)]\s*/, "").replace(/^[-•]\s*/, "").trim())
+    .filter(Boolean);
+  return normalized.slice(0, maxItems).map((item) => item.replace(/\s+/g, " "));
 }
 
-function ParagraphBlock({ text, tone = "default" }: { text?: string; tone?: "default" | "soft" }) {
-  if (!text) return <div style={{ color: colors.faint }}>No insight available yet.</div>;
-
-  const bg = tone === "soft" ? "#f8fbff" : "#ffffff";
-  const border = tone === "soft" ? colors.border : "#e6edf5";
-
-  return (
-    <div style={{ border: `1px solid ${border}`, background: bg, borderRadius: 14, padding: "16px 18px" }}>
-      <div style={{ display: "grid", gap: 10 }}>
-        {text
-          .split(/\n+/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line, idx) => (
-            <p key={idx} style={{ margin: 0, color: colors.sub, lineHeight: 1.75, fontSize: 14.5 }}>
-              {line}
-            </p>
-          ))}
-      </div>
-    </div>
-  );
+function clipText(value: string | undefined, maxLength: number): string | undefined {
+  if (!value) return undefined;
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength).trim()}...`;
 }
 
 function ListCard({ title, items, empty }: { title: string; items: string[]; empty?: string }) {
@@ -261,12 +258,69 @@ function ListCard({ title, items, empty }: { title: string; items: string[]; emp
   );
 }
 
+type EvidenceSource = {
+  title: string;
+  url: string;
+  snippet?: string;
+};
+
+function sourceList(value: unknown): EvidenceSource[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      title: typeof item.title === "string" && item.title.trim() ? item.title.trim() : String(item.url || "Source"),
+      url: typeof item.url === "string" ? item.url : "",
+      snippet: typeof item.snippet === "string" ? item.snippet : undefined,
+    }))
+    .filter((item) => item.url);
+}
+
+function SourceLinks({ items }: { items: EvidenceSource[] }) {
+  if (!items.length) return null;
+  return (
+    <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+      <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>SOURCES</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {items.map((item) => (
+          <a
+            key={`${item.url}-${item.title}`}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              textDecoration: "none",
+              borderRadius: 999,
+              border: `1px solid ${colors.border}`,
+              background: "#fff",
+              color: colors.primary,
+              padding: "6px 10px",
+              fontSize: 12,
+              fontWeight: 700,
+              maxWidth: "100%",
+            }}
+            title={item.snippet || item.title}
+          >
+            <ExternalLink size={12} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>{item.title}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ContactItem({ contact }: { contact: Contact }) {
   const [re, setRe] = useState(false);
 
   const persona = canonicalPersona(contact.persona, contact.persona_type);
   const talkingPoints = Array.isArray(contact.talking_points) ? contact.talking_points : [];
   const warmPath = (contact.warm_intro_path || {}) as Record<string, unknown>;
+  const enrichData = (contact.enrichment_data || {}) as Record<string, unknown>;
+  const emailConfidence = typeof enrichData.confidence === "number" ? enrichData.confidence : null;
 
   return (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
@@ -279,8 +333,20 @@ function ContactItem({ contact }: { contact: Contact }) {
             {contact.first_name} {contact.last_name}
           </Link>
           <div style={{ color: colors.sub, marginTop: 3 }}>{contact.title || "No title"}</div>
-          <div style={{ color: colors.faint, marginTop: 4, fontSize: 13 }}>
+          <div style={{ color: colors.faint, marginTop: 4, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
             {contact.email || "No email"}
+            {contact.email_verified && (
+              <span style={{ background: "#eefcf5", color: colors.green, borderRadius: 999, fontSize: 10, padding: "2px 6px", fontWeight: 700 }}>verified</span>
+            )}
+            {emailConfidence !== null && (
+              <span style={{
+                background: emailConfidence >= 80 ? "#eefcf5" : emailConfidence >= 50 ? "#fff4df" : "#ffecef",
+                color: emailConfidence >= 80 ? colors.green : emailConfidence >= 50 ? colors.amber : colors.red,
+                borderRadius: 999, fontSize: 10, padding: "2px 6px", fontWeight: 700,
+              }}>
+                {emailConfidence}% conf
+              </span>
+            )}
           </div>
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
             {contact.outreach_lane ? (
@@ -360,6 +426,7 @@ export default function AccountSourcingCompanyDetail() {
   const [loading, setLoading] = useState(true);
 
   const [re, setRe] = useState(false);
+  const [icpResearching, setIcpResearching] = useState(false);
   const [push, setPush] = useState(false);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [workflow, setWorkflow] = useState({
@@ -388,6 +455,24 @@ export default function AccountSourcingCompanyDetail() {
       setContacts(ct);
     } finally {
       setLoading(false);
+    }
+  }, [id]);
+
+  const refreshUntilSettled = useCallback(async (options?: { attempts?: number; delayMs?: number; stopWhen?: (company: Company) => boolean }) => {
+    if (!id) return;
+    const attempts = options?.attempts ?? 18;
+    const delayMs = options?.delayMs ?? 5000;
+    for (let i = 0; i < attempts; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const [c, ct] = await Promise.all([
+        accountSourcingApi.getCompany(id),
+        accountSourcingApi.getContacts(id),
+      ]);
+      setCompany(c);
+      setContacts(ct);
+      if (options?.stopWhen?.(c)) {
+        return;
+      }
     }
   }, [id]);
 
@@ -424,9 +509,6 @@ export default function AccountSourcingCompanyDetail() {
   ]);
 
   const cache = useMemo(() => (company?.enrichment_cache || {}) as Record<string, unknown>, [company]);
-  const imported = useMemo(() => importBlock(company), [company]);
-  const importedAnalyst = (imported?.analyst as Record<string, unknown> | undefined) || undefined;
-  const importedSignals = (imported?.uploaded_signals as Record<string, unknown> | undefined) || undefined;
   const prospectingProfile = (company?.prospecting_profile || {}) as Record<string, unknown>;
   const outreachPlan = (company?.outreach_plan || {}) as Record<string, unknown>;
   const ai = unwrapCache(cache, "ai_summary");
@@ -444,22 +526,149 @@ export default function AccountSourcingCompanyDetail() {
   const fitReasoning = asText(ai?.icp_fit_reasoning);
   const intentSummary = asText(ai?.intent_signals_summary);
   const companySummary = asText(ai?.description) || company?.description || undefined;
-  const recommendedApproach = asText(ai?.recommended_approach);
-  const painPoints = asList(ai?.pain_points);
-  const talkingPoints = asList(ai?.talking_points);
   const competitors = asList(ai?.competitive_landscape);
   const techSignals = asList(ai?.tech_stack_signals);
   const websiteText = asText(web?.text);
-  const positiveImportedSignals = asSignalList(importedSignals?.positive);
-  const negativeImportedSignals = asSignalList(importedSignals?.negative);
   const warmPaths = Array.isArray(prospectingProfile.warm_paths)
     ? prospectingProfile.warm_paths as Array<Record<string, unknown>>
     : [];
-  const conversationStarter = asText(prospectingProfile.conversation_starter);
-  const recommendedStrategy = asText(prospectingProfile.recommended_outreach_strategy);
   const sequenceFamily = asText(outreachPlan.sequence_family);
-  const nextBestAction = asText(outreachPlan.next_best_action);
   const priority = company ? getAccountPrioritySnapshot(company) : null;
+
+  // Intent signals — hiring, funding, product news from Serper
+  const intentSignals = useMemo(() => {
+    const entry = cache.intent_signals as Record<string, unknown> | undefined;
+    if (!entry) return null;
+    return (entry.data ?? entry) as Record<string, unknown>;
+  }, [cache]);
+  const hiringNews = useMemo(() => {
+    const items = intentSignals?.hiring;
+    return Array.isArray(items) ? items as Array<{ title?: string; snippet?: string; url?: string }> : [];
+  }, [intentSignals]);
+  const fundingNews = useMemo(() => {
+    const items = intentSignals?.funding;
+    return Array.isArray(items) ? items as Array<{ title?: string; snippet?: string; url?: string }> : [];
+  }, [intentSignals]);
+  const productNews = useMemo(() => {
+    const items = intentSignals?.product;
+    return Array.isArray(items) ? items as Array<{ title?: string; snippet?: string; url?: string }> : [];
+  }, [intentSignals]);
+  const allNewsItems = useMemo(() => {
+    return [...hiringNews, ...fundingNews, ...productNews].filter((n) => n.title);
+  }, [hiringNews, fundingNews, productNews]);
+
+  // Tech stack from company model
+  const techStackEntries = useMemo(() => {
+    if (!company?.tech_stack || typeof company.tech_stack !== "object") return [];
+    return Object.entries(company.tech_stack as Record<string, unknown>)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => ({ category: k, tools: String(v) }));
+  }, [company?.tech_stack]);
+
+  // ICP Intelligence Pipeline data
+  const icpAnalysis = useMemo(() => {
+    const entry = cache.icp_analysis as Record<string, unknown> | undefined;
+    if (!entry) return null;
+    const data = (entry.data ?? entry) as Record<string, unknown>;
+    return data;
+  }, [cache]);
+  const researchSources = useMemo(() => {
+    const sources = icpAnalysis?.sources;
+    return sources && typeof sources === "object" ? (sources as Record<string, unknown>) : {};
+  }, [icpAnalysis]);
+  const icpAnalyzedAt = useMemo(() => {
+    const entry = cache.icp_analysis as Record<string, unknown> | undefined;
+    return typeof entry?.analyzed_at === "string" ? entry.analyzed_at : undefined;
+  }, [cache]);
+  const icpPersonas = useMemo(() => {
+    const personas = prospectingProfile.icp_personas;
+    return Array.isArray(personas) ? personas as Array<Record<string, string>> : [];
+  }, [prospectingProfile]);
+  const icpOpenGaps = useMemo(() => {
+    const gaps = prospectingProfile.open_gaps;
+    return Array.isArray(gaps) ? gaps.map(String) : [];
+  }, [prospectingProfile]);
+  const icpCommitteeCoverage = asText(prospectingProfile.committee_coverage);
+  const implementationCycle = useMemo(() => {
+    const raw = icpAnalysis?.implementation_cycle;
+    if (!raw || typeof raw !== "object") return null;
+    return raw as Record<string, unknown>;
+  }, [icpAnalysis]);
+  const salesPlay = useMemo(() => {
+    const play = prospectingProfile.sales_play;
+    return play && typeof play === "object" ? (play as Record<string, unknown>) : undefined;
+  }, [prospectingProfile]);
+  const entryPersona = salesPlay?.best_persona && typeof salesPlay.best_persona === "object"
+    ? (salesPlay.best_persona as Record<string, unknown>)
+    : undefined;
+  const entryPersonaTitle = asText(entryPersona?.title);
+  const entryPersonaRelevance = asText(entryPersona?.relevance);
+  const riskFlags = Array.isArray(salesPlay?.risk_flags) ? (salesPlay.risk_flags as unknown[]).map(String).filter(Boolean) : [];
+  const proofPoints = Array.isArray(salesPlay?.proof_points) ? (salesPlay.proof_points as unknown[]).map(String).filter(Boolean) : [];
+  const whyNowItems = toBriefItems(icpAnalysis?.why_now ?? company?.why_now, 3);
+  const outreachItems = toBriefItems(icpAnalysis?.recommended_outreach_strategy, 4);
+  const starterItems = toBriefItems(icpAnalysis?.conversation_starter, 2);
+  const nextStepItems = toBriefItems(icpAnalysis?.next_steps, 4);
+  const fitReasonItems = toBriefItems(icpAnalysis?.icp_why ?? fitReasoning, 3);
+  const intentReasonItems = toBriefItems(icpAnalysis?.intent_why ?? intentSummary, 3);
+  const beaconCareItems = toBriefItems(icpAnalysis?.account_thesis, 2);
+  const engageItems = toBriefItems(icpAnalysis?.beacon_angle, 3);
+  const positiveSignalCards = [
+    { title: "Hiring", value: clipText(asText(icpAnalysis?.ps_impl_hiring), 220) },
+    { title: "Leadership", value: clipText(asText(icpAnalysis?.leadership_org_moves), 220) },
+    { title: "Expansion", value: clipText(asText(icpAnalysis?.pr_funding_expansion), 220) },
+    { title: "Events", value: clipText(asText(icpAnalysis?.events_thought_leadership), 220) },
+    { title: "Proof", value: clipText(asText(icpAnalysis?.reviews_case_studies), 220) },
+  ].filter((item) => item.value && item.value.toLowerCase() !== "none observed" && item.value.toLowerCase() !== "not analyzed") as Array<{ title: string; value: string }>;
+  const negativeSignalCards = [
+    { title: "AI Overlap", value: clipText(asText(icpAnalysis?.internal_ai_overlap), 220) },
+    { title: "Constraints", value: clipText(asText(icpAnalysis?.strategic_constraints), 220) },
+    { title: "Contraction", value: clipText(asText(icpAnalysis?.ps_cs_contraction), 220) },
+    { title: "Build vs Buy", value: clipText(asText(icpAnalysis?.build_vs_buy), 220) },
+    { title: "AI Acquisition", value: clipText(asText(icpAnalysis?.ai_acquisition), 220) },
+  ].filter((item) => item.value && item.value.toLowerCase() !== "none observed" && item.value.toLowerCase() !== "not analyzed") as Array<{ title: string; value: string }>;
+  const implCycle = useMemo(() => {
+    const raw = icpAnalysis?.implementation_cycle;
+    if (!raw || typeof raw !== "object") return null;
+    const cycle = raw as Record<string, unknown>;
+    // Only show if at least one field has real content
+    const hasContent = ["enterprise", "mid_market", "minimum", "key_drivers", "evidence"]
+      .some((k) => { const v = cycle[k]; return typeof v === "string" && v.length > 2; });
+    return hasContent ? cycle : null;
+  }, [icpAnalysis]);
+  const researchQuality = useMemo(() => {
+    const entry = cache.research_quality as Record<string, unknown> | undefined;
+    if (!entry) return undefined;
+    return (entry.data ?? entry) as Record<string, unknown>;
+  }, [cache]);
+  const evidenceLevel = asText(researchQuality?.evidence_level);
+  const evidenceScore = typeof researchQuality?.evidence_score === "number" ? researchQuality.evidence_score : undefined;
+  const fitSources = sourceList(researchSources.icp_why);
+  const intentSources = sourceList(researchSources.intent_why);
+  const thesisSources = sourceList(researchSources.account_thesis);
+  const whyNowSources = sourceList(researchSources.why_now);
+  const angleSources = sourceList(researchSources.beacon_angle);
+  const engageSources = sourceList(researchSources.recommended_outreach_strategy);
+  const hookSources = sourceList(researchSources.conversation_starter);
+  const hiringSources = sourceList(researchSources.ps_impl_hiring);
+  const leadershipSources = sourceList(researchSources.leadership_org_moves);
+  const fundingSources = sourceList(researchSources.pr_funding_expansion);
+  const eventsSources = sourceList(researchSources.events_thought_leadership);
+  const reviewsSources = sourceList(researchSources.reviews_case_studies);
+  const aiOverlapSources = sourceList(researchSources.internal_ai_overlap);
+  const strategicSources = sourceList(researchSources.strategic_constraints);
+  const revenueSources = sourceList(researchSources.revenue_funding);
+  const committeeCoverageSources = sourceList(researchSources.committee_coverage);
+  const nextStepSources = sourceList(researchSources.next_steps);
+  const detailMetaItems = [
+    company?.domain ? (company.domain.endsWith(".unknown") ? `Domain unresolved: ${company.domain}` : company.domain) : undefined,
+    asText(company?.industry),
+    asText(company?.funding_stage),
+    company?.employee_count ? `${company.employee_count.toLocaleString()} employees` : undefined,
+    typeof icpAnalysis?.category === "string" ? asText(icpAnalysis.category) : undefined,
+    company?.headquarters ? `📍 ${company.headquarters}` : undefined,
+    company?.region ? `🌐 ${company.region}` : undefined,
+  ].filter(Boolean) as string[];
 
   if (loading) {
     return (
@@ -557,14 +766,29 @@ export default function AccountSourcingCompanyDetail() {
                 ) : null}
               </div>
 
-              <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap", color: colors.sub, fontSize: 14 }}>
-                <a href={`https://${company.domain}`} target="_blank" rel="noreferrer" style={{ color: colors.primary, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <Globe size={13} /> {company.domain} <ExternalLink size={11} />
-                </a>
-                {company.industry ? <span>{company.industry}</span> : null}
-                {company.funding_stage ? <span>{company.funding_stage}</span> : null}
-                {company.employee_count ? <span>{company.employee_count.toLocaleString()} employees</span> : null}
-                {typeof importedAnalyst?.category === "string" ? <span>{String(importedAnalyst.category)}</span> : null}
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {detailMetaItems.map((item) => (
+                  <span
+                    key={item}
+                    style={{
+                      borderRadius: 999,
+                      padding: "6px 10px",
+                      background: item.startsWith("Domain unresolved") ? "#fff4df" : "#f4f7fb",
+                      border: `1px solid ${item.startsWith("Domain unresolved") ? "#ffe0b2" : colors.border}`,
+                      color: item.startsWith("Domain unresolved") ? colors.amber : colors.sub,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {item}
+                  </span>
+                ))}
+                {!company.domain.endsWith(".unknown") ? (
+                  <a href={`https://${company.domain}`} target="_blank" rel="noreferrer" style={{ color: colors.primary, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 2px" }}>
+                    <Globe size={13} /> Visit site <ExternalLink size={11} />
+                  </a>
+                ) : null}
               </div>
 
               <p style={{ marginTop: 14, marginBottom: 0, color: colors.sub, lineHeight: 1.75, fontSize: 15, maxWidth: 920 }}>
@@ -583,14 +807,39 @@ export default function AccountSourcingCompanyDetail() {
             <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
               <button
                 onClick={async () => {
+                  setIcpResearching(true);
+                  try {
+                    await accountSourcingApi.icpResearch(company.id);
+                    const currentEnrichedAt = company.enriched_at;
+                    await refreshUntilSettled({
+                      stopWhen: (next) =>
+                        next.enriched_at !== currentEnrichedAt ||
+                        !next.domain.endsWith(".unknown"),
+                    });
+                  } finally {
+                    setIcpResearching(false);
+                    load();
+                  }
+                }}
+                style={{ border: `1px solid #d0e8d0`, background: "#eef8ef", color: "#1f8f5f", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}
+              >
+                {icpResearching ? <Loader2 size={13} className="animate-spin" /> : <Brain size={13} />} ICP Research
+              </button>
+
+              <button
+                onClick={async () => {
                   setRe(true);
                   try {
                     await accountSourcingApi.reEnrichCompany(company.id);
+                    const currentEnrichedAt = company.enriched_at;
+                    await refreshUntilSettled({
+                      stopWhen: (next) =>
+                        next.enriched_at !== currentEnrichedAt ||
+                        !next.domain.endsWith(".unknown"),
+                    });
                   } finally {
-                    setTimeout(() => {
-                      setRe(false);
-                      load();
-                    }, 4000);
+                    setRe(false);
+                    load();
                   }
                 }}
                 style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}
@@ -628,141 +877,409 @@ export default function AccountSourcingCompanyDetail() {
             tone={tier === "hot" ? "warm" : "primary"}
           />
           <MetricCard
-            label="Contacts"
-            value={String(contacts.length)}
-            hint="Discovered stakeholders available for prospecting and meeting prep."
-            tone="neutral"
+            label="TAL Verdict"
+            value={typeof icpAnalysis?.classification === "string" ? String(icpAnalysis.classification) : "N/A"}
+            hint={typeof icpAnalysis?.fit_type === "string" ? String(icpAnalysis.fit_type) : "Verdict pending"}
+            tone={String(icpAnalysis?.classification || "").toLowerCase() === "target" ? "green" : "primary"}
           />
           <MetricCard
-            label="Committee Coverage"
-            value={`${committeeScore}%`}
-            hint="How much of the core buying group is already mapped."
-            tone={committeeScore >= 75 ? "green" : "primary"}
+            label="Research Quality"
+            value={evidenceLevel || "Pending"}
+            hint={typeof evidenceScore === "number" ? `Evidence score ${evidenceScore}` : "Waiting for enough live evidence."}
+            tone={evidenceLevel === "strong" ? "green" : evidenceLevel === "partial" ? "primary" : "warm"}
           />
           <MetricCard
-            label="Open Gaps"
-            value={String(missingRoles.length)}
-            hint="Roles still worth finding before pushing a multi-threaded motion."
-            tone={missingRoles.length === 0 ? "green" : "warm"}
+            label="Best Entry"
+            value={entryPersonaTitle || "Need mapping"}
+            hint={entryPersonaRelevance || "Lead with the operator most likely to own rollout pain."}
+            tone="primary"
+          />
+          <MetricCard
+            label="Proof / Risks"
+            value={`${proofPoints.length} / ${riskFlags.length}`}
+            hint={riskFlags.length === 0 ? "Clean signal set so far." : "Review the captured risks before sequencing."}
+            tone={riskFlags.length === 0 ? "green" : "warm"}
           />
           <MetricCard
             label="Priority"
             value={priority ? `${priority.priorityScore}` : "0"}
-            hint={priority ? `${priority.priorityBand} priority based on fit, intent, committee, and sales feedback.` : "Priority unavailable"}
+            hint={priority ? `${priority.priorityBand} priority based on fit, timing, evidence, and sales feedback.` : "Priority unavailable"}
             tone={priority?.priorityBand === "high" ? "green" : "primary"}
           />
           <MetricCard
-            label="Interest"
-            value={priority ? priority.interestLevel : "low"}
-            hint={company.last_outreach_at ? `Last outreach ${formatDate(company.last_outreach_at)}` : "No outreach feedback logged yet."}
-            tone={priority?.interestLevel === "high" ? "green" : priority?.interestLevel === "medium" ? "primary" : "warm"}
+            label="Contacts"
+            value={String(contacts.length)}
+            hint="Discovered stakeholders available for prospecting and meeting prep."
+            tone="neutral"
           />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(320px, 0.95fr)", gap: 16, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 14 }}>
             <Section title="Account Thesis" icon={<Target size={15} color={colors.primary} />}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-                <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
-                  <div style={{ color: colors.faint, fontWeight: 800, fontSize: 11, letterSpacing: 0.4 }}>FIT CONFIDENCE</div>
-                  <div style={{ marginTop: 8, color: colors.primary, fontWeight: 800, fontSize: 24 }}>
-                    {typeof ai?.confidence === "number" ? `${ai.confidence}%` : "N/A"}
+              {toBriefItems(icpAnalysis?.core_focus, 3).length > 0 && (
+                <div style={{ background: "#f8fbff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 16px" }}>
+                  <div style={{ color: colors.faint, fontWeight: 800, fontSize: 11, letterSpacing: 0.4, marginBottom: 6 }}>WHAT THEY DO & WHY IMPLEMENTATIONS ARE COMPLEX</div>
+                  <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.65 }}>
+                    {toBriefItems(icpAnalysis?.core_focus, 3).join(" ")}
                   </div>
                 </div>
-                <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
-                  <div style={{ color: colors.faint, fontWeight: 800, fontSize: 11, letterSpacing: 0.4 }}>BUYING SIGNALS</div>
-                  <div style={{ marginTop: 8, color: colors.amber, fontWeight: 800, fontSize: 24 }}>{painPoints.length + talkingPoints.length}</div>
-                </div>
-                <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
-                  <div style={{ color: colors.faint, fontWeight: 800, fontSize: 11, letterSpacing: 0.4 }}>MISSING ROLES</div>
-                  <div style={{ marginTop: 8, color: missingRoles.length === 0 ? colors.green : colors.amber, fontWeight: 800, fontSize: 24 }}>{missingRoles.length}</div>
-                </div>
-              </div>
+              )}
 
               <div>
                 <div style={{ color: colors.text, fontWeight: 800, marginBottom: 8 }}>Why this account fits Beacon</div>
-                <ParagraphBlock text={fitReasoning} tone="soft" />
+                <ListCard title="Fit Summary" items={fitReasonItems} empty="No fit reasoning available yet." />
+                <SourceLinks items={fitSources} />
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                <ListCard title="Intent Summary" items={intentSummary ? [intentSummary] : []} empty="No intent summary available." />
-                <ListCard title="Recommended Approach" items={recommendedApproach ? [recommendedApproach] : []} empty="No recommended approach generated yet." />
+                <div>
+                  <ListCard title="Intent Summary" items={intentReasonItems.length ? intentReasonItems : intentSummary ? [intentSummary] : []} empty="No intent summary available." />
+                  <SourceLinks items={intentSources} />
+                </div>
               </div>
             </Section>
 
-            <Section title="Uploaded Research" icon={<TrendingUp size={15} color={colors.primary} />}>
-              {importedAnalyst ? (
-                <>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-                    <MetricCard
-                      label="Uploaded ICP"
-                      value={typeof importedAnalyst.icp_fit_score === "number" ? `${importedAnalyst.icp_fit_score}/10` : "N/A"}
-                      hint={typeof importedAnalyst.classification === "string" ? String(importedAnalyst.classification) : "Analyst input"}
-                      tone="primary"
-                    />
-                    <MetricCard
-                      label="Uploaded Intent"
-                      value={typeof importedAnalyst.intent_score === "number" ? `${importedAnalyst.intent_score}/10` : "N/A"}
-                      hint={typeof importedAnalyst.fit_type === "string" ? String(importedAnalyst.fit_type) : "Intent view"}
-                      tone="warm"
-                    />
-                    <MetricCard
-                      label="Confidence"
-                      value={typeof importedAnalyst.confidence === "string" ? String(importedAnalyst.confidence) : "N/A"}
-                      hint={typeof importedAnalyst.revenue_funding === "string" ? String(importedAnalyst.revenue_funding) : "Uploaded evidence"}
-                      tone="green"
-                    />
+            {implementationCycle && (
+              <Section title="Implementation Cycle" icon={<Clock size={15} color={colors.amber} />}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                  {typeof implementationCycle.enterprise === "string" && implementationCycle.enterprise && (
+                    <div style={{ background: colors.redSoft, border: `1px solid #ffd0d8`, borderRadius: 10, padding: "10px 14px" }}>
+                      <div style={{ color: colors.red, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>ENTERPRISE</div>
+                      <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{String(implementationCycle.enterprise)}</div>
+                    </div>
+                  )}
+                  {typeof implementationCycle.midmarket === "string" && implementationCycle.midmarket && (
+                    <div style={{ background: colors.amberSoft, border: `1px solid #ffe4b0`, borderRadius: 10, padding: "10px 14px" }}>
+                      <div style={{ color: colors.amber, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>MID-MARKET</div>
+                      <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{String(implementationCycle.midmarket)}</div>
+                    </div>
+                  )}
+                  {typeof implementationCycle.minimum === "string" && implementationCycle.minimum && (
+                    <div style={{ background: colors.greenSoft, border: `1px solid #c8e8d8`, borderRadius: 10, padding: "10px 14px" }}>
+                      <div style={{ color: colors.green, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>MINIMUM</div>
+                      <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{String(implementationCycle.minimum)}</div>
+                    </div>
+                  )}
+                </div>
+                {Array.isArray(implementationCycle.key_drivers) && (implementationCycle.key_drivers as string[]).length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ color: colors.faint, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 6 }}>KEY DRIVERS</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {(implementationCycle.key_drivers as string[]).map((driver, i) => (
+                        <span key={i} style={{
+                          fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 999,
+                          background: "#f0f3f9", color: colors.sub, border: `1px solid ${colors.border}`,
+                        }}>{driver}</span>
+                      ))}
+                    </div>
                   </div>
+                )}
+                {typeof implementationCycle.review_signals === "string" && implementationCycle.review_signals && (
+                  <div style={{ marginTop: 10, background: "#f8f7f5", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
+                    <div style={{ color: colors.faint, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>G2 / CAPTERRA / REDDIT REVIEWS</div>
+                    <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.65, fontStyle: "italic" }}>{String(implementationCycle.review_signals)}</div>
+                  </div>
+                )}
+              </Section>
+            )}
 
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <KV label="Region" value={typeof importedAnalyst.region === "string" ? importedAnalyst.region : undefined} />
-                    <KV label="Headquarters" value={typeof importedAnalyst.headquarters === "string" ? importedAnalyst.headquarters : undefined} />
-                    <KV label="Category" value={typeof importedAnalyst.category === "string" ? importedAnalyst.category : undefined} />
-                    <KV label="Fit Type" value={typeof importedAnalyst.fit_type === "string" ? importedAnalyst.fit_type : undefined} />
-                    <KV label="Core Focus" value={typeof importedAnalyst.core_focus === "string" ? importedAnalyst.core_focus : undefined} />
-                    <KV label="Financial Signal" value={typeof importedAnalyst.revenue_funding === "string" ? importedAnalyst.revenue_funding : undefined} />
-                    <KV label="Final Qual" value={typeof importedAnalyst.final_qual === "string" ? importedAnalyst.final_qual : undefined} />
-                  </div>
+            {icpAnalysis ? (
+              <Section title="Sales Brief" icon={<Brain size={15} color="#7a2dd9" />}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                  {icpAnalyzedAt && (
+                    <span style={{ fontSize: 11, color: colors.faint, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <Clock size={11} /> Analyzed: {ts(icpAnalyzedAt)}
+                    </span>
+                  )}
+                  {typeof icpAnalysis.confidence === "string" && (
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
+                      background: icpAnalysis.confidence === "high" ? colors.greenSoft : icpAnalysis.confidence === "medium" ? colors.amberSoft : colors.redSoft,
+                      color: icpAnalysis.confidence === "high" ? colors.green : icpAnalysis.confidence === "medium" ? colors.amber : colors.red,
+                    }}>
+                      {String(icpAnalysis.confidence).toUpperCase()} CONFIDENCE
+                    </span>
+                  )}
+                  {typeof icpAnalysis._source === "string" && icpAnalysis._source === "claude_icp_pipeline" && (
+                    <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px", background: "#f3eaff", color: "#7a2dd9" }}>
+                      AI-RESEARCHED
+                    </span>
+                  )}
+                  {evidenceLevel && (
+                    <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px", background: "#eef5ff", color: colors.primary }}>
+                      {evidenceLevel.toUpperCase()} EVIDENCE
+                    </span>
+                  )}
+                </div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                    <ListCard
-                      title="Uploaded ICP Why"
-                      items={typeof importedAnalyst.icp_why === "string" ? [String(importedAnalyst.icp_why)] : []}
-                      empty="No uploaded ICP reasoning."
-                    />
-                    <ListCard
-                      title="Uploaded Intent Why"
-                      items={typeof importedAnalyst.intent_why === "string" ? [String(importedAnalyst.intent_why)] : []}
-                      empty="No uploaded intent reasoning."
-                    />
-                  </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+                  <MetricCard
+                    label="ICP Fit"
+                    value={typeof icpAnalysis.icp_fit_score === "number" ? `${icpAnalysis.icp_fit_score}/10` : "N/A"}
+                    hint={typeof icpAnalysis.classification === "string" ? String(icpAnalysis.classification) : "TAL classification"}
+                    tone={Number(icpAnalysis.icp_fit_score) >= 7 ? "green" : Number(icpAnalysis.icp_fit_score) >= 4 ? "primary" : "warm"}
+                  />
+                  <MetricCard
+                    label="Intent"
+                    value={typeof icpAnalysis.intent_score === "number" ? `${icpAnalysis.intent_score}/10` : "N/A"}
+                    hint={typeof icpAnalysis.fit_type === "string" ? String(icpAnalysis.fit_type) : "Fit type"}
+                    tone={Number(icpAnalysis.intent_score) >= 7 ? "green" : Number(icpAnalysis.intent_score) >= 4 ? "primary" : "warm"}
+                  />
+                  <MetricCard
+                    label="Financial"
+                    value={icpAnalysis.financial_capacity_met ? "Met" : "Not Met"}
+                    hint={typeof icpAnalysis.revenue_funding === "string" ? String(icpAnalysis.revenue_funding).slice(0, 80) : "150K+ ACV capacity"}
+                    tone={icpAnalysis.financial_capacity_met ? "green" : "warm"}
+                  />
+                </div>
+                <SourceLinks items={revenueSources} />
 
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                    <ListCard
-                      title="Positive Signals"
-                      items={positiveImportedSignals.map((item) => item.value || item.key || "").filter(Boolean)}
-                      empty="No positive uploaded signals."
-                    />
-                    <ListCard
-                      title="Negative Signals"
-                      items={negativeImportedSignals.map((item) => item.value || item.key || "").filter(Boolean)}
-                      empty="No negative uploaded signals."
-                    />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                  <div>
+                    <ListCard title="Why Beacon Should Care" items={beaconCareItems} empty="No account thesis generated yet." />
+                    <SourceLinks items={thesisSources} />
                   </div>
-                </>
+                  <div>
+                    <ListCard title="Why Now" items={whyNowItems} empty="No timing trigger captured yet." />
+                    <SourceLinks items={whyNowSources} />
+                  </div>
+                  <div>
+                    <ListCard title="How To Engage" items={engageItems} empty="No Beacon angle generated yet." />
+                    <SourceLinks items={angleSources.length ? angleSources : engageSources} />
+                  </div>
+                  <div>
+                    <ListCard title="What To Say First" items={starterItems} empty="No opening hook captured yet." />
+                    <SourceLinks items={hookSources} />
+                  </div>
+                </div>
+
+                <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.green, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                    <Radar size={14} /> Positive Signals
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
+                    {positiveSignalCards.map((item) => (
+                      <div key={item.title} style={{ background: "#f0faf4", border: "1px solid #d0e8d0", borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ color: colors.green, fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>{item.title.toUpperCase()}</div>
+                        <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6, marginTop: 4 }}>{item.value}</div>
+                        <SourceLinks
+                          items={
+                            item.title === "Hiring" ? hiringSources :
+                            item.title === "Leadership" ? leadershipSources :
+                            item.title === "Expansion" ? fundingSources :
+                            item.title === "Events" ? eventsSources :
+                            reviewsSources
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.red, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                    <AlertTriangle size={14} /> Negative Signals
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
+                    {negativeSignalCards.map((item) => (
+                      <div key={item.title} style={{ background: "#fff5f5", border: "1px solid #ffd0d8", borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ color: colors.red, fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>{item.title.toUpperCase()}</div>
+                        <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6, marginTop: 4 }}>{item.value}</div>
+                        <SourceLinks items={item.title === "AI Overlap" ? aiOverlapSources : strategicSources} />
+                      </div>
+                    ))}
+                    {negativeSignalCards.length === 0 && (
+                      <div style={{ color: colors.green, fontSize: 13 }}>No negative signals detected.</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Implementation Cycle Duration */}
+                {implCycle && (
+                  <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.violet, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                      <Clock size={14} /> Implementation Cycle
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
+                      {typeof implCycle.enterprise === "string" && implCycle.enterprise && (
+                        <div style={{ background: "#f3eaff", border: "1px solid #e0d0f5", borderRadius: 10, padding: "10px 14px" }}>
+                          <div style={{ color: colors.violet, fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>ENTERPRISE</div>
+                          <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6, marginTop: 4 }}>{implCycle.enterprise}</div>
+                        </div>
+                      )}
+                      {typeof implCycle.mid_market === "string" && implCycle.mid_market && (
+                        <div style={{ background: "#eef5ff", border: "1px solid #d5e5ff", borderRadius: 10, padding: "10px 14px" }}>
+                          <div style={{ color: colors.primary, fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>MID-MARKET</div>
+                          <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6, marginTop: 4 }}>{implCycle.mid_market}</div>
+                        </div>
+                      )}
+                      {typeof implCycle.minimum === "string" && implCycle.minimum && (
+                        <div style={{ background: "#e8f8f0", border: "1px solid #c8e8d8", borderRadius: 10, padding: "10px 14px" }}>
+                          <div style={{ color: colors.green, fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>MINIMUM</div>
+                          <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6, marginTop: 4 }}>{implCycle.minimum}</div>
+                        </div>
+                      )}
+                    </div>
+                    {typeof implCycle.key_drivers === "string" && implCycle.key_drivers && (
+                      <div style={{ marginTop: 8, background: "#f8f5ff", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ color: colors.faint, fontSize: 11, fontWeight: 700, letterSpacing: 0.3, marginBottom: 4 }}>KEY DRIVERS</div>
+                        <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>{implCycle.key_drivers}</div>
+                      </div>
+                    )}
+                    {typeof implCycle.evidence === "string" && implCycle.evidence && (
+                      <div style={{ marginTop: 6, color: colors.faint, fontSize: 12, fontStyle: "italic", lineHeight: 1.5 }}>
+                        {implCycle.evidence}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Sales Strategy */}
+                <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.text, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                    <Target size={14} /> Action Plan
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+                    <ListCard title="Outreach Strategy" items={outreachItems} empty="No outreach strategy captured yet." />
+                    <div>
+                      <ListCard title="Next Steps" items={nextStepItems} empty="No next steps captured yet." />
+                      <SourceLinks items={nextStepSources} />
+                    </div>
+                  </div>
+                </div>
+              </Section>
+            ) : null}
+
+            <Section title="Warm Intro Map" icon={<Users size={15} color={colors.primary} />}>
+              {warmPaths.length === 0 ? (
+                <div style={{ color: colors.faint }}>No connector paths captured for this account yet.</div>
               ) : (
-                <div style={{ color: colors.faint }}>No structured uploaded analyst research on this account yet.</div>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {warmPaths.map((item, idx) => (
+                    <div key={`warm-path-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ color: colors.text, fontWeight: 800 }}>{String(item.name || `Connector ${idx + 1}`)}</div>
+                        {item.strength ? (
+                          <span style={{ borderRadius: 999, padding: "4px 8px", background: "#eef5ff", color: colors.primary, fontSize: 11, fontWeight: 800 }}>
+                            Strength {String(item.strength)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {item.connection_path ? (
+                        <div style={{ marginTop: 8, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
+                          <strong style={{ color: colors.text }}>Path:</strong> {String(item.connection_path)}
+                        </div>
+                      ) : null}
+                      {item.why_it_works ? (
+                        <div style={{ marginTop: 6, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
+                          <strong style={{ color: colors.text }}>Why it works:</strong> {String(item.why_it_works)}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               )}
             </Section>
 
-            <Section title="Prospecting Workflow" icon={<MessageSquare size={15} color={colors.primary} />}>
+            {allNewsItems.length > 0 && (
+              <Section title="Recent News & Signals" icon={<Newspaper size={15} color={colors.primary} />}>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {hiringNews.length > 0 && (
+                    <div>
+                      <div style={{ color: colors.green, fontSize: 11, fontWeight: 700, letterSpacing: 0.3, marginBottom: 6 }}>HIRING SIGNALS</div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {hiringNews.map((item, idx) => (
+                          <div key={`h-${idx}`} style={{ border: `1px solid #d0e8d0`, background: "#f0faf4", borderRadius: 10, padding: "10px 14px" }}>
+                            <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{item.title}</div>
+                            {item.snippet && <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>{item.snippet}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {fundingNews.length > 0 && (
+                    <div>
+                      <div style={{ color: colors.primary, fontSize: 11, fontWeight: 700, letterSpacing: 0.3, marginBottom: 6 }}>FUNDING & INVESTMENT</div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {fundingNews.map((item, idx) => (
+                          <div key={`f-${idx}`} style={{ border: `1px solid #cde5ff`, background: "#eff7ff", borderRadius: 10, padding: "10px 14px" }}>
+                            <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{item.title}</div>
+                            {item.snippet && <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>{item.snippet}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {productNews.length > 0 && (
+                    <div>
+                      <div style={{ color: colors.violet, fontSize: 11, fontWeight: 700, letterSpacing: 0.3, marginBottom: 6 }}>PRODUCT & PARTNERSHIPS</div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {productNews.map((item, idx) => (
+                          <div key={`p-${idx}`} style={{ border: `1px solid #e0d5f5`, background: "#f8f4ff", borderRadius: 10, padding: "10px 14px" }}>
+                            <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{item.title}</div>
+                            {item.snippet && <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>{item.snippet}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Section>
+            )}
+
+            <Section title="Competitive & Tech Landscape" icon={<Shield size={15} color={colors.primary} />}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                <ListCard title="Competitors" items={competitors} empty="No competitive landscape captured." />
+                <ListCard title="Tech Signals" items={techSignals} empty="No tech signals captured." />
+              </div>
+              {techStackEntries.length > 0 && (
+                <div>
+                  <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>DETECTED TECH STACK</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {techStackEntries.map(({ category, tools }) => (
+                      <span key={category} style={{ borderRadius: 999, padding: "6px 10px", background: "#f3eaff", color: colors.violet, fontSize: 12, fontWeight: 600 }}>
+                        {category}: {tools}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {Array.isArray(priorities) && priorities.length > 0 ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ color: colors.text, fontWeight: 800 }}>Prospecting priorities</div>
+                  {(priorities as unknown[]).map((item, idx) => (
+                    <div key={idx} style={{ display: "flex", gap: 8, alignItems: "flex-start", borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "12px 14px" }}>
+                      <CheckCircle2 size={14} color={colors.primary} style={{ marginTop: 2, flexShrink: 0 }} />
+                      <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{String(item)}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </Section>
+
+            <Section title={`Stakeholders (${contacts.length})`} icon={<Users size={15} color={colors.primary} />}>
+              {contacts.length === 0 ? (
+                <div style={{ color: colors.faint }}>No contacts discovered yet.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {contacts.map((c) => <ContactItem key={c.id} contact={c} />)}
+                </div>
+              )}
+            </Section>
+
+            <Section title="Rep Workflow" icon={<MessageSquare size={15} color={colors.primary} />}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-                <MetricCard
-                  label="Assigned Owner"
-                  value={company.assigned_rep_name || company.assigned_rep || "Unassigned"}
-                  hint={company.assigned_rep_email || "Set the rep email now so future login-based ownership lines up cleanly."}
-                  tone="neutral"
-                />
+                <div style={{ background: "#f8fafc", borderRadius: 12, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 11, color: colors.faint, fontWeight: 600, marginBottom: 6 }}>Assigned Owner</div>
+                  <AssignDropdown
+                    entityType="company"
+                    entityId={company.id}
+                    currentAssignedId={company.assigned_to_id}
+                    currentAssignedName={company.assigned_to_name || company.assigned_rep_name || company.assigned_rep}
+                    onAssigned={() => load()}
+                  />
+                </div>
                 <MetricCard
                   label="Outreach Lane"
                   value={company.recommended_outreach_lane ? company.recommended_outreach_lane.replace(/_/g, " ") : "Auto"}
@@ -843,28 +1360,6 @@ export default function AccountSourcingCompanyDetail() {
                   ))}
                 </select>
               </div>
-
-              <textarea
-                value={workflow.account_thesis}
-                onChange={(e) => setWorkflow((current) => ({ ...current, account_thesis: e.target.value }))}
-                placeholder="Account thesis: why this company is a real Beacon fit"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 84, resize: "vertical" }}
-              />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                <textarea
-                  value={workflow.why_now}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, why_now: e.target.value }))}
-                  placeholder="Why now: timing trigger for outreach"
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 96, resize: "vertical" }}
-                />
-                <textarea
-                  value={workflow.beacon_angle}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, beacon_angle: e.target.value }))}
-                  placeholder="Beacon angle: implementation/orchestration angle to lead with"
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 96, resize: "vertical" }}
-                />
-              </div>
-
               <textarea
                 value={workflow.rep_feedback}
                 onChange={(e) => setWorkflow((current) => ({ ...current, rep_feedback: e.target.value }))}
@@ -887,97 +1382,6 @@ export default function AccountSourcingCompanyDetail() {
               </div>
             </Section>
 
-            <Section title="Warm Intro Map" icon={<Users size={15} color={colors.primary} />}>
-              {warmPaths.length === 0 ? (
-                <div style={{ color: colors.faint }}>No connector paths captured for this account yet.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {warmPaths.map((item, idx) => (
-                    <div key={`warm-path-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                        <div style={{ color: colors.text, fontWeight: 800 }}>{String(item.name || `Connector ${idx + 1}`)}</div>
-                        {item.strength ? (
-                          <span style={{ borderRadius: 999, padding: "4px 8px", background: "#eef5ff", color: colors.primary, fontSize: 11, fontWeight: 800 }}>
-                            Strength {String(item.strength)}
-                          </span>
-                        ) : null}
-                      </div>
-                      {item.connection_path ? (
-                        <div style={{ marginTop: 8, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
-                          <strong style={{ color: colors.text }}>Path:</strong> {String(item.connection_path)}
-                        </div>
-                      ) : null}
-                      {item.why_it_works ? (
-                        <div style={{ marginTop: 6, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
-                          <strong style={{ color: colors.text }}>Why it works:</strong> {String(item.why_it_works)}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Section>
-
-            <Section title="Outbound Plan" icon={<Send size={15} color={colors.primary} />}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                <ListCard
-                  title="Account Thesis"
-                  items={workflow.account_thesis ? [workflow.account_thesis] : company.account_thesis ? [company.account_thesis] : []}
-                  empty="No account thesis saved yet."
-                />
-                <ListCard
-                  title="Why Now"
-                  items={workflow.why_now ? [workflow.why_now] : company.why_now ? [company.why_now] : []}
-                  empty="No timing trigger saved yet."
-                />
-                <ListCard
-                  title="Beacon Angle"
-                  items={workflow.beacon_angle ? [workflow.beacon_angle] : company.beacon_angle ? [company.beacon_angle] : []}
-                  empty="No Beacon angle saved yet."
-                />
-                <ListCard
-                  title="Next Best Action"
-                  items={nextBestAction ? [nextBestAction] : []}
-                  empty="No next-best action generated yet."
-                />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                <ListCard title="Conversation Starter" items={conversationStarter ? [conversationStarter] : []} empty="No conversation starter captured yet." />
-                <ListCard title="Recommended Strategy" items={recommendedStrategy ? [recommendedStrategy] : []} empty="No recommended outreach strategy captured yet." />
-                <ListCard title="Sequence Family" items={sequenceFamily ? [sequenceFamily] : []} empty="No sequence family set yet." />
-              </div>
-            </Section>
-
-            <Section title="Prospecting Guidance" icon={<MessageSquare size={15} color={colors.primary} />}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                <ListCard title="Pain Points" items={painPoints} empty="No pain points captured." />
-                <ListCard title="Talking Points" items={talkingPoints} empty="No talking points captured." />
-                <ListCard title="Competitors" items={competitors} empty="No competitive landscape captured." />
-                <ListCard title="Tech Signals" items={techSignals} empty="No tech signals captured." />
-              </div>
-              {Array.isArray(priorities) && priorities.length > 0 ? (
-                <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ color: colors.text, fontWeight: 800 }}>Prospecting priorities</div>
-                  {(priorities as unknown[]).map((item, idx) => (
-                    <div key={idx} style={{ display: "flex", gap: 8, alignItems: "flex-start", borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "12px 14px" }}>
-                      <CheckCircle2 size={14} color={colors.primary} style={{ marginTop: 2, flexShrink: 0 }} />
-                      <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{String(item)}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </Section>
-
-            <Section title={`Stakeholders (${contacts.length})`} icon={<Users size={15} color={colors.primary} />}>
-              {contacts.length === 0 ? (
-                <div style={{ color: colors.faint }}>No contacts discovered yet.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {contacts.map((c) => <ContactItem key={c.id} contact={c} />)}
-                </div>
-              )}
-            </Section>
-
             <Section title="Website Research" icon={<Globe size={15} color={colors.primary} />}>
               {websiteText ? (
                 <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "16px 18px", maxHeight: 420, overflow: "auto" }}>
@@ -990,31 +1394,19 @@ export default function AccountSourcingCompanyDetail() {
           </div>
 
           <div style={{ display: "grid", gap: 14 }}>
-            <Section title="Company Snapshot" icon={<Building2 size={15} color={colors.primary} />}>
-              <KV label="Name" value={company.name} />
-              <KV label="Domain" value={company.domain} />
-              <KV label="Industry" value={company.industry} />
-              <KV label="Funding" value={company.funding_stage} />
-              <KV label="Employees" value={company.employee_count ? company.employee_count.toLocaleString() : undefined} />
-              <KV label="ICP Score" value={company.icp_score ? `${company.icp_score}/100` : undefined} />
-              <KV label="Assigned Rep" value={company.assigned_rep} />
-              <KV label="Assigned Rep Name" value={company.assigned_rep_name} />
-              <KV label="Assigned Rep Email" value={company.assigned_rep_email} />
-              <KV label="Disposition" value={company.disposition ? company.disposition.replace(/_/g, " ") : undefined} />
-              <KV label="Outreach Status" value={company.outreach_status ? company.outreach_status.replace(/_/g, " ") : undefined} />
-              <KV label="Outreach Lane" value={company.recommended_outreach_lane ? company.recommended_outreach_lane.replace(/_/g, " ") : undefined} />
-              <KV label="Instantly Campaign" value={company.instantly_campaign_id} />
-              <KV label="Uploaded SDR" value={typeof importedAnalyst?.sdr === "string" ? importedAnalyst.sdr : undefined} />
-              <KV label="Uploaded AE" value={typeof importedAnalyst?.ae === "string" ? importedAnalyst.ae : undefined} />
-            </Section>
-
-            <Section title="Committee Readiness" icon={<Users size={15} color={colors.primary} />}>
+            <Section title="Stakeholder Map" icon={<Users size={15} color={colors.primary} />}>
+              {icpCommitteeCoverage && (
+                <div style={{ background: "#f8fbff", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
+                  <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>{icpCommitteeCoverage}</div>
+                  <SourceLinks items={committeeCoverageSources} />
+                </div>
+              )}
               {committee ? (
                 <>
-                  <div style={{ marginBottom: 6, border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
+                  <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8, color: colors.sub, fontSize: 12, fontWeight: 700 }}>
-                      <span>Committee coverage</span>
-                      <span>{committeeScore}%</span>
+                      <span>Coverage of likely buying roles</span>
+                      <span>{committeeScore}% mapped</span>
                     </div>
                     <div style={{ height: 8, background: "#e9eef5", borderRadius: 999, overflow: "hidden" }}>
                       <div
@@ -1041,19 +1433,8 @@ export default function AccountSourcingCompanyDetail() {
                       </div>
                     </div>
                   ) : null}
-                  {missingRoles.length > 0 && (
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3 }}>MISSING ROLES</div>
-                      {missingRoles.map((item, idx) => (
-                        <div key={`${item.label}-${idx}`} style={{ border: `1px solid #ffe0b2`, borderRadius: 10, padding: "10px 12px", background: "#fff9f0" }}>
-                          <div style={{ color: colors.text, fontWeight: 700 }}>{item.label}</div>
-                          {item.why ? <div style={{ color: colors.sub, fontSize: 13, marginTop: 4 }}>{item.why}</div> : null}
-                        </div>
-                      ))}
-                    </div>
-                  )}
                   {bestContacts.length > 0 && (
-                    <div style={{ marginTop: 6 }}>
+                    <div>
                       <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>
                         BEST CONTACTS
                       </div>
@@ -1068,8 +1449,43 @@ export default function AccountSourcingCompanyDetail() {
                     </div>
                   )}
                 </>
-                  ) : (
-                <div style={{ color: colors.faint }}>Committee coverage will appear after enrichment finishes.</div>
+              ) : null}
+              {icpPersonas.length > 0 && (
+                <div>
+                  <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>KEY PERSONAS</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {icpPersonas.map((p, i) => (
+                      <div key={i} style={{ background: "#fbfdff", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{p.title || "Unknown"}</div>
+                        {p.name && <div style={{ color: colors.primary, fontSize: 12 }}>{p.name}</div>}
+                        {p.relevance && <div style={{ color: colors.faint, fontSize: 12, marginTop: 2 }}>{p.relevance}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(missingRoles.length > 0 || icpOpenGaps.length > 0) && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ color: colors.amber, fontWeight: 700, fontSize: 12, letterSpacing: 0.3 }}>STILL NEED TO FIND</div>
+                  {missingRoles.map((item, idx) => (
+                    <div key={`${item.label}-${idx}`} style={{ border: `1px solid #ffe0b2`, borderRadius: 10, padding: "10px 12px", background: "#fff9f0" }}>
+                      <div style={{ color: colors.text, fontWeight: 700 }}>{item.label}</div>
+                      {item.why ? <div style={{ color: colors.sub, fontSize: 13, marginTop: 4 }}>{item.why}</div> : null}
+                    </div>
+                  ))}
+                  {icpOpenGaps.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {icpOpenGaps.map((gap, i) => (
+                        <span key={i} style={{ background: colors.amberSoft, color: colors.amber, fontSize: 12, fontWeight: 600, borderRadius: 999, padding: "4px 10px" }}>
+                          {gap}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!committee && !icpCommitteeCoverage && icpPersonas.length === 0 && (
+                <div style={{ color: colors.faint }}>Stakeholder guidance will appear after enrichment finishes.</div>
               )}
             </Section>
 
@@ -1080,7 +1496,7 @@ export default function AccountSourcingCompanyDetail() {
                 ["Apollo Company", cacheTs(cache, "apollo_company")],
                 ["Apollo Contacts", cacheTs(cache, "apollo_contacts")],
                 ["Committee Coverage", cacheTs(cache, "committee_coverage")],
-                ["AI Summary", cacheTs(cache, "ai_summary")],
+                ["AI Summary", cacheTs(cache, "ai_summary") || cacheTs(cache, "icp_analysis")],
               ].map(([name, t]) => (
                 <div key={String(name)} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: colors.sub }}>
                   <span style={{ fontWeight: 700 }}>{name}</span>

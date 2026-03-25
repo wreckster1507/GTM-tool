@@ -8,6 +8,8 @@ export interface Company {
   arr_estimate?: number;
   funding_stage?: string;
   tech_stack?: Record<string, unknown>;
+  region?: string;
+  headquarters?: string;
   has_dap: boolean;
   dap_tool?: string;
   icp_score?: number;
@@ -18,6 +20,8 @@ export interface Company {
   intent_signals?: Record<string, unknown>;
   sourcing_batch_id?: string;
   enrichment_cache?: Record<string, unknown>;
+  assigned_to_id?: string;
+  assigned_to_name?: string;
   assigned_rep?: string;
   assigned_rep_email?: string;
   assigned_rep_name?: string;
@@ -32,6 +36,10 @@ export interface Company {
   prospecting_profile?: Record<string, unknown>;
   outreach_plan?: Record<string, unknown>;
   last_outreach_at?: string;
+  ownership_stage?: string;
+  pe_investors?: string;
+  vc_investors?: string;
+  strategic_investors?: string;
   created_at: string;
   updated_at: string;
 }
@@ -52,6 +60,8 @@ export interface Contact {
   enriched_at?: string;
   enrichment_data?: Record<string, unknown>;
   persona_type?: string; // champion | buyer | evaluator | blocker
+  assigned_to_id?: string;
+  assigned_to_name?: string;
   assigned_rep_email?: string;
   outreach_lane?: string;
   sequence_status?: string;
@@ -186,6 +196,54 @@ export interface SalesResource {
   tags: string[];
   modules: string[];
   is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatar_url?: string;
+  role: "admin" | "sales_rep";
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AngelInvestor {
+  id: string;
+  name: string;
+  current_role?: string;
+  current_company?: string;
+  linkedin_url?: string;
+  career_history?: string;
+  networks?: string;
+  pe_vc_connections?: string;
+  sectors?: string;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AngelMapping {
+  id: string;
+  contact_id: string;
+  company_id?: string;
+  angel_investor_id: string;
+  strength: number;
+  rank: number;
+  connection_path?: string;
+  why_it_works?: string;
+  recommended_strategy?: string;
+  // Joined fields
+  contact_name?: string;
+  contact_title?: string;
+  contact_linkedin?: string;
+  company_name?: string;
+  angel_name?: string;
+  angel_current_role?: string;
+  angel_current_company?: string;
   created_at: string;
   updated_at: string;
 }

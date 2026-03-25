@@ -19,6 +19,16 @@ class Settings(BaseSettings):
     # App
     SECRET_KEY: str = "dev_secret_key"
     ENVIRONMENT: str = "development"
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    # JWT
+    JWT_SECRET: str = "jwt_dev_secret_change_me"
+    JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
     CORS_ORIGINS: str = ",".join([
         "http://localhost:3000",
         "http://localhost:5173",
@@ -31,6 +41,7 @@ class Settings(BaseSettings):
     # External API keys (empty string = mock mode)
     APOLLO_API_KEY: str = ""
     HUNTER_API_KEY: str = ""
+    SERPER_API_KEY: str = ""
     BUILTWITH_API_KEY: str = ""
     INSTANTLY_API_KEY: str = ""
     FIREFLIES_API_KEY: str = ""
