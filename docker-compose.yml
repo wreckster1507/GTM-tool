@@ -33,7 +33,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
       SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
@@ -62,7 +62,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
       SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
@@ -85,7 +85,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
       SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
