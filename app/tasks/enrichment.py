@@ -80,6 +80,8 @@ def _make_session():
 def enrich_batch_task(self, batch_id: str) -> dict:
     """Process all companies in a sourcing batch through tiered enrichment."""
     try:
+        # Celery tasks are synchronous entrypoints, so we create a fresh event loop
+        # to run the async enrichment pipeline inside the worker process.
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -116,6 +118,7 @@ async def _async_enrich_batch(batch_id: UUID) -> None:
             )
             company_ids = list(result.scalars().all())
 
+        # Keep concurrency bounded so the worker does not overwhelm external APIs.
         semaphore = asyncio.Semaphore(3)
         progress_lock = asyncio.Lock()
         processed = 0
@@ -134,6 +137,8 @@ async def _async_enrich_batch(batch_id: UUID) -> None:
                     error_payload = {"company_id": str(company_id), "error": str(exc)}
 
                 async with progress_lock:
+                    # Serialize progress updates so counters and error_log writes
+                    # stay consistent for the polling UI.
                     processed += 1
                     if error_payload:
                         failed += 1
@@ -299,6 +304,8 @@ async def _async_icp_research_batch(batch_id: UUID) -> None:
                     error_payload = {"company_id": str(company_id), "error": str(exc)}
 
                 async with progress_lock:
+                    # Persist progress after each company so batch status endpoints
+                    # can reflect work in near real time.
                     processed += 1
                     if error_payload:
                         failed += 1

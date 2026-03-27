@@ -445,6 +445,9 @@ def _analyst_signal_columns() -> tuple[list[str], list[str]]:
 
 
 def _extract_import_intelligence(row: dict[str, str]) -> dict[str, Any]:
+    # Preserve both normalized analyst signals and the original uploaded values.
+    # The normalized shape powers scoring, while the raw row is useful for export
+    # and audit/debug scenarios.
     positive_cols, negative_cols = _analyst_signal_columns()
 
     analyst = {
@@ -494,6 +497,8 @@ def _extract_import_intelligence(row: dict[str, str]) -> dict[str, Any]:
 
 
 def _derive_uploaded_intent_signals(import_intelligence: dict[str, Any]) -> dict[str, Any]:
+    # Convert narrative analyst columns into simple counters/flags that can be
+    # merged with machine-generated intent signals later in the pipeline.
     analyst = import_intelligence.get("analyst", {})
     positive_signals = import_intelligence.get("positive_signals", [])
     negative_signals = import_intelligence.get("negative_signals", [])
@@ -539,6 +544,8 @@ def _build_company_outreach_lane(
     ownership_stage: str,
     analyst: dict[str, Any],
 ) -> str:
+    # This is a routing heuristic for downstream playbooks, not a perfect model.
+    # It deliberately chooses one best lane even when the source data is partial.
     if any(int(connector.get("strength", 0) or 0) >= 3 for connector in connectors):
         return "warm_intro"
 
@@ -1908,6 +1915,9 @@ async def enrich_company_tiered(
             resolution_detail,
         )
 
+    # The cache doubles as a pipeline log for the UI: each stage writes status and
+    # fetched payloads so partial failures remain explainable to the user.
+
     # ── Tier 1: Free sources ────────────────────────────────────────────────
     from app.clients.web_search import WebSearchClient
     ws = WebSearchClient()
@@ -1974,6 +1984,8 @@ async def enrich_company_tiered(
     cached_apollo_entry = cache.get("apollo_company") if isinstance(cache.get("apollo_company"), dict) else None
     apollo_data = cached_apollo_entry.get("data") if isinstance(cached_apollo_entry, dict) else None
 
+    # Paid enrichment is intentionally gated behind the free pass so domain
+    # resolution and scraped context can improve match quality first.
     # ── Tier 2: Apollo (paid, gated) ────────────────────────────────────────
     if should_run_paid:
         _pipeline_stamp(cache, "paid_enrichment", "started", f"Paid enrichment allowed: {paid_reason}")
@@ -2083,6 +2095,8 @@ async def enrich_company_tiered(
     else:
         _pipeline_stamp(cache, "paid_enrichment", "skipped", paid_reason)
 
+    # Email verification is capped to a few top contacts to add confidence
+    # signals without turning every batch into an expensive verification run.
     # ── Email verification for top contacts (Hunter) ──────────────────────
     await _verify_top_contact_emails(company.id, session, cache)
 
@@ -2193,6 +2207,7 @@ async def enrich_company_tiered(
     company.updated_at = datetime.utcnow()
 
     # Force-write JSONB cache in case ORM dirty tracking misses nested JSON changes.
+    # Nested dict/list edits do not always mark the ORM field dirty automatically.
     await session.execute(
         sa_update(Company)
         .where(Company.id == company.id)
@@ -2320,6 +2335,8 @@ async def process_batch(batch_id: UUID, session: AsyncSession) -> SourcingBatch 
     total_companies = len(companies)
     for index, company in enumerate(companies, start=1):
         try:
+            # Give each company a fresh session so one failure or stale ORM state
+            # does not poison the rest of the batch.
             logger.info(f"Batch {batch_id}: starting company {index}/{total_companies} -> {company.name} ({company.domain})")
             async with AsyncSessionLocal() as company_session:
                 await enrich_company_tiered(company.id, company_session)
@@ -2383,7 +2400,8 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
             if not first and not last:
                 continue
 
-            # Skip duplicate by email (use .first() to handle multiple rows safely)
+            # Email is the strongest dedupe key when present because it remains
+            # stable across title changes and repeated imports.
             if email:
                 existing = await session.execute(
                     select(Contact).where(Contact.email == email).limit(1)
@@ -2391,7 +2409,8 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
                 if existing.scalars().first():
                     continue
 
-            # Skip duplicate by name + company
+            # Fall back to name + company when the provider has not given us an
+            # email address yet.
             if first and last:
                 existing = await session.execute(
                     select(Contact).where(

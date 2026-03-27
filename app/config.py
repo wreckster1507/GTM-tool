@@ -67,10 +67,14 @@ class Settings(BaseSettings):
     @property
     def claude_api_key(self) -> str:
         """Return whichever Claude key is set (ANTHROPIC_API_KEY or CLAUDE_API_KEY)."""
+        # Some environments use the old variable name and others use the newer one,
+        # so callers can depend on a single property instead of branching.
         return self.ANTHROPIC_API_KEY or self.CLAUDE_API_KEY
 
     @property
     def cors_origins(self) -> List[str]:
+        # `.env` stores this as a comma-separated string, but FastAPI middleware
+        # expects an actual list of origins.
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     # Resend (email sending)

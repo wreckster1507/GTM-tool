@@ -29,6 +29,7 @@ class PaginationParams:
         skip: int = Query(default=0, ge=0, description="Records to skip"),
         limit: int = Query(default=50, ge=1, le=500, description="Max records to return"),
     ):
+        # Centralizing pagination defaults here keeps list endpoints consistent.
         self.skip = skip
         self.limit = limit
 
@@ -55,6 +56,8 @@ async def get_current_user(
     if payload is None:
         raise UnauthorizedError("Invalid or expired token")
 
+    # We still load the user from the database so auth reflects deactivation or
+    # role changes that happened after the JWT was issued.
     user_id = payload.get("sub")
     if not user_id:
         raise UnauthorizedError("Invalid token payload")

@@ -59,6 +59,9 @@ async def _auto_create_angel_records(
     Also populates the company's investor text columns.
     Returns the number of mappings created.
     """
+    # `prospecting_profile` stores the generated warm-intro/investor intelligence
+    # as JSON. This helper turns the useful parts into relational records so the
+    # rest of the app can query and edit them normally.
     profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
     warm_paths = profile.get("warm_paths") if isinstance(profile.get("warm_paths"), list) else []
     investors = profile.get("investors") if isinstance(profile.get("investors"), dict) else {}
@@ -142,6 +145,8 @@ async def _auto_create_angel_records(
 
 @router.post("/reset/{scope}")
 async def reset_sourcing_data(scope: str, session: DBSession = None):
+    # These reset scopes intentionally target different slices of the GTM app so
+    # admins can clear one workflow without wiping unrelated work.
     normalized = (scope or "").strip().lower()
     if normalized == "account-sourcing":
         summary = await reset_account_sourcing_data(session)
@@ -169,6 +174,8 @@ def _joined_signal_values(items: object) -> str:
 
 
 def _company_export_row(company: Company) -> dict[str, str]:
+    # Prefer uploaded analyst values when they exist, but fall back to generated
+    # research so exports stay usable for both manual and AI-enriched batches.
     import_block = company.enrichment_sources.get("import") if isinstance(company.enrichment_sources, dict) else {}
     raw_row = import_block.get("raw_row") if isinstance(import_block, dict) and isinstance(import_block.get("raw_row"), dict) else {}
     uploaded_analyst = import_block.get("uploaded_analyst") if isinstance(import_block, dict) and isinstance(import_block.get("uploaded_analyst"), dict) else {}
@@ -388,6 +395,8 @@ async def upload_csv(
     if not (lower_name.endswith(".csv") or lower_name.endswith(".xlsx")):
         raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")
 
+    # The request path only normalizes and persists uploaded data. Expensive
+    # research is queued afterward so the browser is not held open for minutes.
     content = await file.read()
     rows = parse_tabular_file(file.filename or "upload.csv", content)
     if not rows:
@@ -447,7 +456,8 @@ async def upload_csv(
                 await session.refresh(company)
                 created += 1
 
-            # Populate company investor text columns even if no contact row
+            # Preserve investor metadata on the company even when the spreadsheet
+            # did not include a corresponding contact row.
             profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
             inv = profile.get("investors") if isinstance(profile.get("investors"), dict) else {}
             ownership = profile.get("ownership_stage")
@@ -468,6 +478,9 @@ async def upload_csv(
 
             contact_fields = row_to_contact_fields(row, fields)
             if contact_fields:
+                # Contact rows are optional. When present, we merge them now so the
+                # background enrichment can build on the imported humans instead of
+                # discovering everything from scratch.
                 existing_contact = None
                 if contact_fields.get("email"):
                     existing_contact = (
@@ -534,6 +547,8 @@ async def upload_csv(
 
     try:
         from app.tasks.enrichment import icp_research_batch_task
+        # Queue only after the batch and companies are committed so the worker sees
+        # durable records and a valid batch id.
         icp_research_batch_task.delay(str(batch_id))
     except Exception as exc:
         batch.status = "failed"
@@ -625,6 +640,8 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, sessi
         and "last_outreach_at" not in update_data
         and not company.last_outreach_at
     ):
+        # First-touch timestamps are inferred from the first non-default status so
+        # the UI can sort/filter on outreach recency without extra client logic.
         company.last_outreach_at = datetime.utcnow()
 
     if update_data.get("assigned_rep_email") and not update_data.get("assigned_rep"):
@@ -636,6 +653,8 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, sessi
         await session.execute(select(Contact).where(Contact.company_id == company.id))
     ).scalars().all()
     for contact in contacts:
+        # Keep contact-level sequencing aligned with the latest company owner and
+        # outreach lane whenever the account record changes.
         if company.assigned_rep_email:
             contact.assigned_rep_email = company.assigned_rep_email
         if company.recommended_outreach_lane and not contact.outreach_lane:

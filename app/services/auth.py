@@ -61,6 +61,7 @@ def build_google_login_url(redirect_uri: str) -> str:
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "offline",
+        # Force the standard consent flow in dev/local environments.
         "prompt": "consent",
     }
     return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -72,7 +73,7 @@ async def exchange_google_code(code: str, redirect_uri: str) -> dict:
     Returns dict with: email, name, picture, google_id.
     """
     async with httpx.AsyncClient() as client:
-        # Step 1: Exchange code for access token
+        # Step 1: exchange the one-time callback code for a Google access token.
         token_resp = await client.post(
             GOOGLE_TOKEN_URL,
             data={
@@ -87,7 +88,7 @@ async def exchange_google_code(code: str, redirect_uri: str) -> dict:
         tokens = token_resp.json()
         access_token = tokens["access_token"]
 
-        # Step 2: Fetch user profile
+        # Step 2: use that access token to fetch the user's profile details.
         userinfo_resp = await client.get(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},
