@@ -1,6 +1,24 @@
+x-common-env: &common-env
+  DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
+  SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
+  REDIS_URL: redis://redis:6379/0
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+  JWT_SECRET: ${JWT_SECRET:-jwt_dev_secret_change_me}
+
+x-common-depends: &common-depends
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-beacon_crm}
       POSTGRES_USER: ${DB_USER:-beacon}
@@ -17,6 +35,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -28,28 +47,24 @@ services:
   backend:
     build:
       context: .
+    restart: unless-stopped
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/api/v1/auth/google/callback}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
-      JWT_SECRET: ${JWT_SECRET:-jwt_dev_secret_change_me}
+      <<: *common-env
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/api/v1/auth/google/callback}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      <<: *common-depends
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     command: >
       sh -c "alembic upgrade head &&
              python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
@@ -57,56 +72,36 @@ services:
   worker:
     build:
       context: .
+    restart: unless-stopped
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      JWT_SECRET: ${JWT_SECRET:-jwt_dev_secret_change_me}
+      <<: *common-env
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      <<: *common-depends
     command: >
       sh -c "celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo"
 
   beat:
     build:
       context: .
+    restart: unless-stopped
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      SYNC_DATABASE_URL: postgresql://${DB_USER:-beacon}:${DB_PASSWORD:-beacon_dev}@postgres:5432/${DB_NAME:-beacon_crm}
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      JWT_SECRET: ${JWT_SECRET:-jwt_dev_secret_change_me}
+      <<: *common-env
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      <<: *common-depends
     command: >
       sh -c "celery -A app.celery_app.celery_app beat --loglevel=info"
 
   frontend:
     build:
       context: ./frontend
-      args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "8080:80"
 

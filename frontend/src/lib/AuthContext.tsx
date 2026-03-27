@@ -24,6 +24,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchMe = useCallback(async () => {
+    // Browser refreshes only persist the token, so we rehydrate the current
+    // user from /auth/me on boot instead of storing a second copy of user data.
     const token = localStorage.getItem("beacon_token");
     if (!token) {
       setLoading(false);
@@ -46,7 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback((token: string) => {
     localStorage.setItem("beacon_token", token);
-    // Re-fetch user after setting token
+    // Exchange the token for the canonical server-side user record immediately
+    // so role-based UI can render without waiting for a page reload.
     authApi.me().then(setUser).catch(() => {
       localStorage.removeItem("beacon_token");
       setUser(null);

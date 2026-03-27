@@ -5,6 +5,11 @@ from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
 
+# FastAPI app bootstrap:
+# 1. create the app
+# 2. attach cross-origin policy for the browser frontend
+# 3. register shared exception handling
+# 4. mount the versioned API router
 app = FastAPI(
     title="Beacon CRM API",
     description="GTM Sales CRM for Beacon.li — AI Implementation Orchestration",
@@ -13,7 +18,8 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# ── CORS ────────────────────────────────────────────────────────────────────
+# The frontend talks to the API directly from the browser, so allowed origins
+# come from settings instead of being hard-coded in each route.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -23,13 +29,12 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# ── Exception handlers ───────────────────────────────────────────────────────
-# Custom BeaconError subclasses map cleanly to HTTP status codes.
-# No more HTTPException(status_code=404, ...) scattered across every route.
+# Centralise app-specific errors so route handlers can raise domain errors
+# without duplicating HTTP status mapping logic everywhere.
 register_exception_handlers(app)
 
-# ── API v1 router ────────────────────────────────────────────────────────────
-# All routes live under /api/v1/.  Adding v2 later = mount a second router.
+# All API endpoints live under /api/v1. A future v2 can be mounted alongside it
+# without changing the existing route modules.
 app.include_router(v1_router, prefix="/api/v1")
 
 

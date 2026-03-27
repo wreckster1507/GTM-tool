@@ -54,6 +54,11 @@ async def google_callback(
     except Exception:
         raise UnauthorizedError("Failed to authenticate with Google")
 
+    # Restrict login to beacon.li domain
+    email = google_info["email"]
+    if not email.endswith("@beacon.li"):
+        raise ForbiddenError("Only @beacon.li accounts are allowed to sign in")
+
     # Find or create user
     user = (
         await session.execute(

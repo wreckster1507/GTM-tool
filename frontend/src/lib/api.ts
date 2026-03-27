@@ -28,6 +28,8 @@ async function requestList<T>(path: string): Promise<T[]> {
 async function requestPaginated<T>(path: string): Promise<Paginated<T>> {
   const res = await request<Paginated<T> | T[]>(path);
   if (Array.isArray(res)) {
+    // Some older endpoints still return a bare array. Normalize them so page
+    // components can consume one shape while the backend gradually converges.
     return {
       items: res,
       total: res.length,
@@ -39,7 +41,7 @@ async function requestPaginated<T>(path: string): Promise<Paginated<T>> {
   return res;
 }
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL ?? "";
 
 function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem("beacon_token");
@@ -52,6 +54,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   });
   if (res.status === 401) {
+    // Any expired/invalid token should force a clean login flow so pages do not
+    // keep retrying unauthorized requests with stale browser state.
     localStorage.removeItem("beacon_token");
     window.location.href = "/login";
     throw new Error("Session expired");
@@ -329,6 +333,8 @@ export const prospectingApi = {
     const form = new FormData();
     form.append("file", file);
 
+    // File uploads skip request() because the browser must set the multipart
+    // boundary header automatically.
     const res = await fetch(`${BASE}/api/v1/prospecting/bulk`, {
       method: "POST",
       headers: getAuthHeaders(),
@@ -410,6 +416,7 @@ export const customDemoApi = {
     form.append("client_domain", clientDomain);
     if (companyId) form.append("company_id", companyId);
     if (dealId) form.append("deal_id", dealId);
+    // Same multipart caveat as prospecting uploads: no JSON content-type header.
     return fetch(`${BASE}/api/v1/custom-demos/generate-from-file`, {
       method: "POST",
       headers: getAuthHeaders(),
@@ -465,6 +472,8 @@ export const accountSourcingApi = {
   upload: async (file: File): Promise<SourcingBatch> => {
     const form = new FormData();
     form.append("file", file);
+    // The backend kicks off enrichment work from this upload, so callers only
+    // receive the batch record and poll for progress afterward.
     const res = await fetch(`${BASE}/api/v1/account-sourcing/upload`, {
       method: "POST",
       headers: getAuthHeaders(),

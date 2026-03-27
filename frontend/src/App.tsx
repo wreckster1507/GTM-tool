@@ -51,6 +51,8 @@ export default function App() {
             <Route path="account-sourcing/contacts/:id" element={<AccountSourcingContactDetail />} />
             <Route path="companies/:id" element={<CompanyDetail />} />
             <Route path="contacts" element={<Contacts />} />
+            {/* A few legacy nav links still point at older route names.
+                Keep them as aliases so bookmarks and sidebar labels continue to work. */}
             <Route path="prospecting" element={<Contacts />} />
             <Route path="contacts/:id" element={<ContactDetail />} />
             <Route path="meetings" element={<Meetings />} />

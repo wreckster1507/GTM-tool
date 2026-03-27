@@ -14,14 +14,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
