@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "beacon.fullname" . }}-config
+  labels:
+    {{- include "beacon.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.backend.env.ENVIRONMENT | quote }}
+  JWT_EXPIRE_MINUTES: {{ .Values.backend.env.JWT_EXPIRE_MINUTES | quote }}
+  AZURE_OPENAI_DEPLOYMENT: {{ .Values.backend.env.AZURE_OPENAI_DEPLOYMENT | quote }}
+  AZURE_OPENAI_API_VERSION: {{ .Values.backend.env.AZURE_OPENAI_API_VERSION | quote }}
+  RESEND_FROM_EMAIL: {{ .Values.backend.env.RESEND_FROM_EMAIL | quote }}
+  CORS_ORIGINS: {{ printf "https://%s" .Values.ingress.host | quote }}
+  GOOGLE_REDIRECT_URI: {{ printf "https://%s/api/v1/auth/google/callback" .Values.ingress.host | quote }}
+  FRONTEND_URL: {{ printf "https://%s" .Values.ingress.host | quote }}

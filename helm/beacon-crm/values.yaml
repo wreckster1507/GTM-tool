@@ -1,0 +1,135 @@
+# -- Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# -- Backend (FastAPI)
+backend:
+  image:
+    repository: beacon-crm/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  env:
+    ENVIRONMENT: production
+    JWT_EXPIRE_MINUTES: "1440"
+    AZURE_OPENAI_DEPLOYMENT: gpt-4o-mini
+    AZURE_OPENAI_API_VERSION: "2024-12-01-preview"
+    RESEND_FROM_EMAIL: onboarding@resend.dev
+
+# -- Celery Worker
+worker:
+  image:
+    repository: beacon-crm/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# -- Celery Beat (scheduler)
+beat:
+  image:
+    repository: beacon-crm/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- Frontend (React + Nginx)
+frontend:
+  image:
+    repository: beacon-crm/frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# -- PostgreSQL
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  port: 5432
+  storage: 10Gi
+  storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# -- Redis
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+  port: 6379
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# -- Ingress
+ingress:
+  enabled: false
+  className: nginx
+  host: beacon.example.com
+  tls:
+    enabled: false
+    secretName: beacon-tls
+  annotations: {}
+
+# -- Secrets (override these at deploy time via --set or a secrets values file)
+secrets:
+  dbUser: beacon
+  dbPassword: change_me_in_production
+  dbName: beacon_crm
+  secretKey: change_me_in_production
+  jwtSecret: change_me_in_production
+  googleClientId: ""
+  googleClientSecret: ""
+  apolloApiKey: ""
+  hunterApiKey: ""
+  builtwithApiKey: ""
+  instantlyApiKey: ""
+  firefliesApiKey: ""
+  newsApiKey: ""
+  azureOpenaiApiKey: ""
+  azureOpenaiEndpoint: ""
+  anthropicApiKey: ""
+  claudeApiKey: ""
+  resendApiKey: ""
