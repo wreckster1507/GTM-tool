@@ -113,29 +113,25 @@ async def generate_sequence(
     email1_prompt = _build_initial_prompt(context)
     email1_result = await ai.complete(system_prompt, email1_prompt, max_tokens=250)
 
-    if email1_result is None:
-        # Mock fallback when Azure key is missing
-        email1_result = _mock_email_1(contact, company)
-
     seq.email_1 = email1_result
     seq.subject_1 = _extract_subject(email1_result) or f"Quick question for {context['company_name']}"
 
     # ── Email 2 — 3-day follow-up ────────────────────────────────────────────
     email2_prompt = _build_followup_prompt(context, touch=1, prior_email=email1_result)
     email2_result = await ai.complete(system_prompt, email2_prompt, max_tokens=200)
-    seq.email_2 = email2_result or _mock_followup(contact, 1)
+    seq.email_2 = email2_result
     seq.subject_2 = f"Re: {seq.subject_1}"
 
     # ── Email 3 — 7-day final follow-up ──────────────────────────────────────
     email3_prompt = _build_followup_prompt(context, touch=2, prior_email=email1_result)
     email3_result = await ai.complete(system_prompt, email3_prompt, max_tokens=150)
-    seq.email_3 = email3_result or _mock_followup(contact, 2)
+    seq.email_3 = email3_result
     seq.subject_3 = f"Re: {seq.subject_1}"
 
     # ── LinkedIn message ──────────────────────────────────────────────────────
     li_prompt = _build_linkedin_prompt(context)
     li_result = await ai.complete(_LINKEDIN_SYSTEM, li_prompt, max_tokens=80)
-    seq.linkedin_message = li_result or _mock_linkedin(contact, company)
+    seq.linkedin_message = li_result
 
     seq.generation_context = context
     seq.generated_at = datetime.utcnow()
@@ -237,41 +233,3 @@ def _extract_subject(email_text: Optional[str]) -> Optional[str]:
     return None
 
 
-# ── Mock fallbacks (when Azure key not set) ────────────────────────────────────
-
-def _mock_email_1(contact, company) -> str:
-    company_name = company.name if company else "your company"
-    return (
-        f"Subject: AI-powered SaaS onboarding for {company_name}\n\n"
-        f"Hi {contact.first_name},\n\n"
-        f"I noticed {company_name} is scaling fast — implementing enterprise SaaS tools "
-        "at that pace usually means onboarding delays and adoption gaps.\n\n"
-        "Beacon automates the entire implementation layer — workflows, data migration, "
-        "training paths — cutting deployment time by 70%.\n\n"
-        "Worth a 15-minute look? Happy to show you a live example from a similar company.\n\n"
-        "Best,"
-    )
-
-
-def _mock_followup(contact, touch: int) -> str:
-    if touch == 1:
-        return (
-            f"Hi {contact.first_name},\n\n"
-            "Wanted to follow up on my last note. "
-            "Companies in your space are reducing SaaS onboarding costs by 60%+ with orchestration. "
-            "Open to a quick call this week?\n\nBest,"
-        )
-    return (
-        f"Hi {contact.first_name},\n\n"
-        "Last reach out — I'll keep it short. "
-        "If now isn't the right time, happy to reconnect in Q3. "
-        "If there's interest, a 15-min intro call is all it takes.\n\nBest,"
-    )
-
-
-def _mock_linkedin(contact, company) -> str:
-    company_name = company.name if company else "your company"
-    return (
-        f"Hi {contact.first_name}, saw {company_name} is growing its SaaS stack. "
-        "Working on AI implementation orchestration — thought it might be relevant. Happy to connect!"
-    )

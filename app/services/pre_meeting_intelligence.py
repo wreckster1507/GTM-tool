@@ -844,21 +844,6 @@ Generate a Demo Strategy with:
 
     result = await ai.complete(system, user, max_tokens=600)
 
-    if not result:
-        # Fallback: structured mock strategy
-        return (
-            f"Demo Strategy for {name}\n\n"
-            f"1. Opening hook: Lead with the cost of failed SaaS implementations in {industry or 'your industry'}\n"
-            f"2. Discovery: 'What does your current onboarding process look like for new software rollouts?'\n"
-            f"3. Story lineup:\n"
-            f"   • Chapter 1: The Problem — show a failed rollout scenario they recognize\n"
-            f"   • Chapter 2: Beacon Automation — live workflow builder, AI decision engine\n"
-            f"   • Chapter 3: ROI Proof — time-to-value dashboard, adoption metrics\n"
-            f"4. Key differentiation: Unlike {dap_tool or 'point solutions'}, Beacon orchestrates the full deployment lifecycle\n"
-            f"5. Objection: 'We already have tools' → 'Beacon connects them — it's the missing orchestration layer'\n"
-            f"6. Next step: Technical deep-dive + pilot scoping call with IT/Ops stakeholder"
-        )
-
     return result
 
 

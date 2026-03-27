@@ -421,10 +421,11 @@ async def _run_icp_analysis(
     domain: str,
     collected: dict[str, Any],
     extra_context: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Call Claude with all collected data and the ICP system prompt."""
+) -> dict[str, Any] | None:
+    """Call Claude with all collected data and the ICP system prompt.  Returns None when unavailable."""
     if not settings.claude_api_key:
-        return _fallback_analysis(company_name, domain, collected, extra_context)
+        logger.warning("Claude API key not configured — skipping ICP analysis for %s", company_name)
+        return None
 
     import anthropic
     client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
@@ -599,7 +600,7 @@ async def _run_icp_analysis(
 
         if payload is None:
             logger.warning(f"Claude ICP analysis returned no valid ICP JSON for {company_name}")
-            return _fallback_analysis(company_name, domain, collected, extra_context)
+            return None
 
         payload["_source"] = "claude_icp_pipeline"
         payload["_model"] = settings.ANTHROPIC_MODEL
@@ -607,60 +608,9 @@ async def _run_icp_analysis(
 
     except Exception as e:
         logger.error(f"Claude ICP analysis failed for {company_name}: {e}")
-        return _fallback_analysis(company_name, domain, collected, extra_context)
+        return None
 
 
-def _fallback_analysis(
-    company_name: str,
-    domain: str,
-    collected: dict[str, Any],
-    extra_context: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Rule-based fallback when Claude API is unavailable."""
-    apollo = collected.get("apollo_company") or {}
-    ctx = extra_context or {}
-
-    return {
-        "company_overview": ctx.get("description") or f"{company_name} — pending AI analysis",
-        "industry": apollo.get("industry") or ctx.get("industry") or "Unknown",
-        "category": ctx.get("category") or "Unknown",
-        "core_focus": ctx.get("core_focus") or "Pending analysis",
-        "fit_type": "Pending",
-        "classification": "Watch",
-        "revenue_funding": ctx.get("revenue_funding") or "Unknown",
-        "financial_capacity_met": False,
-        "icp_fit_score": 0,
-        "icp_why": "AI analysis unavailable — manual review required",
-        "intent_score": 0,
-        "intent_why": "AI analysis unavailable — manual review required",
-        "ps_impl_hiring": "Not analyzed",
-        "leadership_org_moves": "Not analyzed",
-        "pr_funding_expansion": "Not analyzed",
-        "events_thought_leadership": "Not analyzed",
-        "reviews_case_studies": "Not analyzed",
-        "implementation_cycle": None,
-        "internal_ai_overlap": "Not analyzed",
-        "strategic_constraints": "Not analyzed",
-        "ps_cs_contraction": "Not analyzed",
-        "build_vs_buy": "Not analyzed",
-        "ai_acquisition": "Not analyzed",
-        "region": apollo.get("country") or "Unknown",
-        "headquarters": apollo.get("city") or "Unknown",
-        "employee_count": apollo.get("employee_count"),
-        "funding_stage": apollo.get("funding_stage"),
-        "arr_estimate": None,
-        "icp_personas": [],
-        "committee_coverage": "Not analyzed",
-        "open_gaps": [],
-        "account_thesis": ctx.get("account_thesis") or "Pending analysis",
-        "why_now": "Pending analysis",
-        "beacon_angle": ctx.get("beacon_angle") or "Pending analysis",
-        "recommended_outreach_strategy": "Pending analysis",
-        "conversation_starter": "Pending analysis",
-        "next_steps": "Pending AI analysis",
-        "confidence": "low",
-        "_source": "fallback",
-    }
 
 
 _NONE_OBSERVED_MARKERS = {

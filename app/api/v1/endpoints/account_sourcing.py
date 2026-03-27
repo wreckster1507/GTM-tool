@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import AdminUser, DBSession, Pagination
 from app.models.angel import AngelInvestor, AngelMapping
 from app.models.company import Company, CompanyRead, CompanyUpdate
 from app.models.contact import Contact, ContactRead, ContactUpdate
@@ -144,7 +144,7 @@ async def _auto_create_angel_records(
 
 
 @router.post("/reset/{scope}")
-async def reset_sourcing_data(scope: str, session: DBSession = None):
+async def reset_sourcing_data(scope: str, admin: AdminUser = None, session: DBSession = None):
     # These reset scopes intentionally target different slices of the GTM app so
     # admins can clear one workflow without wiping unrelated work.
     normalized = (scope or "").strip().lower()

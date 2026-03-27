@@ -1,8 +1,5 @@
 """
 Instantly.ai client — email outreach campaigns.
-
-Placeholder implementation: all methods return mock data when
-INSTANTLY_API_KEY is empty. Real API integration to follow.
 """
 import logging
 from typing import Optional
@@ -29,13 +26,8 @@ class InstantlyClient:
     ) -> dict:
         """Add a lead to an Instantly campaign."""
         if self.mock:
-            logger.info(f"[MOCK] Would add lead {email} to campaign {campaign_id}")
-            return {
-                "status": "mock",
-                "email": email,
-                "campaign_id": campaign_id,
-                "message": "Instantly API key not configured — lead not sent",
-            }
+            logger.warning("Instantly API key not configured — cannot add lead %s", email)
+            return None
 
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
@@ -55,7 +47,7 @@ class InstantlyClient:
     async def list_campaigns(self) -> list[dict]:
         """List all campaigns."""
         if self.mock:
-            return [{"id": "mock-campaign-1", "name": "Mock Campaign", "status": "active"}]
+            return []
 
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
@@ -69,14 +61,7 @@ class InstantlyClient:
     async def get_campaign_status(self, campaign_id: str) -> Optional[dict]:
         """Get campaign summary/status."""
         if self.mock:
-            return {
-                "id": campaign_id,
-                "name": "Mock Campaign",
-                "status": "active",
-                "leads_count": 0,
-                "sent_count": 0,
-                "reply_count": 0,
-            }
+            return None
 
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:

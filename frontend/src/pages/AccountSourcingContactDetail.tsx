@@ -13,7 +13,6 @@ import {
   RefreshCw,
   Send,
   Sparkles,
-  Target,
   UserRound,
   Users,
 } from "lucide-react";
@@ -601,11 +600,29 @@ export default function AccountSourcingContactDetail() {
               />
             </Section>
 
-            <Section title="Sequence Playbook" icon={<Send size={15} color={colors.primary} />}>
+            <Section title="Sales Playbook" icon={<Send size={15} color={colors.primary} />}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
-                <ListCard title="Goal" items={asText(plan.goal) ? [String(plan.goal)] : []} empty="No sequence goal saved yet." />
-                <ListCard title="Why This Person" items={asText(plan.why_this_person) ? [String(plan.why_this_person)] : []} empty="No persona reasoning saved yet." />
                 <ListCard title="Hooks To Use" items={planHooks} empty="No personalization hooks saved yet." />
+                <ListCard
+                  title="Conversation Starter"
+                  items={asText(contact.conversation_starter) ? [contact.conversation_starter as string] : asText(companyProfile.conversation_starter) ? [String(companyProfile.conversation_starter)] : []}
+                  empty="No conversation starter available."
+                />
+                <ListCard
+                  title="Talking Points"
+                  items={Array.isArray(contact.talking_points) ? contact.talking_points.map((item) => String(item)) : asList(aiSummary.talking_points)}
+                  empty="No talking points available."
+                />
+                <ListCard
+                  title="Pain Points"
+                  items={asList(aiSummary.pain_points)}
+                  empty="No AI pain points available yet."
+                />
+                <ListCard
+                  title="Prospecting Priorities"
+                  items={Array.isArray(companyProfile.priorities) ? companyProfile.priorities.map((item) => String(item)) : []}
+                  empty="No priorities available yet."
+                />
               </div>
               {planSteps.length === 0 ? (
                 <div style={{ color: colors.faint }}>No prospect sequence plan has been generated yet.</div>
@@ -683,28 +700,6 @@ export default function AccountSourcingContactDetail() {
               )}
             </Section>
 
-            <Section title="Research Summary" icon={<Target size={15} color={colors.primary} />}>
-              <ListCard
-                title="Conversation Starter"
-                items={asText(contact.conversation_starter) ? [contact.conversation_starter as string] : asText(companyProfile.conversation_starter) ? [String(companyProfile.conversation_starter)] : []}
-                empty="No conversation starter available."
-              />
-              <ListCard
-                title="Talking Points"
-                items={Array.isArray(contact.talking_points) ? contact.talking_points.map((item) => String(item)) : asList(aiSummary.talking_points)}
-                empty="No talking points available."
-              />
-              <ListCard
-                title="Pain Points"
-                items={asList(aiSummary.pain_points)}
-                empty="No AI pain points available yet."
-              />
-              <ListCard
-                title="Prospecting Priorities"
-                items={Array.isArray(companyProfile.priorities) ? companyProfile.priorities.map((item) => String(item)) : []}
-                empty="No priorities available yet."
-              />
-            </Section>
           </div>
         </div>
       </div>

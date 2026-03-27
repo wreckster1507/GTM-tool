@@ -1,21 +1,16 @@
 import { CSSProperties, ReactNode, useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../lib/AuthContext";
 import {
   AlertCircle,
   Building2,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Download,
-  ExternalLink,
   Flame,
   Loader2,
-  Mail,
-  Phone,
-  Linkedin,
   RefreshCw,
   Search,
-  Send,
   Sparkles,
   Target,
   TrendingUp,
@@ -24,9 +19,8 @@ import {
 } from "lucide-react";
 
 import { accountSourcingApi } from "../lib/api";
-import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
-import AssignDropdown from "../components/AssignDropdown";
-import type { Company, Contact, SourcingBatch } from "../types";
+import { getAccountPrioritySnapshot } from "../lib/utils";
+import type { Company, SourcingBatch } from "../types";
 
 const colors = {
   bg: "#f4f7fb",
@@ -54,31 +48,10 @@ const ICP_STYLE: Record<string, CSSProperties> = {
   cold: { background: "#eef2f7", color: "#5e6d83", border: "1px solid #d9e1ec" },
 };
 
-const PERSONA_STYLE: Record<string, CSSProperties> = {
-  champion: { background: colors.greenSoft, color: colors.green },
-  buyer: { background: "#eaf2ff", color: "#2556c4" },
-  evaluator: { background: colors.amberSoft, color: colors.amber },
-  blocker: { background: colors.redSoft, color: colors.red },
-};
-
-const PERSONA_LABEL: Record<string, string> = {
-  buyer: "Buyer",
-  champion: "Champion",
-  evaluator: "Evaluator",
-  blocker: "Blocker",
-  unknown: "Unknown",
-};
-
 const PRIORITY_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
   high: { background: "#e8f8f0", color: "#1f8f5f" },
   medium: { background: "#fff4df", color: "#b56d00" },
   low: { background: "#eef2f7", color: "#5e6d83" },
-};
-
-const INTEREST_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
-  high: { background: "#eef5ff", color: "#1f6feb" },
-  medium: { background: "#f3eaff", color: "#7a2dd9" },
-  low: { background: "#ffecef", color: "#b42336" },
 };
 
 const DISPOSITION_OPTIONS = [
@@ -89,14 +62,6 @@ const DISPOSITION_OPTIONS = [
   { value: "not_interested", label: "Not Interested" },
   { value: "bad_fit", label: "Bad Fit" },
   { value: "do_not_target", label: "Do Not Target" },
-];
-
-const OUTREACH_STATUS_OPTIONS = [
-  { value: "", label: "Unknown" },
-  { value: "not_started", label: "Not Started" },
-  { value: "contacted", label: "Contacted" },
-  { value: "replied", label: "Replied" },
-  { value: "meeting_booked", label: "Meeting Booked" },
 ];
 
 const OUTREACH_LANE_OPTIONS = [
@@ -137,15 +102,6 @@ function ts(date?: string) {
   });
 }
 
-function canonicalPersona(persona?: string | null, personaType?: string | null): keyof typeof PERSONA_STYLE | "unknown" {
-  const normalized = (personaType || persona || "").toLowerCase();
-  if (normalized === "economic_buyer" || normalized === "buyer") return "buyer";
-  if (normalized === "technical_evaluator" || normalized === "evaluator") return "evaluator";
-  if (normalized === "champion") return "champion";
-  if (normalized === "blocker") return "blocker";
-  return "unknown";
-}
-
 function getIcpAnalysis(company: Company): Record<string, unknown> | undefined {
   const cache = company.enrichment_cache;
   if (!cache || typeof cache !== "object") return undefined;
@@ -176,28 +132,6 @@ function asText(value: unknown): string | undefined {
     .replace(/\s*\/\s*/g, " / ")
     .trim();
   return cleaned || undefined;
-}
-
-function toBriefItems(value: unknown, maxItems = 3): string[] {
-  if (typeof value !== "string" || !value.trim()) return [];
-  const normalized = value
-    .replace(/\r/g, "")
-    .replace(/(?:^|\s)(\d+)[.)]\s+/g, "\n$1. ")
-    .replace(/\s+(\d+\))/g, "\n$1")
-    .replace(/\s+[•-]\s+/g, "\n- ")
-    .replace(/\s+(?=(?:PRIMARY|SECONDARY|TERTIARY|BACKUP|ALT(?:ERNATE)?|RISK|PROOF|ANGLE|PATH|HOOK)\s*:)/gi, "\n")
-    .split(/\n+/)
-    .map((item) => item.replace(/^\d+[.)]\s*/, "").replace(/^[-•]\s*/, "").trim())
-    .filter(Boolean);
-  return normalized
-    .slice(0, maxItems)
-    .map((item) => clipText(item.replace(/\s+/g, " "), 180) || item.replace(/\s+/g, " "));
-}
-
-function clipText(value: string | undefined, maxLength: number): string | undefined {
-  if (!value) return undefined;
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength).trim()}...`;
 }
 
 function SummaryCard({
@@ -377,701 +311,64 @@ function UploadPanel({ onUploaded }: { onUploaded: (batch: SourcingBatch) => voi
   );
 }
 
-function ContactRow({ contact }: { contact: Contact }) {
-  const [re, setRe] = useState(false);
-  const persona = canonicalPersona(contact.persona, contact.persona_type);
-
-  return (
-    <tr>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, color: colors.text, verticalAlign: "top" }}>
-        <Link to={`/account-sourcing/contacts/${contact.id}`} style={{ color: colors.text, textDecoration: "none", fontWeight: 700 }}>
-          {contact.first_name} {contact.last_name}
-        </Link>
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, color: colors.sub, verticalAlign: "top" }}>{contact.title || "-"}</td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, verticalAlign: "top" }}>
-        <div style={{ display: "inline-flex", gap: 10 }}>
-          {contact.email ? <a href={`mailto:${contact.email}`}><Mail size={14} /></a> : null}
-          {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer"><Linkedin size={14} /></a> : null}
-          {contact.phone ? <a href={`tel:${contact.phone}`}><Phone size={14} /></a> : null}
-        </div>
-        {(contact.outreach_lane || contact.sequence_status) ? (
-          <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {contact.outreach_lane ? (
-              <span style={{ background: "#eef5ff", color: colors.primary, borderRadius: 999, fontSize: 11, padding: "3px 8px", fontWeight: 700 }}>
-                {contact.outreach_lane.replace(/_/g, " ")}
-              </span>
-            ) : null}
-            {contact.sequence_status ? (
-              <span style={{ background: "#f3eaff", color: colors.violet, borderRadius: 999, fontSize: 11, padding: "3px 8px", fontWeight: 700 }}>
-                {contact.sequence_status.replace(/_/g, " ")}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, verticalAlign: "top" }}>
-        {persona !== "unknown" ? (
-          <span style={{ ...PERSONA_STYLE[persona], borderRadius: 999, fontSize: 11, padding: "4px 9px", fontWeight: 700 }}>
-            {PERSONA_LABEL[persona]}
-          </span>
-        ) : null}
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, color: colors.faint, fontSize: 12, verticalAlign: "top" }}>
-        {ts(contact.enriched_at)}
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, verticalAlign: "top" }}>
-        <div style={{ display: "inline-flex", gap: 8 }}>
-          <button
-            onClick={async () => {
-              setRe(true);
-              try {
-                await accountSourcingApi.reEnrichContact(contact.id);
-              } finally {
-                setTimeout(() => setRe(false), 2500);
-              }
-            }}
-            style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.sub }}
-            title="Re-enrich"
-          >
-            {re ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          </button>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function CompanyCard({ company, onRefresh }: { company: Company; onRefresh: () => void }) {
+function CompanyCard({ company }: { company: Company }) {
   const nav = useNavigate();
-  const [expanded, setExpanded] = useState(false);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loadingContacts, setLoadingContacts] = useState(false);
-
-  const [re, setRe] = useState(false);
-  const [push, setPush] = useState(false);
-  const [savingWorkflow, setSavingWorkflow] = useState(false);
-  const [workflow, setWorkflow] = useState({
-    assigned_rep: company.assigned_rep || "",
-    assigned_rep_name: company.assigned_rep_name || "",
-    assigned_rep_email: company.assigned_rep_email || "",
-    outreach_status: company.outreach_status || "",
-    disposition: company.disposition || "",
-    recommended_outreach_lane: company.recommended_outreach_lane || "",
-    rep_feedback: company.rep_feedback || "",
-  });
-
-  const loadContacts = useCallback(async () => {
-    setLoadingContacts(true);
-    try {
-      const data = await accountSourcingApi.getContacts(company.id);
-      setContacts(data);
-    } finally {
-      setLoadingContacts(false);
-    }
-  }, [company.id]);
-
-  useEffect(() => {
-    if (expanded && contacts.length === 0) {
-      loadContacts();
-    }
-  }, [expanded, contacts.length, loadContacts]);
-
-  useEffect(() => {
-    setWorkflow({
-      assigned_rep: company.assigned_rep || "",
-      assigned_rep_name: company.assigned_rep_name || "",
-      assigned_rep_email: company.assigned_rep_email || "",
-      outreach_status: company.outreach_status || "",
-      disposition: company.disposition || "",
-      recommended_outreach_lane: company.recommended_outreach_lane || "",
-      rep_feedback: company.rep_feedback || "",
-    });
-  }, [company.assigned_rep, company.assigned_rep_name, company.assigned_rep_email, company.outreach_status, company.disposition, company.recommended_outreach_lane, company.rep_feedback]);
 
   const tier = company.icp_tier || "cold";
-  const signals = company.intent_signals as { hiring?: number; funding?: number; product?: number } | undefined;
   const priority = getAccountPrioritySnapshot(company);
   const icpAnalysis = getIcpAnalysis(company);
   const salesPlay = getSalesPlay(company);
-  const cache = (company.enrichment_cache || {}) as Record<string, unknown>;
-  const icpEntry = cache.icp_analysis as { data?: { _source?: string; icp_fit_score?: number; intent_score?: number; classification?: string; fit_type?: string } } | undefined;
-  const isAiResearched = (icpEntry?.data?._source ?? (icpEntry as Record<string, unknown> | undefined)?._source) === "claude_icp_pipeline";
   const talVerdict = asText(salesPlay?.tal_verdict) || (typeof icpAnalysis?.classification === "string" ? icpAnalysis.classification : undefined);
-  const fitType = asText(salesPlay?.fit_type) || (typeof icpAnalysis?.fit_type === "string" ? icpAnalysis.fit_type : undefined);
-  const whyNow = asText(salesPlay?.why_now) || company.why_now || undefined;
-  const nextMove = asText(salesPlay?.recommended_outreach_strategy) || company.recommended_outreach_lane?.replace(/_/g, " ") || undefined;
-  const bestPersona = salesPlay?.best_persona && typeof salesPlay.best_persona === "object" ? salesPlay.best_persona as Record<string, unknown> : undefined;
-  const bestPersonaTitle = asText(bestPersona?.title);
-  const bestPersonaRelevance = asText(bestPersona?.relevance);
-  const proofPoints = Array.isArray(salesPlay?.proof_points) ? (salesPlay.proof_points as unknown[]).map(String).filter(Boolean) : [];
-  const riskFlags = Array.isArray(salesPlay?.risk_flags) ? (salesPlay.risk_flags as unknown[]).map(String).filter(Boolean) : [];
-  const whyNowItems = toBriefItems(whyNow, 2);
-  const nextMoveItems = toBriefItems(nextMove, 3);
-  const evidenceLevel = typeof (company.intent_signals as Record<string, unknown> | undefined)?.research_evidence_level === "string"
-    ? String((company.intent_signals as Record<string, unknown>).research_evidence_level)
-    : undefined;
-  const metadataItems = [
-    company.domain.endsWith(".unknown") ? `Domain unresolved: ${company.domain}` : company.domain,
-    asText(company.industry),
-    company.employee_count ? `${company.employee_count.toLocaleString()} employees` : undefined,
-    asText(company.funding_stage),
-    typeof icpAnalysis?.category === "string" ? asText(icpAnalysis.category) : undefined,
-  ].filter(Boolean) as string[];
-  const summaryText = clipText(
-    asText(company.description) ||
-      whyNowItems[0] ||
-      proofPoints[0] ||
-      bestPersonaRelevance ||
-      undefined,
-    260,
-  );
-  const compactMoves = nextMoveItems.slice(0, 2);
-
-  const saveWorkflow = async () => {
-    setSavingWorkflow(true);
-    try {
-      await accountSourcingApi.updateCompany(company.id, {
-        assigned_rep: workflow.assigned_rep.trim() || null,
-        assigned_rep_name: workflow.assigned_rep_name.trim() || null,
-        assigned_rep_email: workflow.assigned_rep_email.trim() || null,
-        outreach_status: workflow.outreach_status || null,
-        disposition: workflow.disposition || null,
-        recommended_outreach_lane: workflow.recommended_outreach_lane || null,
-        rep_feedback: workflow.rep_feedback.trim() || null,
-      });
-      onRefresh();
-    } finally {
-      setSavingWorkflow(false);
-    }
-  };
+  const owner = company.assigned_rep_email || company.assigned_rep_name || company.assigned_rep || "";
+  const disposition = company.disposition || "";
 
   return (
-    <div style={{ ...cardStyle, overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "24px",
-          display: "grid",
-          gap: 18,
-          background: expanded ? "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)" : "#ffffff",
-        }}
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1.8fr) minmax(320px, 0.92fr)",
-            gap: 20,
-            alignItems: "start",
-          }}
-        >
-          <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
-            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", minWidth: 0 }}>
-            <button
-              onClick={() => setExpanded((v) => !v)}
-              style={{
-                border: `1px solid ${colors.border}`,
-                background: "#fff",
-                color: colors.sub,
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                flexShrink: 0,
-                marginTop: 6,
-              }}
-              aria-label={expanded ? "Collapse company card" : "Expand company card"}
-            >
-              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </button>
-
-            <div style={{ minWidth: 0, display: "grid", gap: 12, flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
-                <span
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 12,
-                    border: `1px solid ${colors.border}`,
-                    background: "#f8fbff",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Building2 size={18} color="#71839a" />
-                </span>
-                <div style={{ minWidth: 0, display: "grid", gap: 8, flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                    <button
-                      onClick={() => nav(`/account-sourcing/${company.id}`)}
-                      style={{
-                        border: 0,
-                        background: "transparent",
-                        padding: 0,
-                        margin: 0,
-                        color: colors.text,
-                        fontWeight: 900,
-                        fontSize: 24,
-                        lineHeight: 1.2,
-                        cursor: "pointer",
-                        textAlign: "left",
-                        minWidth: 0,
-                      }}
-                      title="Open company detail"
-                    >
-                      {company.name}
-                    </button>
-                    <button
-                      onClick={() => nav(`/account-sourcing/${company.id}`)}
-                      style={{
-                        border: "1px solid #cfe0fb",
-                        background: "#eef5ff",
-                        color: colors.primary,
-                        borderRadius: 12,
-                        padding: "9px 12px",
-                        fontSize: 12,
-                        fontWeight: 800,
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 7,
-                        flexShrink: 0,
-                      }}
-                    >
-                      Open account <ExternalLink size={13} />
-                    </button>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 12, fontWeight: 800, padding: "6px 10px" }}>
-                      {tier.toUpperCase()} ({company.icp_score ?? 0})
-                    </span>
-                    {talVerdict ? <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 800 }}>{talVerdict}</span> : null}
-                    {fitType ? <span style={{ background: "#fff4df", color: colors.amber, borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 800 }}>{fitType}</span> : null}
-                    <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 800 }}>
-                      Priority {priority.priorityBand} ({priority.priorityScore})
-                    </span>
-                    <span style={{ ...INTEREST_STYLE[priority.interestLevel], borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 800 }}>
-                      Interest {priority.interestLevel}
-                    </span>
-                    {isAiResearched ? (
-                      <span style={{ background: "#f3eaff", color: "#7a2dd9", borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "6px 10px" }}>
-                        AI-RESEARCHED
-                      </span>
-                    ) : null}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {metadataItems.map((item) => (
-                      <span
-                        key={item}
-                        style={{
-                          borderRadius: 999,
-                          padding: "8px 12px",
-                          background: item.startsWith("Domain unresolved") ? "#fff4df" : "#f4f7fb",
-                          border: `1px solid ${item.startsWith("Domain unresolved") ? "#ffe0b2" : colors.border}`,
-                          color: item.startsWith("Domain unresolved") ? colors.amber : colors.sub,
-                          fontSize: 12,
-                          fontWeight: 700,
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        {item}
-                      </span>
-                    ))}
-                    {!company.domain.endsWith(".unknown") ? (
-                      <a
-                        href={`https://${company.domain}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          color: colors.primary,
-                          borderRadius: 999,
-                          border: "1px solid #cfe0fb",
-                          background: "#eef5ff",
-                          padding: "8px 12px",
-                          fontSize: 12,
-                          fontWeight: 700,
-                          textDecoration: "none",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        Visit site <ExternalLink size={12} />
-                      </a>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-
-              {summaryText ? (
-                <div
-                  style={{
-                    borderRadius: 16,
-                    border: `1px solid ${colors.border}`,
-                    background: "#fbfdff",
-                    padding: "16px 18px",
-                    color: colors.sub,
-                    fontSize: 14,
-                    lineHeight: 1.65,
-                  }}
-                >
-                  {summaryText}
-                </div>
-              ) : null}
-            </div>
-          </div>
-          </div>
-
-          <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ borderRadius: 16, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "16px 18px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>
-                  ENRICHMENT STATUS
-                  <div style={{ color: colors.text, fontSize: 15, fontWeight: 800, marginTop: 8 }}>Enriched</div>
-                  <div style={{ color: colors.sub, fontSize: 13, marginTop: 4 }}>{ts(company.enriched_at)}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  {signals?.hiring ? <span style={{ background: colors.greenSoft, color: colors.green, borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 800 }}>Hiring</span> : null}
-                  {signals?.funding ? <span style={{ background: colors.primarySoft, color: colors.primary, borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 800 }}>Funding</span> : null}
-                  {signals?.product ? <span style={{ background: colors.violetSoft, color: colors.violet, borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 800 }}>Product</span> : null}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-              <div style={{ borderRadius: 16, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "16px 18px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>BEST ENTRY PERSONA</div>
-                <div style={{ marginTop: 10, color: colors.text, fontWeight: 900, fontSize: 19, lineHeight: 1.3 }}>
-                  {bestPersonaTitle || "Need persona map"}
-                </div>
-                <div style={{ marginTop: 8, color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>
-                  {clipText(bestPersonaRelevance || "Lead with the operator closest to implementation pain.", 140)}
-                </div>
-              </div>
-
-              <div style={{ borderRadius: 16, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "16px 18px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>EVIDENCE QUALITY</div>
-                <div style={{ marginTop: 10, color: colors.text, fontWeight: 900, fontSize: 19, lineHeight: 1.3 }}>
-                  {evidenceLevel ? evidenceLevel.replace(/_/g, " ") : "Generated research"}
-                </div>
-                <div style={{ marginTop: 8, color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>
-                  {proofPoints.length} proof point{proofPoints.length === 1 ? "" : "s"} and {riskFlags.length} risk flag{riskFlags.length === 1 ? "" : "s"}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ borderRadius: 16, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "16px 18px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ACTIONS</div>
-              <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <AssignDropdown
-                entityType="company"
-                entityId={company.id}
-                currentAssignedId={company.assigned_to_id}
-                currentAssignedName={company.assigned_to_name || company.assigned_rep_name || company.assigned_rep}
-                onAssigned={() => onRefresh()}
-                compact
-              />
-              <button
-                onClick={async () => {
-                  setRe(true);
-                  try {
-                    await accountSourcingApi.reEnrichCompany(company.id);
-                  } finally {
-                    setTimeout(() => {
-                      setRe(false);
-                      onRefresh();
-                    }, 3500);
-                  }
-                }}
-                style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                {re ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Re-enrich
-              </button>
-              <button
-                onClick={async () => {
-                  setPush(true);
-                  try {
-                    await accountSourcingApi.pushToInstantly(company.id, company.instantly_campaign_id || "default");
-                  } finally {
-                    setTimeout(() => setPush(false), 1800);
-                  }
-                }}
-                style={{ border: "1px solid #cde5ff", background: "#eff7ff", color: "#1f5ecc", borderRadius: 12, padding: "10px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                {push ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Instantly
-              </button>
-            </div>
-          </div>
-        </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.3fr) minmax(320px, 0.9fr)", gap: 14, alignItems: "start" }}>
-          <div style={{ display: "grid", gap: 12 }}>
-            {(whyNowItems.length > 0 || nextMoveItems.length > 0) ? (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                {whyNowItems.length > 0 ? (
-                  <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#f8fbff", padding: "14px 16px" }}>
-                    <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>WHY NOW</div>
-                    <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-                      {whyNowItems.map((item, idx) => (
-                        <div key={`why-${idx}`} style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {nextMoveItems.length > 0 ? (
-                  <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#f8fbff", padding: "14px 16px" }}>
-                    <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>NEXT MOVE</div>
-                    <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-                      {nextMoveItems.map((item, idx) => (
-                        <div key={`move-${idx}`} style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
-                          {idx + 1}. {item}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-              <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "14px 16px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>TAL VERDICT</div>
-                <div style={{ marginTop: 8, color: colors.text, fontWeight: 900, fontSize: 24 }}>{talVerdict || "Researching"}</div>
-                <div style={{ marginTop: 6, color: colors.sub, fontSize: 13 }}>{fitType || "Fit type pending"}</div>
-              </div>
-              <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "14px 16px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>BEST ENTRY PERSONA</div>
-                <div style={{ marginTop: 8, color: colors.text, fontWeight: 900, fontSize: 22 }}>{bestPersonaTitle || "Need persona map"}</div>
-                <div style={{ marginTop: 6, color: colors.sub, fontSize: 13, lineHeight: 1.45 }}>{bestPersonaRelevance || "Lead with the operator closest to implementation pain."}</div>
-              </div>
-              {typeof icpAnalysis?.icp_fit_score === "number" ? (
-                <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "14px 16px" }}>
-                  <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>RESEARCHED ICP</div>
-                  <div style={{ marginTop: 8, color: colors.text, fontWeight: 900, fontSize: 24 }}>{String(icpAnalysis.icp_fit_score)}/10</div>
-                  <div style={{ marginTop: 6, color: colors.sub, fontSize: 13 }}>{evidenceLevel ? `${evidenceLevel} evidence` : "Generated from deep research"}</div>
-                </div>
-              ) : null}
-              {typeof icpAnalysis?.intent_score === "number" ? (
-                <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "14px 16px" }}>
-                  <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>RESEARCHED INTENT</div>
-                  <div style={{ marginTop: 8, color: colors.text, fontWeight: 900, fontSize: 24 }}>{String(icpAnalysis.intent_score)}/10</div>
-                  <div style={{ marginTop: 6, color: colors.sub, fontSize: 13 }}>{proofPoints.length} proof points / {riskFlags.length} risk flags</div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "14px 16px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>OPEN ACCOUNT</div>
-              <div style={{ marginTop: 8 }}>
-                <Link
-                  to={`/account-sourcing/${company.id}`}
-                  style={{
-                    color: colors.primary,
-                    fontWeight: 800,
-                    fontSize: 15,
-                    textDecoration: "none",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  Open full company detail <ExternalLink size={14} />
-                </Link>
-              </div>
-            </div>
-            <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "14px 16px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>EVIDENCE SNAPSHOT</div>
-              <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-                {proofPoints.slice(0, 2).map((item, idx) => (
-                  <div key={`proof-${idx}`} style={{ color: colors.sub, fontSize: 13, lineHeight: 1.5 }}>
-                    <strong style={{ color: colors.green }}>Proof:</strong> {item}
-                  </div>
-                ))}
-                {riskFlags.slice(0, 2).map((item, idx) => (
-                  <div key={`risk-${idx}`} style={{ color: colors.sub, fontSize: 13, lineHeight: 1.5 }}>
-                    <strong style={{ color: colors.red }}>Risk:</strong> {item}
-                  </div>
-                ))}
-                {proofPoints.length === 0 && riskFlags.length === 0 ? (
-                  <div style={{ color: colors.faint, fontSize: 13 }}>No clear proof points or risks captured yet.</div>
-                ) : null}
-              </div>
-            </div>
-          </div>
+    <div
+      onClick={() => nav(`/account-sourcing/${company.id}`)}
+      style={{
+        ...cardStyle,
+        padding: "14px 20px",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        transition: "background 0.15s",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fbff"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "#ffffff"; }}
+    >
+      <Building2 size={18} color="#71839a" style={{ flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>{company.name}</div>
+        <div style={{ color: colors.faint, fontSize: 12, marginTop: 2 }}>
+          {company.domain.endsWith(".unknown") ? "Domain unresolved" : company.domain}
+          {company.industry ? ` · ${company.industry}` : ""}
         </div>
       </div>
-
-      {expanded ? (
-        <div style={{ borderTop: `1px solid ${colors.border}`, padding: "16px 20px 20px", background: "#fbfdff" }}>
-          <div style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-            <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "12px 14px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>PRIORITY</div>
-              <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>{priority.priorityScore}</div>
-              <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>{priority.priorityBand} priority account</div>
-            </div>
-            <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "12px 14px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>RESEARCH QUALITY</div>
-              <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>{evidenceLevel || "pending"}</div>
-              <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>
-                {proofPoints.length > 0 ? `${proofPoints.length} proof points captured.` : "Evidence is still being assembled."}
-              </div>
-            </div>
-          </div>
-          <div style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-            <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "14px 16px" }}>
-              <div style={{ color: colors.text, fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Research Brief</div>
-              <div style={{ display: "grid", gap: 8 }}>
-                {whyNow ? <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}><strong style={{ color: colors.text }}>Why now:</strong> {whyNow}</div> : null}
-                {nextMove ? <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}><strong style={{ color: colors.text }}>How to engage:</strong> {nextMove}</div> : null}
-                {bestPersonaTitle ? <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}><strong style={{ color: colors.text }}>Start with:</strong> {bestPersonaTitle}{bestPersonaRelevance ? ` — ${bestPersonaRelevance}` : ""}</div> : null}
-                {!whyNow && !nextMove && !bestPersonaTitle ? <div style={{ color: colors.faint, fontSize: 13 }}>Research brief will appear after enrichment finishes.</div> : null}
-              </div>
-            </div>
-            <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "14px 16px" }}>
-              <div style={{ color: colors.text, fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Evidence and Risks</div>
-              <div style={{ display: "grid", gap: 8 }}>
-                {proofPoints.slice(0, 2).map((item, idx) => (
-                  <div key={`proof-${idx}`} style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
-                    <strong style={{ color: colors.green }}>Proof:</strong> {item}
-                  </div>
-                ))}
-                {riskFlags.slice(0, 2).map((item, idx) => (
-                  <div key={`risk-${idx}`} style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
-                    <strong style={{ color: colors.red }}>Risk:</strong> {item}
-                  </div>
-                ))}
-                {proofPoints.length === 0 && riskFlags.length === 0 ? <div style={{ color: colors.faint, fontSize: 13 }}>No clear proof points or risks captured yet.</div> : null}
-              </div>
-            </div>
-          </div>
-          <div style={{ marginBottom: 16, borderRadius: 14, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "14px 16px", display: "grid", gap: 10 }}>
-            <div style={{ color: colors.text, fontSize: 13, fontWeight: 800 }}>Prospecting Workflow</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-              <input
-                value={workflow.assigned_rep_name}
-                onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_name: e.target.value }))}
-                placeholder="Assigned rep name"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text }}
-              />
-              <input
-                value={workflow.assigned_rep_email}
-                onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_email: e.target.value }))}
-                placeholder="Assigned rep email"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text }}
-              />
-              <input
-                value={workflow.assigned_rep}
-                onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep: e.target.value }))}
-                placeholder="Legacy owner label"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text }}
-              />
-              <select
-                value={workflow.outreach_status}
-                onChange={(e) => setWorkflow((current) => ({ ...current, outreach_status: e.target.value }))}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-              >
-                {OUTREACH_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value || "blank"} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={workflow.disposition}
-                onChange={(e) => setWorkflow((current) => ({ ...current, disposition: e.target.value }))}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-              >
-                {DISPOSITION_OPTIONS.map((option) => (
-                  <option key={option.value || "blank"} value={option.value}>
-                    {option.label}
-                    </option>
-                  ))}
-                </select>
-              <select
-                value={workflow.recommended_outreach_lane}
-                onChange={(e) => setWorkflow((current) => ({ ...current, recommended_outreach_lane: e.target.value }))}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-              >
-                {OUTREACH_LANE_OPTIONS.map((option) => (
-                  <option key={option.value || "blank"} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <textarea
-              value={workflow.rep_feedback}
-              onChange={(e) => setWorkflow((current) => ({ ...current, rep_feedback: e.target.value }))}
-              placeholder="Rep feedback, objections, account thesis, or why this account should be deprioritized..."
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, minHeight: 84, resize: "vertical" }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ color: colors.faint, fontSize: 12 }}>
-                {company.last_outreach_at ? `Last outreach logged ${formatDate(company.last_outreach_at)}` : "Save after outreach to keep interest and priority current."}
-              </div>
-              <button
-                onClick={saveWorkflow}
-                disabled={savingWorkflow}
-                style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                {savingWorkflow ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                Save workflow
-              </button>
-            </div>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: colors.faint, letterSpacing: 0.3 }}>CONTACTS ({contacts.length})</div>
-            <button onClick={loadContacts} style={{ border: 0, background: "transparent", color: colors.primary, fontWeight: 700, cursor: "pointer", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <RefreshCw size={12} /> Refresh
-            </button>
-          </div>
-
-          {loadingContacts ? (
-            <div style={{ padding: 18, textAlign: "center" }}>
-              <Loader2 className="animate-spin" size={20} color={colors.primary} />
-            </div>
-          ) : contacts.length === 0 ? (
-            <div style={{ padding: 16, color: colors.faint, fontSize: 13, textAlign: "center" }}>
-              No contacts discovered yet.
-            </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
-                <thead>
-                  <tr style={{ background: "#f7f9fc" }}>
-                    {[
-                      "Name",
-                      "Title",
-                      "Channels",
-                      "Persona",
-                      "Enriched",
-                      "Actions",
-                    ].map((h) => (
-                      <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: colors.faint, fontSize: 11, letterSpacing: 0.4, borderBottom: `1px solid ${colors.border}` }}>
-                        {h.toUpperCase()}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {contacts.map((c) => (
-                    <ContactRow key={c.id} contact={c} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "4px 10px" }}>
+          {tier.toUpperCase()}
+        </span>
+        {talVerdict ? (
+          <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800 }}>
+            {talVerdict}
+          </span>
+        ) : null}
+        <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800 }}>
+          {priority.priorityBand}
+        </span>
+        {disposition ? (
+          <span style={{ background: "#f4f7fb", color: colors.sub, borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 700, border: `1px solid ${colors.border}` }}>
+            {disposition}
+          </span>
+        ) : null}
+      </div>
+      {owner ? (
+        <div style={{ color: colors.sub, fontSize: 12, fontWeight: 600, flexShrink: 0, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {owner}
         </div>
       ) : null}
+      <ChevronRight size={16} color={colors.faint} style={{ flexShrink: 0 }} />
     </div>
   );
 }
@@ -1089,6 +386,7 @@ export default function AccountSourcing() {
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
   const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
+  const { isAdmin } = useAuth();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1187,46 +485,50 @@ export default function AccountSourcing() {
               </p>
             </div>
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                onClick={() => void runReset("account-sourcing")}
-                disabled={Boolean(resettingScope)}
-                style={{
-                  border: "1px solid #f0c2c8",
-                  background: "#fff6f7",
-                  color: colors.red,
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: resettingScope ? "not-allowed" : "pointer",
-                  opacity: resettingScope ? 0.7 : 1,
-                }}
-              >
-                {resettingScope === "account-sourcing" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
-                Clear Account Sourcing
-              </button>
-              <button
-                onClick={() => void runReset("workspace")}
-                disabled={Boolean(resettingScope)}
-                style={{
-                  border: "1px solid #f5d4d8",
-                  background: "#fffafb",
-                  color: colors.red,
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: resettingScope ? "not-allowed" : "pointer",
-                  opacity: resettingScope ? 0.7 : 1,
-                }}
-              >
-                {resettingScope === "workspace" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
-                Clear Workspace
-              </button>
+              {isAdmin && (
+                <>
+                  <button
+                    onClick={() => void runReset("account-sourcing")}
+                    disabled={Boolean(resettingScope)}
+                    style={{
+                      border: "1px solid #f0c2c8",
+                      background: "#fff6f7",
+                      color: colors.red,
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: resettingScope ? "not-allowed" : "pointer",
+                      opacity: resettingScope ? 0.7 : 1,
+                    }}
+                  >
+                    {resettingScope === "account-sourcing" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
+                    Clear Account Sourcing
+                  </button>
+                  <button
+                    onClick={() => void runReset("workspace")}
+                    disabled={Boolean(resettingScope)}
+                    style={{
+                      border: "1px solid #f5d4d8",
+                      background: "#fffafb",
+                      color: colors.red,
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: resettingScope ? "not-allowed" : "pointer",
+                      opacity: resettingScope ? 0.7 : 1,
+                    }}
+                  >
+                    {resettingScope === "workspace" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
+                    Clear Workspace
+                  </button>
+                </>
+              )}
               <button
                 onClick={async () => {
                   setExportingContacts(true);
@@ -1587,7 +889,7 @@ export default function AccountSourcing() {
         ) : (
           <div style={{ display: "grid", gap: 14 }}>
             {list.map((c) => (
-              <CompanyCard key={c.id} company={c} onRefresh={load} />
+              <CompanyCard key={c.id} company={c} />
             ))}
           </div>
         )}

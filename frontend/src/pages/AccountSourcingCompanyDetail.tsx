@@ -1259,13 +1259,27 @@ export default function AccountSourcingCompanyDetail() {
             </Section>
 
             <Section title={`Stakeholders (${contacts.length})`} icon={<Users size={15} color={colors.primary} />}>
-              {contacts.length === 0 ? (
+              {icpPersonas.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>KEY PERSONAS</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {icpPersonas.map((p, i) => (
+                      <div key={i} style={{ background: "#fbfdff", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{p.title || "Unknown"}</div>
+                        {p.name && <div style={{ color: colors.primary, fontSize: 12 }}>{p.name}</div>}
+                        {p.relevance && <div style={{ color: colors.faint, fontSize: 12, marginTop: 2 }}>{p.relevance}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {contacts.length === 0 && icpPersonas.length === 0 ? (
                 <div style={{ color: colors.faint }}>No contacts discovered yet.</div>
-              ) : (
+              ) : contacts.length > 0 ? (
                 <div style={{ display: "grid", gap: 10 }}>
                   {contacts.map((c) => <ContactItem key={c.id} contact={c} />)}
                 </div>
-              )}
+              ) : null}
             </Section>
 
             <Section title="Rep Workflow" icon={<MessageSquare size={15} color={colors.primary} />}>
@@ -1394,100 +1408,6 @@ export default function AccountSourcingCompanyDetail() {
           </div>
 
           <div style={{ display: "grid", gap: 14 }}>
-            <Section title="Stakeholder Map" icon={<Users size={15} color={colors.primary} />}>
-              {icpCommitteeCoverage && (
-                <div style={{ background: "#f8fbff", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
-                  <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>{icpCommitteeCoverage}</div>
-                  <SourceLinks items={committeeCoverageSources} />
-                </div>
-              )}
-              {committee ? (
-                <>
-                  <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8, color: colors.sub, fontSize: 12, fontWeight: 700 }}>
-                      <span>Coverage of likely buying roles</span>
-                      <span>{committeeScore}% mapped</span>
-                    </div>
-                    <div style={{ height: 8, background: "#e9eef5", borderRadius: 999, overflow: "hidden" }}>
-                      <div
-                        style={{
-                          width: `${committeeScore}%`,
-                          height: "100%",
-                          background: committeeScore >= 75 ? "#10b981" : committeeScore >= 50 ? "#2563eb" : "#f59e0b",
-                        }}
-                      />
-                    </div>
-                  </div>
-                  {Array.isArray(committee.covered_roles) && (committee.covered_roles as Array<{ label?: string }>).length > 0 ? (
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3 }}>COVERED ROLES</div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {(committee.covered_roles as Array<{ label?: string }>)
-                          .map((item) => item.label)
-                          .filter(Boolean)
-                          .map((label) => (
-                            <span key={label} style={{ borderRadius: 999, padding: "6px 10px", background: "#eefcf5", color: colors.green, fontSize: 12, fontWeight: 700 }}>
-                              {label}
-                            </span>
-                          ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {bestContacts.length > 0 && (
-                    <div>
-                      <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>
-                        BEST CONTACTS
-                      </div>
-                      <div style={{ display: "grid", gap: 8 }}>
-                        {bestContacts.map((item, idx) => (
-                          <div key={`${item.name}-${idx}`} style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", background: "#fbfdff" }}>
-                            <div style={{ color: colors.text, fontWeight: 700 }}>{item.name}</div>
-                            <div style={{ color: colors.sub, fontSize: 13, marginTop: 2 }}>{item.title || item.label || "Stakeholder"}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : null}
-              {icpPersonas.length > 0 && (
-                <div>
-                  <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>KEY PERSONAS</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {icpPersonas.map((p, i) => (
-                      <div key={i} style={{ background: "#fbfdff", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
-                        <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{p.title || "Unknown"}</div>
-                        {p.name && <div style={{ color: colors.primary, fontSize: 12 }}>{p.name}</div>}
-                        {p.relevance && <div style={{ color: colors.faint, fontSize: 12, marginTop: 2 }}>{p.relevance}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {(missingRoles.length > 0 || icpOpenGaps.length > 0) && (
-                <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ color: colors.amber, fontWeight: 700, fontSize: 12, letterSpacing: 0.3 }}>STILL NEED TO FIND</div>
-                  {missingRoles.map((item, idx) => (
-                    <div key={`${item.label}-${idx}`} style={{ border: `1px solid #ffe0b2`, borderRadius: 10, padding: "10px 12px", background: "#fff9f0" }}>
-                      <div style={{ color: colors.text, fontWeight: 700 }}>{item.label}</div>
-                      {item.why ? <div style={{ color: colors.sub, fontSize: 13, marginTop: 4 }}>{item.why}</div> : null}
-                    </div>
-                  ))}
-                  {icpOpenGaps.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {icpOpenGaps.map((gap, i) => (
-                        <span key={i} style={{ background: colors.amberSoft, color: colors.amber, fontSize: 12, fontWeight: 600, borderRadius: 999, padding: "4px 10px" }}>
-                          {gap}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              {!committee && !icpCommitteeCoverage && icpPersonas.length === 0 && (
-                <div style={{ color: colors.faint }}>Stakeholder guidance will appear after enrichment finishes.</div>
-              )}
-            </Section>
 
             <Section title="Data Freshness" icon={<TrendingUp size={15} color={colors.primary} />}>
               {[

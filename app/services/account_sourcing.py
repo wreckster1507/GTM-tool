@@ -2142,30 +2142,25 @@ async def enrich_company_tiered(
                 ),
                 timeout=_AI_SUMMARY_TIMEOUT_SECONDS,
             )
-            summary_source = summary.get("_source", "unknown")
-            is_fallback = summary_source == "fallback"
-            summary["research_quality"] = research_quality
-
-            if not is_fallback and summary.get("description"):
-                company.description = summary["description"]
-            if not is_fallback and summary.get("industry") and summary["industry"] != "Unknown":
-                company.industry = summary["industry"]
-            # Apply tech stack if discovered by AI
-            if not is_fallback and summary.get("tech_stack_signals") and not company.tech_stack:
-                company.tech_stack = summary["tech_stack_signals"]
-
-            prev_ai_entry = cache.get("ai_summary") if isinstance(cache.get("ai_summary"), dict) else None
-            prev_ai_data = prev_ai_entry.get("data") if isinstance(prev_ai_entry, dict) else None
-            prev_ai_source = prev_ai_data.get("_source") if isinstance(prev_ai_data, dict) else None
-
-            # Keep last good Claude payload when a fallback response is generated.
-            if is_fallback and prev_ai_source == "claude":
-                logger.warning(f"Keeping previous Claude AI summary for {company.name}; new summary was fallback")
+            if summary is None:
+                logger.warning(f"AI summary unavailable for {company.name}")
+                _pipeline_stamp(cache, "ai_summary", "unavailable", "AI summary returned None — no API key or analysis failed")
             else:
+                summary_source = summary.get("_source", "unknown")
+                summary["research_quality"] = research_quality
+
+                if summary.get("description"):
+                    company.description = summary["description"]
+                if summary.get("industry") and summary["industry"] != "Unknown":
+                    company.industry = summary["industry"]
+                # Apply tech stack if discovered by AI
+                if summary.get("tech_stack_signals") and not company.tech_stack:
+                    company.tech_stack = summary["tech_stack_signals"]
+
                 cache["ai_summary"] = {"data": summary, "fetched_at": datetime.utcnow().isoformat()}
 
-            logger.info(f"AI summary generated for {company.name} from source={summary_source} with {len(summary)} fields")
-            _pipeline_stamp(cache, "ai_summary", "completed", f"AI summary source={summary_source}")
+                logger.info(f"AI summary generated for {company.name} from source={summary_source} with {len(summary)} fields")
+                _pipeline_stamp(cache, "ai_summary", "completed", f"AI summary source={summary_source}")
         except asyncio.TimeoutError:
             logger.error(f"Claude summarization timed out for {company.name}")
             _pipeline_stamp(cache, "ai_summary", "timeout", "AI summary timed out")

@@ -5,26 +5,9 @@ Real mode: uses Hunter's Company Enrichment API (same key) when
 APOLLO_API_KEY is empty but HUNTER_API_KEY is set.
 Mock mode: returns Faker data when both keys are empty.
 """
-import random
 from typing import Optional
 
 from app.config import settings
-
-try:
-    from faker import Faker
-    _fake = Faker()
-    _HAS_FAKER = True
-except ImportError:
-    _HAS_FAKER = False
-
-_INDUSTRIES = ["HR Tech", "FinTech", "HealthTech", "SaaS", "EdTech", "PropTech", "LegalTech"]
-_VERTICALS = ["HCM", "Payroll", "Recruitment", "Banking", "Insurance", "EHR", "LMS"]
-_FUNDING = ["Seed", "Series A", "Series B", "Series C", "Series D"]
-_DAP_TOOLS = ["WalkMe", "Pendo", "Appcues", "UserGuiding", "Intercom", "Gainsight PX"]
-_TITLES = [
-    "VP of HR", "CTO", "CFO", "Head of Engineering", "Director of People Ops",
-    "CHRO", "VP Finance", "CEO", "CIO", "Director of IT",
-]
 
 
 def _parse_hunter_size(size_str: Optional[str]) -> Optional[int]:
@@ -63,7 +46,7 @@ class ApolloClient:
     async def enrich_company(self, domain: str) -> Optional[dict]:
         """Return firmographic data for a domain."""
         if self.mock:
-            return self._mock_company(domain)
+            return None
 
         if self.hunter_key and not self.api_key:
             return await self._enrich_via_hunter(domain)
@@ -90,7 +73,7 @@ class ApolloClient:
     async def find_contacts(self, domain: str, limit: int = 5) -> list:
         """Return a list of contacts at the domain."""
         if self.mock:
-            return self._mock_contacts(domain, limit)
+            return []
         return []
 
     async def search_people(
@@ -111,7 +94,7 @@ class ApolloClient:
         Credit-conservative: limits results and uses targeted filters.
         """
         if self.mock:
-            return self._mock_contacts(domain, limit)
+            return []
 
         if not self.api_key:
             return []
@@ -206,8 +189,7 @@ class ApolloClient:
         Used by re-enrich for individual contacts.
         """
         if self.mock:
-            contacts = self._mock_contacts(domain or "example.com", 1)
-            return contacts[0] if contacts else None
+            return None
 
         if not self.api_key:
             return None
@@ -278,35 +260,3 @@ class ApolloClient:
             "dap_tool": None,
         }
 
-    # ── mock helpers ──────────────────────────────────────────────────────────
-
-    def _mock_company(self, domain: str) -> dict:
-        if not _HAS_FAKER:
-            return {}
-        has_dap = random.random() > 0.45
-        emp = random.choice([45, 120, 280, 650, 1400, 3500])
-        return {
-            "name": domain.split(".")[0].replace("-", " ").title(),
-            "industry": random.choice(_INDUSTRIES),
-            "vertical": random.choice(_VERTICALS),
-            "employee_count": emp,
-            "arr_estimate": random.choice([400_000, 1_500_000, 6_000_000, 20_000_000, 80_000_000]),
-            "funding_stage": random.choice(_FUNDING),
-            "has_dap": has_dap,
-            "dap_tool": random.choice(_DAP_TOOLS) if has_dap else None,
-        }
-
-    def _mock_contacts(self, domain: str, limit: int) -> list:
-        if not _HAS_FAKER:
-            return []
-        return [
-            {
-                "first_name": _fake.first_name(),
-                "last_name": _fake.last_name(),
-                "email": f"{_fake.user_name()}@{domain}",
-                "title": random.choice(_TITLES),
-                "seniority": "vp",
-                "linkedin_url": f"https://linkedin.com/in/{_fake.user_name()}",
-            }
-            for _ in range(min(limit, 3))
-        ]
