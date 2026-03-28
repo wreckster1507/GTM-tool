@@ -189,6 +189,27 @@ export const outreachApi = {
     request<
       { sequence_id: string; contact_id: string; contact_name: string; title?: string; persona?: string; status: string; subject_1?: string; email_1_preview?: string }[]
     >(`/api/v1/outreach/company/${companyId}`),
+  updateSequence: (sequenceId: string, fields: Partial<Record<"email_1"|"email_2"|"email_3"|"subject_1"|"subject_2"|"subject_3"|"linkedin_message"|"status", string>>) =>
+    request<OutreachSequence>(`/api/v1/outreach/sequences/${sequenceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+    }),
+  launch: (sequenceId: string, sendingAccount: string, campaignName?: string) =>
+    request<{
+      status: string;
+      sequence_id: string;
+      instantly_campaign_id: string;
+      contact_email: string;
+      steps_count: number;
+      campaign_name: string;
+    }>(`/api/v1/outreach/launch/${sequenceId}`, {
+      method: "POST",
+      body: JSON.stringify({ sending_account: sendingAccount, campaign_name: campaignName }),
+    }),
+  getReplies: (sequenceId: string) =>
+    request<{ sequence_id: string; replies: Array<{ id?: string; subject?: string; body?: string; from_email?: string; created_at?: string; timestamp?: string }> }>(
+      `/api/v1/outreach/replies/${sequenceId}`
+    ),
 };
 
 export const intelligenceApi = {

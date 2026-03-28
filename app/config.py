@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     SERPER_API_KEY: str = ""
     BUILTWITH_API_KEY: str = ""
     INSTANTLY_API_KEY: str = ""
+    INSTANTLY_WEBHOOK_URL: str = ""  # e.g. https://yourdomain.com/api/v1/webhooks/instantly
     FIREFLIES_API_KEY: str = ""
     NEWS_API_KEY: str = ""  # No longer required — news client uses Google News RSS
 

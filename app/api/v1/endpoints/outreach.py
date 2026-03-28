@@ -2,13 +2,22 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from sqlmodel import select
 
+from app.clients.instantly import InstantlyClient, InstantlyError
+from app.config import settings
 from app.core.dependencies import DBSession
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.contact import Contact
-from app.models.outreach import OutreachSequence, OutreachSequenceRead
+from app.models.outreach import (
+    OutreachSequence,
+    OutreachSequenceRead,
+    OutreachStep,
+    OutreachStepCreate,
+    OutreachStepRead,
+    OutreachStepUpdate,
+)
 from app.repositories.outreach import OutreachRepository
 from app.services.outreach_generator import generate_sequence
 
@@ -20,9 +29,11 @@ _ALLOWED_SEQUENCE_FIELDS = frozenset(
 )
 
 
+# ── Sequence generation ────────────────────────────────────────────────────────
+
 @router.post("/generate/{contact_id}", response_model=OutreachSequenceRead)
 async def generate_contact_sequence(contact_id: UUID, session: DBSession):
-    """Generate a 3-touch email cadence + LinkedIn message for a single contact."""
+    """Generate a multi-step email cadence + LinkedIn message for a contact."""
     seq = await generate_sequence(contact_id, session)
     if not seq:
         raise NotFoundError("Contact not found")
@@ -73,6 +84,8 @@ async def generate_bulk_sequences(
     }
 
 
+# ── Sequence read / update ─────────────────────────────────────────────────────
+
 @router.get("/sequences/{contact_id}", response_model=OutreachSequenceRead)
 async def get_contact_sequence(contact_id: UUID, session: DBSession):
     seq = await OutreachRepository(session).get_by_contact(contact_id)
@@ -114,9 +127,323 @@ async def get_company_sequences(company_id: UUID, session: DBSession):
             "title": contact.title,
             "persona": seq.persona,
             "status": seq.status,
+            "instantly_campaign_id": seq.instantly_campaign_id,
+            "instantly_campaign_status": seq.instantly_campaign_status,
             "subject_1": seq.subject_1,
             "email_1_preview": (seq.email_1 or "")[:200] + "..." if seq.email_1 else None,
             "generated_at": seq.generated_at.isoformat() if seq.generated_at else None,
+            "launched_at": seq.launched_at.isoformat() if seq.launched_at else None,
         }
         for seq, contact in rows
     ]
+
+
+# ── Steps CRUD ────────────────────────────────────────────────────────────────
+
+@router.get("/sequences/{sequence_id}/steps", response_model=list[OutreachStepRead])
+async def get_steps(sequence_id: UUID, session: DBSession):
+    """Get all steps for a sequence, ordered by step_number."""
+    seq = await session.get(OutreachSequence, sequence_id)
+    if not seq:
+        raise NotFoundError("Sequence not found")
+
+    result = await session.execute(
+        select(OutreachStep)
+        .where(OutreachStep.sequence_id == sequence_id)
+        .order_by(OutreachStep.step_number)
+    )
+    return result.scalars().all()
+
+
+@router.post("/sequences/{sequence_id}/steps", response_model=OutreachStepRead)
+async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSession):
+    """Add a new step to a sequence (before it's launched to Instantly)."""
+    seq = await session.get(OutreachSequence, sequence_id)
+    if not seq:
+        raise NotFoundError("Sequence not found")
+    if seq.instantly_campaign_id:
+        raise ValidationError("Cannot add steps after sequence has been launched to Instantly")
+
+    step = OutreachStep(
+        sequence_id=sequence_id,
+        step_number=step_in.step_number,
+        subject=step_in.subject,
+        body=step_in.body,
+        delay_value=step_in.delay_value,
+        delay_unit=step_in.delay_unit,
+        variants=step_in.variants,
+    )
+    session.add(step)
+    await session.commit()
+    await session.refresh(step)
+    return step
+
+
+@router.patch("/steps/{step_id}", response_model=OutreachStepRead)
+async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSession):
+    """Edit a step's content, delay, or variants."""
+    step = await session.get(OutreachStep, step_id)
+    if not step:
+        raise NotFoundError("Step not found")
+
+    update_data = updates.model_dump(exclude_none=True)
+    for key, val in update_data.items():
+        setattr(step, key, val)
+    step.updated_at = datetime.utcnow()
+
+    session.add(step)
+    await session.commit()
+    await session.refresh(step)
+    return step
+
+
+@router.delete("/steps/{step_id}")
+async def delete_step(step_id: UUID, session: DBSession):
+    """Remove a step from a sequence (before launch only)."""
+    step = await session.get(OutreachStep, step_id)
+    if not step:
+        raise NotFoundError("Step not found")
+
+    seq = await session.get(OutreachSequence, step.sequence_id)
+    if seq and seq.instantly_campaign_id:
+        raise ValidationError("Cannot delete steps after sequence has been launched to Instantly")
+
+    await session.delete(step)
+    await session.commit()
+    return {"status": "deleted", "step_id": str(step_id)}
+
+
+# ── Launch to Instantly ───────────────────────────────────────────────────────
+
+@router.post("/launch/{sequence_id}")
+async def launch_sequence(
+    sequence_id: UUID,
+    session: DBSession,
+    sending_account: str = Body(..., embed=True),
+    campaign_name: Optional[str] = Body(None, embed=True),
+):
+    """
+    Launch a sequence to Instantly.ai.
+
+    Flow:
+    1. Load sequence + steps (falls back to email_1/2/3 if no steps exist)
+    2. Create campaign in Instantly with all steps
+    3. Activate the campaign
+    4. Add the contact as a lead to the campaign
+    5. Update sequence with instantly_campaign_id + status
+    6. Update contact instantly_status + sequence_status
+
+    sending_account: the email address of the Instantly sending account to use.
+    campaign_name: optional override; defaults to "Contact Name — Company"
+    """
+    # ── Load sequence ──────────────────────────────────────────────────────────
+    seq = await session.get(OutreachSequence, sequence_id)
+    if not seq:
+        raise NotFoundError("Sequence not found")
+
+    if seq.instantly_campaign_id:
+        raise ValidationError(
+            f"Sequence already launched. Instantly campaign: {seq.instantly_campaign_id}"
+        )
+
+    # ── Load contact ───────────────────────────────────────────────────────────
+    contact = await session.get(Contact, seq.contact_id)
+    if not contact:
+        raise NotFoundError("Contact not found")
+
+    if not contact.email:
+        raise ValidationError("Contact has no email address — cannot launch sequence")
+
+    # ── Load steps (prefer OutreachStep records, fall back to email_1/2/3) ────
+    steps_result = await session.execute(
+        select(OutreachStep)
+        .where(OutreachStep.sequence_id == sequence_id)
+        .order_by(OutreachStep.step_number)
+    )
+    steps = steps_result.scalars().all()
+
+    if not steps:
+        # Fallback: build steps from the legacy email_1/2/3 fields
+        steps = _steps_from_legacy(seq)
+
+    if not steps:
+        raise ValidationError(
+            "No email steps found. Generate the sequence first or add steps manually."
+        )
+
+    # ── Build payload for Instantly ────────────────────────────────────────────
+    from app.models.company import Company
+    company = await session.get(Company, seq.company_id) if seq.company_id else None
+    company_name = company.name if company else "Company"
+
+    name = campaign_name or f"{contact.first_name} {contact.last_name} — {company_name}"
+
+    instantly_steps = [
+        {
+            "subject": step.subject or (f"Re: {steps[0].subject}" if i > 0 else "Hello"),
+            "body": step.body,
+            "delay_value": step.delay_value,
+            # Omit delay_unit — Instantly defaults to days; including it can
+            # cause validation errors if the value doesn't match their allowlist
+            "variants": step.variants or [],
+        }
+        for i, step in enumerate(steps)
+    ]
+
+    # ── Call Instantly API ─────────────────────────────────────────────────────
+    client = InstantlyClient()
+
+    try:
+        campaign = await client.create_campaign(
+            name=name,
+            sending_accounts=[sending_account],
+            steps=instantly_steps,
+        )
+    except InstantlyError as e:
+        raise ValidationError(f"Instantly campaign creation failed: {e.detail}")
+
+    if not campaign:
+        raise ValidationError("Instantly API returned no campaign (check INSTANTLY_API_KEY)")
+
+    campaign_id = campaign.get("id") or campaign.get("campaign_id")
+
+    # Activate the campaign so it starts sending
+    try:
+        await client.activate_campaign(campaign_id)
+    except InstantlyError as e:
+        # Non-fatal — campaign exists, activation can be retried
+        import logging
+        logging.getLogger(__name__).warning("Campaign activation failed: %s", e)
+
+    # ── Add contact as lead ────────────────────────────────────────────────────
+    try:
+        await client.add_lead(
+            campaign_id=campaign_id,
+            email=contact.email,
+            first_name=contact.first_name or "",
+            last_name=contact.last_name or "",
+            company_name=company_name,
+            job_title=contact.title or "",
+            linkedin_url=contact.linkedin_url or "",
+            custom_variables={
+                "persona": seq.persona or "",
+                "conversation_starter": contact.conversation_starter or "",
+            },
+        )
+    except InstantlyError as e:
+        raise ValidationError(f"Failed to add lead to Instantly campaign: {e.detail}")
+
+    # ── Persist campaign ID back to CRM ───────────────────────────────────────
+    now = datetime.utcnow()
+
+    seq.instantly_campaign_id = campaign_id
+    seq.instantly_campaign_status = "active"
+    seq.status = "launched"
+    seq.launched_at = now
+    seq.updated_at = now
+    session.add(seq)
+
+    contact.instantly_campaign_id = campaign_id
+    contact.instantly_status = "pushed"
+    contact.sequence_status = "queued_instantly"
+    contact.updated_at = now
+    session.add(contact)
+
+    # Register our webhook if not already registered
+    if settings.INSTANTLY_WEBHOOK_URL:
+        try:
+            await client.ensure_webhook(
+                url=settings.INSTANTLY_WEBHOOK_URL,
+                event_types=[
+                    "email_sent", "email_opened", "email_link_clicked",
+                    "email_bounced", "reply_received", "lead_unsubscribed",
+                    "lead_interested", "lead_not_interested", "lead_meeting_booked",
+                ],
+            )
+        except Exception:
+            pass  # Webhook registration failure is non-fatal
+
+    await session.commit()
+
+    return {
+        "status": "launched",
+        "sequence_id": str(sequence_id),
+        "instantly_campaign_id": campaign_id,
+        "contact_email": contact.email,
+        "steps_count": len(steps),
+        "campaign_name": name,
+    }
+
+
+@router.get("/launch-status/{sequence_id}")
+async def get_launch_status(sequence_id: UUID, session: DBSession):
+    """Fetch live campaign stats from Instantly for a launched sequence."""
+    seq = await session.get(OutreachSequence, sequence_id)
+    if not seq:
+        raise NotFoundError("Sequence not found")
+
+    if not seq.instantly_campaign_id:
+        return {"status": "not_launched"}
+
+    client = InstantlyClient()
+    try:
+        campaign = await client.get_campaign(seq.instantly_campaign_id)
+    except InstantlyError as e:
+        raise ValidationError(f"Failed to fetch campaign from Instantly: {e.detail}")
+
+    return {
+        "sequence_id": str(sequence_id),
+        "instantly_campaign_id": seq.instantly_campaign_id,
+        "campaign": campaign,
+    }
+
+
+# ── Replies ───────────────────────────────────────────────────────────────────
+
+@router.get("/replies/{sequence_id}")
+async def get_replies(sequence_id: UUID, session: DBSession):
+    """Fetch reply emails from Instantly Unibox for a launched sequence."""
+    seq = await session.get(OutreachSequence, sequence_id)
+    if not seq:
+        raise NotFoundError("Sequence not found")
+
+    if not seq.instantly_campaign_id:
+        return {"replies": []}
+
+    contact = await session.get(Contact, seq.contact_id)
+
+    client = InstantlyClient()
+    replies = await client.get_reply_thread(
+        lead_email=contact.email if contact else "",
+        campaign_id=seq.instantly_campaign_id,
+    )
+
+    return {"sequence_id": str(sequence_id), "replies": replies}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _steps_from_legacy(seq: OutreachSequence) -> list:
+    """
+    Convert the legacy email_1/2/3 fields into a list of step-like dicts
+    so they can be pushed to Instantly even if OutreachStep records don't exist yet.
+    Returns simple namespace objects with the needed attributes.
+    """
+    from types import SimpleNamespace
+
+    steps = []
+    pairs = [
+        (seq.subject_1, seq.email_1, 0),
+        (seq.subject_2, seq.email_2, 3),
+        (seq.subject_3, seq.email_3, 7),
+    ]
+    for i, (subject, body, delay) in enumerate(pairs):
+        if body:
+            steps.append(SimpleNamespace(
+                subject=subject,
+                body=body,
+                delay_value=delay,
+                delay_unit="Days",
+                variants=None,
+            ))
+    return steps

@@ -123,7 +123,7 @@ export interface OutreachSequence {
   contact_id: string;
   company_id: string;
   persona?: string;
-  status: "draft" | "approved" | "sent" | "skipped";
+  status: "draft" | "approved" | "launched" | "replied" | "completed" | "paused" | "sent" | "skipped" | "meeting_booked";
   email_1?: string;
   email_2?: string;
   email_3?: string;
@@ -131,8 +131,11 @@ export interface OutreachSequence {
   subject_1?: string;
   subject_2?: string;
   subject_3?: string;
+  instantly_campaign_id?: string;
+  instantly_campaign_status?: string;
   generation_context?: Record<string, unknown>;
   generated_at?: string;
+  launched_at?: string;
   created_at: string;
   updated_at: string;
 }
