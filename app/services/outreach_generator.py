@@ -75,6 +75,7 @@ async def generate_sequence(
     from app.models.contact import Contact
     from app.models.company import Company
     from app.models.outreach import OutreachSequence, OutreachStep
+    from app.models.settings import WorkspaceSettings
     from app.clients.azure_openai import AzureOpenAIClient
 
     # ── Load contact + company ─────────────────────────────────────────────────
@@ -140,6 +141,10 @@ async def generate_sequence(
     session.add(seq)
     await session.flush()  # Flush to get seq.id before creating steps
 
+    # ── Load step delays from workspace settings ──────────────────────────────
+    ws = await session.get(WorkspaceSettings, 1)
+    step_delays = (ws.outreach_step_delays if ws else None) or [0, 3, 7]
+
     # ── Create OutreachStep records (flexible, non-hardcoded) ─────────────────
     # Delete any existing steps for this sequence before regenerating
     existing_steps = await session.execute(
@@ -148,45 +153,26 @@ async def generate_sequence(
     for old_step in existing_steps.scalars().all():
         await session.delete(old_step)
 
-    step_configs = [
-        {
-            "step_number": 1,
-            "subject": seq.subject_1,
-            "body": email1_result,
-            "delay_value": 0,
-            "delay_unit": "Days",
-        },
-        {
-            "step_number": 2,
-            "subject": seq.subject_2,
-            "body": email2_result,
-            "delay_value": 3,
-            "delay_unit": "Days",
-        },
-        {
-            "step_number": 3,
-            "subject": seq.subject_3,
-            "body": email3_result,
-            "delay_value": 7,
-            "delay_unit": "Days",
-        },
-    ]
+    email_bodies = [email1_result, email2_result, email3_result]
+    subjects = [seq.subject_1, seq.subject_2, seq.subject_3]
 
-    for cfg in step_configs:
+    for i, delay in enumerate(step_delays):
+        body = email_bodies[i] if i < len(email_bodies) else email_bodies[-1]
+        subject = subjects[i] if i < len(subjects) else subjects[-1]
         step = OutreachStep(
             sequence_id=seq.id,
-            step_number=cfg["step_number"],
-            subject=cfg["subject"],
-            body=cfg["body"],
-            delay_value=cfg["delay_value"],
-            delay_unit=cfg["delay_unit"],
+            step_number=i + 1,
+            subject=subject,
+            body=body,
+            delay_value=delay,
+            delay_unit="days",
         )
         session.add(step)
 
     await session.commit()
     await session.refresh(seq)
 
-    logger.info(f"Outreach sequence generated for {contact.email} ({persona}) — {len(step_configs)} steps")
+    logger.info(f"Outreach sequence generated for {contact.email} ({persona}) — {len(step_delays)} steps")
     return seq
 
 

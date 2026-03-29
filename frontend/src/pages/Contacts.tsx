@@ -5,10 +5,11 @@ import type { Company, Contact, AngelInvestor, AngelMapping } from "../types";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
-  Building2, Target,
+  Building2, Target, Settings2,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
+import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
 
 type ProspectingTab = "contacts" | "angel-mapping";
@@ -104,6 +105,7 @@ export default function Contacts() {
   const [loading, setLoading] = useState(true);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [showSequenceSettings, setShowSequenceSettings] = useState(false);
 
   // ── Angel mapping state ──────────────────────────────────────────────
   const [mappings, setMappings] = useState<AngelMapping[]>([]);
@@ -268,36 +270,141 @@ export default function Contacts() {
   return (
     <>
       <div className="crm-page contacts-page space-y-6">
-        {/* ── Top bar with tabs ──────────────────────────────────────── */}
-        <div className="crm-panel contacts-toolbar overflow-hidden" style={ANGEL_SURFACE.toolbar}>
-          <div className="flex flex-1 flex-wrap items-stretch gap-3">
-            <ProspectingTabButton
-              active={tab === "contacts"}
-              icon={<Users className="h-4 w-4" />}
-              label="Contacts"
-              description="Stakeholders, personas, and outreach readiness."
-              count={contacts.length}
-              countLabel="people"
-              accent="blue"
+        {/* ── Tab switcher + action bar ──────────────────────────────── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* Row 1 — tab cards */}
+          <div style={{ display: "flex", gap: 12 }}>
+            {/* Contacts tab */}
+            <button
+              type="button"
               onClick={() => handleTabChange("contacts")}
-            />
-            <ProspectingTabButton
-              active={tab === "angel-mapping"}
-              icon={<Network className="h-4 w-4" />}
-              label="Angel Mapping"
-              description="Warm intro paths from investors into target accounts."
-              count={mappings.length}
-              countLabel="paths"
-              accent="teal"
+              style={{
+                flex: 1, display: "flex", alignItems: "center", gap: 14,
+                padding: "16px 20px", borderRadius: 16, cursor: "pointer",
+                border: tab === "contacts" ? "1.5px solid #b8d0f0" : "1.5px solid #e8eef5",
+                background: tab === "contacts"
+                  ? "linear-gradient(135deg, #f0f6ff 0%, #e8f0fb 100%)"
+                  : "#fff",
+                boxShadow: tab === "contacts"
+                  ? "0 4px 16px rgba(23, 80, 137, 0.08)"
+                  : "0 2px 8px rgba(17,34,68,0.04)",
+                transition: "all 0.15s ease",
+                textAlign: "left",
+              }}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: tab === "contacts" ? "#175089" : "#eaf2ff",
+                color: tab === "contacts" ? "#fff" : "#175089",
+              }}>
+                <Users size={17} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Contacts</span>
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
+                    background: tab === "contacts" ? "#175089" : "#e8f0fb",
+                    color: tab === "contacts" ? "#fff" : "#175089",
+                  }}>{contacts.length}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 2 }}>
+                  Stakeholders, personas, and outreach readiness
+                </div>
+              </div>
+            </button>
+
+            {/* Angel Mapping tab */}
+            <button
+              type="button"
               onClick={() => handleTabChange("angel-mapping")}
-            />
+              style={{
+                flex: 1, display: "flex", alignItems: "center", gap: 14,
+                padding: "16px 20px", borderRadius: 16, cursor: "pointer",
+                border: tab === "angel-mapping" ? "1.5px solid #b2e0dc" : "1.5px solid #e8eef5",
+                background: tab === "angel-mapping"
+                  ? "linear-gradient(135deg, #f0faf9 0%, #e6f5f4 100%)"
+                  : "#fff",
+                boxShadow: tab === "angel-mapping"
+                  ? "0 4px 16px rgba(23, 123, 117, 0.08)"
+                  : "0 2px 8px rgba(17,34,68,0.04)",
+                transition: "all 0.15s ease",
+                textAlign: "left",
+              }}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: tab === "angel-mapping" ? "#177b75" : "#e7f7f5",
+                color: tab === "angel-mapping" ? "#fff" : "#177b75",
+              }}>
+                <Network size={17} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Angel Mapping</span>
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
+                    background: tab === "angel-mapping" ? "#177b75" : "#e7f7f5",
+                    color: tab === "angel-mapping" ? "#fff" : "#177b75",
+                  }}>{mappings.length}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 2 }}>
+                  Warm intro paths from investors into target accounts
+                </div>
+              </div>
+            </button>
           </div>
-          <div className="crm-toolbar-actions">
+
+          {/* Row 2 — contextual action bar */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10,
+            background: "#fff", borderRadius: 14,
+            border: "1px solid #e8eef5",
+            padding: "10px 14px",
+            boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
+            flexWrap: "wrap",
+          }}>
             {tab === "contacts" && (
               <>
+                {/* Search — left aligned, grows */}
+                <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+                  <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#94a8bc", pointerEvents: "none" }} />
+                  <input
+                    style={{
+                      width: "100%", height: 38, borderRadius: 10,
+                      border: "1px solid #e0eaf4", background: "#f7fbff",
+                      paddingLeft: 34, paddingRight: 12,
+                      fontSize: 13, color: "#1e3a52", outline: "none",
+                    }}
+                    placeholder="Search people, title, email…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+
+                {/* Sequence Timing */}
                 <button
                   type="button"
-                  className="crm-button soft h-12 px-4 text-[13px] border-[#f2cfd4] text-[#b42336] hover:bg-[#fff6f7]"
+                  title="Sequence timing settings"
+                  onClick={() => setShowSequenceSettings(true)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: "1px solid #d0dcea", background: "#f7fbff",
+                    color: "#2c4a63", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  <Settings2 size={14} />
+                  Sequence Timing
+                </button>
+
+                {/* Clear — danger, right side */}
+                <button
+                  type="button"
                   disabled={resetting}
                   onClick={async () => {
                     if (!window.confirm("Clear all Prospecting contacts, outreach sequences, and contact activities while keeping companies?")) return;
@@ -310,39 +417,50 @@ export default function Contacts() {
                       setResetting(false);
                     }
                   }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: "1px solid #fad2d6", background: "#fff8f8",
+                    color: "#b42336", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                    opacity: resetting ? 0.6 : 1,
+                  }}
                 >
-                  {resetting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertCircle className="h-3.5 w-3.5" />}
-                  Clear Prospecting
+                  {resetting ? <Loader2 size={13} className="animate-spin" /> : <AlertCircle size={13} />}
+                  Clear
                 </button>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8094a8] pointer-events-none" />
-                  <input
-                    className="h-12 w-84 max-w-[78vw] rounded-xl border border-[#d7e2ee] bg-white pl-10 pr-4 text-[14px] placeholder-[#92a4b8] outline-none focus:border-[#c2d3e5]"
-                    placeholder="Search people, title, email"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
               </>
             )}
+
             {tab === "angel-mapping" && (
               <>
-                <button
-                  onClick={() => setShowAddInvestor(true)}
-                  className="crm-button soft h-12 px-4 text-[13px]"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add Investor
-                </button>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8094a8] pointer-events-none" />
+                <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+                  <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#94a8bc", pointerEvents: "none" }} />
                   <input
-                    className="h-12 w-84 max-w-[78vw] rounded-xl border border-[#d7e2ee] bg-white pl-10 pr-4 text-[14px] placeholder-[#92a4b8] outline-none focus:border-[#c2d3e5]"
-                    placeholder="Search company, prospect, angel..."
+                    style={{
+                      width: "100%", height: 38, borderRadius: 10,
+                      border: "1px solid #e0eaf4", background: "#f7fbff",
+                      paddingLeft: 34, paddingRight: 12,
+                      fontSize: 13, color: "#1e3a52", outline: "none",
+                    }}
+                    placeholder="Search company, prospect, angel…"
                     value={angelSearch}
                     onChange={(e) => setAngelSearch(e.target.value)}
                   />
                 </div>
+                <button
+                  onClick={() => setShowAddInvestor(true)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: "1px solid #b2e0dc", background: "#f0faf9",
+                    color: "#177b75", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  <Plus size={14} />
+                  Add Investor
+                </button>
               </>
             )}
           </div>
@@ -354,61 +472,108 @@ export default function Contacts() {
         {tab === "contacts" && (
           <>
             {/* Filters */}
-            <div className="crm-panel px-6 py-4">
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <select className="h-11 min-w-[170px] px-3 text-[13px]" value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
-                    <option value="">All companies</option>
-                    {companyOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                  <select className="h-11 min-w-[150px] px-3 text-[13px]" value={personaFilter} onChange={(e) => setPersonaFilter(e.target.value)}>
-                    <option value="">All personas</option>
-                    <option value="economic_buyer">Economic Buyer</option>
-                    <option value="champion">Champion</option>
-                    <option value="technical_evaluator">Technical Evaluator</option>
-                    <option value="unknown">Unknown</option>
-                  </select>
-                  <select className="h-11 min-w-[150px] px-3 text-[13px]" value={laneFilter} onChange={(e) => setLaneFilter(e.target.value)}>
-                    <option value="">All lanes</option>
-                    <option value="warm_intro">Warm Intro</option>
-                    <option value="event_follow_up">Event Follow-up</option>
-                    <option value="cold_operator">Cold Operator</option>
-                    <option value="cold_strategic">Cold Strategic</option>
-                  </select>
-                  <select className="h-11 min-w-[150px] px-3 text-[13px]" value={sequenceFilter} onChange={(e) => setSequenceFilter(e.target.value)}>
-                    <option value="">All sequence states</option>
-                    <option value="research_needed">Research Needed</option>
-                    <option value="ready">Ready</option>
-                    <option value="queued_instantly">Queued in Instantly</option>
-                    <option value="sent">Sent</option>
-                    <option value="replied">Replied</option>
-                    <option value="meeting_booked">Meeting Booked</option>
-                  </select>
-                  <select className="h-11 min-w-[145px] px-3 text-[13px]" value={emailFilter} onChange={(e) => setEmailFilter(e.target.value)}>
-                    <option value="">All email states</option>
-                    <option value="has_email">Has email</option>
-                    <option value="missing_email">Missing email</option>
-                    <option value="verified">Verified</option>
-                    <option value="unverified">Unverified</option>
-                  </select>
+            {(() => {
+              const hasFilters = !!(companyFilter || personaFilter || laneFilter || sequenceFilter || emailFilter || search);
+              const selectStyle = (active: boolean): CSSProperties => ({
+                appearance: "none" as const,
+                WebkitAppearance: "none" as const,
+                height: 36, paddingLeft: 12, paddingRight: 30,
+                borderRadius: 9,
+                border: active ? "1.5px solid #175089" : "1px solid #dce8f4",
+                background: active ? "#eef5ff" : "#f7fbff",
+                color: active ? "#175089" : "#4a6580",
+                fontSize: 13, fontWeight: active ? 600 : 500,
+                cursor: "pointer", outline: "none",
+                minWidth: 0,
+              });
+              return (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                  background: "#fff", borderRadius: 14,
+                  border: "1px solid #e8eef5",
+                  padding: "10px 14px",
+                  boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
+                }}>
+                  {/* Selects */}
+                  {[
+                    {
+                      value: companyFilter, onChange: setCompanyFilter,
+                      options: [["", "All companies"], ...companyOptions.map(o => [o, o])],
+                    },
+                    {
+                      value: personaFilter, onChange: setPersonaFilter,
+                      options: [["", "All personas"], ["economic_buyer", "Economic Buyer"], ["champion", "Champion"], ["technical_evaluator", "Tech Evaluator"], ["unknown", "Unknown"]],
+                    },
+                    {
+                      value: laneFilter, onChange: setLaneFilter,
+                      options: [["", "All lanes"], ["warm_intro", "Warm Intro"], ["event_follow_up", "Event Follow-up"], ["cold_operator", "Cold Operator"], ["cold_strategic", "Cold Strategic"]],
+                    },
+                    {
+                      value: sequenceFilter, onChange: setSequenceFilter,
+                      options: [["", "All sequence states"], ["research_needed", "Research Needed"], ["ready", "Ready"], ["queued_instantly", "Queued — Instantly"], ["sent", "Sent"], ["replied", "Replied"], ["meeting_booked", "Meeting Booked"]],
+                    },
+                    {
+                      value: emailFilter, onChange: setEmailFilter,
+                      options: [["", "All email states"], ["has_email", "Has email"], ["missing_email", "Missing email"], ["verified", "Verified"], ["unverified", "Unverified"]],
+                    },
+                  ].map((f, i) => (
+                    <div key={i} style={{ position: "relative", flexShrink: 0 }}>
+                      <select
+                        value={f.value}
+                        onChange={(e) => f.onChange(e.target.value)}
+                        style={selectStyle(!!f.value)}
+                      >
+                        {(f.options as [string, string][]).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                      <ChevronDown
+                        size={13}
+                        style={{
+                          position: "absolute", right: 9, top: "50%",
+                          transform: "translateY(-50%)",
+                          color: f.value ? "#175089" : "#94a8bc",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    </div>
+                  ))}
+
+                  {/* Divider */}
+                  <div style={{ flex: 1 }} />
+
+                  {/* Count */}
+                  <span style={{
+                    fontSize: 12, fontWeight: 600, color: "#4a6580",
+                    background: "#f0f5fb", border: "1px solid #dce8f4",
+                    borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap",
+                  }}>
+                    {filtered.length} shown
+                  </span>
+
+                  {/* Reset — only when filters active */}
+                  {hasFilters && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearch(""); setCompanyFilter(""); setPersonaFilter("");
+                        setLaneFilter(""); setSequenceFilter(""); setEmailFilter("");
+                      }}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        height: 34, padding: "0 12px", borderRadius: 9,
+                        border: "1px solid #dce8f4", background: "#fff",
+                        color: "#4a6580", fontSize: 12, fontWeight: 600,
+                        cursor: "pointer", whiteSpace: "nowrap",
+                      }}
+                    >
+                      <XCircle size={12} />
+                      Reset
+                    </button>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className="crm-chip">{filtered.length} shown</span>
-                  <button
-                    type="button"
-                    className="crm-button soft h-11 px-4 text-[13px]"
-                    onClick={() => {
-                      setSearch(""); setCompanyFilter(""); setPersonaFilter("");
-                      setLaneFilter(""); setSequenceFilter(""); setEmailFilter("");
-                    }}
-                  >
-                    Reset filters
-                  </button>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Contacts Table */}
             {loading ? (
@@ -885,6 +1050,12 @@ export default function Contacts() {
 
       {/* Outreach drawer (contacts tab) */}
       <OutreachDrawer contact={selectedContact} onClose={() => setSelectedContact(null)} />
+
+      {/* Global sequence timing settings */}
+      <SequenceSettingsModal
+        open={showSequenceSettings}
+        onClose={() => setShowSequenceSettings(false)}
+      />
 
       {/* Add Investor modal */}
       {showAddInvestor && (

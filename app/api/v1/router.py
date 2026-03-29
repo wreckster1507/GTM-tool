@@ -24,6 +24,7 @@ from app.api.v1.endpoints import (
     outreach,
     prospecting,
     sales_resources,
+    settings,
     signals,
     webhooks,
     workspace,
@@ -50,3 +51,4 @@ router.include_router(custom_demo.router)
 router.include_router(sales_resources.router)
 router.include_router(account_sourcing.router)
 router.include_router(angel_mapping.router)
+router.include_router(settings.router)

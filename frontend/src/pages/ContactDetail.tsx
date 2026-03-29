@@ -100,9 +100,9 @@ export default function ContactDetail() {
     <>
       <div className="contact-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="flex items-center justify-between gap-3">
-          <button className="crm-button soft" onClick={() => navigate("/contacts")}>
+          <button className="crm-button soft" onClick={() => navigate(-1)}>
             <ArrowLeft size={14} />
-            Back to Contacts
+            Back
           </button>
         </div>
 

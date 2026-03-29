@@ -811,3 +811,13 @@ export const assignmentsApi = {
       body: JSON.stringify({ ids, user_id: userId }),
     }),
 };
+
+export const settingsApi = {
+  getOutreach: () =>
+    request<{ step_delays: number[]; steps_count: number }>("/api/v1/settings/outreach"),
+  updateOutreach: (step_delays: number[]) =>
+    request<{ step_delays: number[]; steps_count: number }>("/api/v1/settings/outreach", {
+      method: "PATCH",
+      body: JSON.stringify({ step_delays }),
+    }),
+};

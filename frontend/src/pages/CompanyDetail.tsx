@@ -288,9 +288,9 @@ export default function CompanyDetail() {
     <>
       <div className="crm-page company-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="flex flex-wrap items-center justify-between gap-3 company-detail-top-actions">
-          <button onClick={() => navigate("/companies")} className="crm-button soft">
+          <button onClick={() => navigate(-1)} className="crm-button soft">
             <ArrowLeft className="h-3.5 w-3.5" />
-            Back to Companies
+            Back
           </button>
           <div className="flex flex-wrap items-center gap-2">
             {enrichMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{enrichMsg}</span>}

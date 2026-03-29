@@ -1,5 +1,5 @@
 import { CSSProperties, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Building2,
@@ -296,6 +296,7 @@ function SequenceStepCard({
 
 export default function AccountSourcingContactDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [contact, setContact] = useState<Contact | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
@@ -447,9 +448,9 @@ export default function AccountSourcingContactDetail() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
             <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <Link to={company ? `/account-sourcing/${company.id}` : "/account-sourcing"} style={{ color: colors.primary, display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, textDecoration: "none" }}>
-                  <ArrowLeft size={15} /> {company ? "Back to account" : "Back to sourcing"}
-                </Link>
+                <button onClick={() => navigate(-1)} style={{ background: "none", border: "none", padding: 0, color: colors.primary, display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: "inherit" }}>
+                  <ArrowLeft size={15} /> Back
+                </button>
                 {company ? (
                   <Link to={`/account-sourcing/${company.id}`} style={{ color: colors.sub, textDecoration: "none", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
                     <Building2 size={13} /> {company.name}
