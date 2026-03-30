@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     account_sourcing,
     activities,
+    aircall,
     angel_mapping,
     assignments,
     auth,
@@ -52,3 +53,4 @@ router.include_router(sales_resources.router)
 router.include_router(account_sourcing.router)
 router.include_router(angel_mapping.router)
 router.include_router(settings.router)
+router.include_router(aircall.router)

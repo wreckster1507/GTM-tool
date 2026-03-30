@@ -124,7 +124,14 @@ export default function ContactDetail() {
                   <span className="inline-flex items-center gap-1"><Mail size={13} />{contact.email}</span>
                 )}
                 {contact.phone && (
-                  <span className="inline-flex items-center gap-1"><Phone size={13} />{contact.phone}</span>
+                  <button
+                    onClick={() => window.__aircallDial?.(contact.phone!, `${contact.first_name} ${contact.last_name}`)}
+                    className="inline-flex items-center gap-1 hover:text-[#16a34a] transition-colors cursor-pointer"
+                    title={`Call ${contact.phone}`}
+                    style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit" }}
+                  >
+                    <Phone size={13} />{contact.phone}
+                  </button>
                 )}
                 {contact.linkedin_url && (
                   <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#2a5f8c] hover:text-[#ff6b35]">

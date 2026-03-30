@@ -102,13 +102,22 @@ export interface Paginated<T> {
 export interface Deal {
   id: string;
   company_id?: string;
+  assigned_to_id?: string;
   name: string;
+  pipeline_type: string;
   stage: string;
+  priority: string;
   value?: number;
   close_date_est?: string;
   health: string;
   health_score?: number;
   qualification?: Record<string, unknown>;
+  tags: string[];
+  department?: string;
+  geography?: string;
+  source?: string;
+  description?: string;
+  next_step?: string;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;
@@ -116,6 +125,22 @@ export interface Deal {
   owner_id?: string;
   created_at: string;
   updated_at: string;
+  // Joined fields from board/detail queries
+  company_name?: string;
+  assigned_rep_name?: string;
+  contact_count?: number;
+}
+
+export interface DealContact {
+  deal_id: string;
+  contact_id: string;
+  role?: string;
+  added_at: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  title?: string;
+  persona?: string;
 }
 
 export interface OutreachSequence {
@@ -140,6 +165,20 @@ export interface OutreachSequence {
   updated_at: string;
 }
 
+export interface OutreachStep {
+  id: string;
+  sequence_id: string;
+  step_number: number;
+  subject?: string;
+  body: string;
+  delay_value: number;
+  delay_unit: string;
+  variants?: Array<Record<string, unknown>> | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Activity {
   id: string;
   deal_id?: string;
@@ -150,6 +189,13 @@ export interface Activity {
   ai_summary?: string;
   event_metadata?: Record<string, unknown>;
   created_at: string;
+  created_by_id?: string;
+  user_name?: string;
+  call_id?: string;
+  call_duration?: number;
+  call_outcome?: string;
+  recording_url?: string;
+  aircall_user_name?: string;
 }
 
 export interface Signal {

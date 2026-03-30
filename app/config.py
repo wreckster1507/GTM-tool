@@ -82,5 +82,11 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
 
+    # Aircall
+    AIRCALL_API_ID: str = ""
+    AIRCALL_API_TOKEN: str = ""
+    AIRCALL_WEBHOOK_URL: str = ""
+    AIRCALL_DEFAULT_NUMBER: str = ""  # E.164 digits of the default outbound number
+
 
 settings = Settings()

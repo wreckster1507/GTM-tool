@@ -5,7 +5,7 @@ import type { Company, Contact, AngelInvestor, AngelMapping } from "../types";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
-  Building2, Target, Settings2,
+  Building2, Target, Settings2, Phone,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
@@ -668,6 +668,20 @@ export default function Contacts() {
                               >
                                 <Sparkles className="h-3.5 w-3.5" />Outreach
                               </button>
+                              {c.phone && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.__aircallDial) {
+                                      window.__aircallDial(c.phone!, `${c.first_name} ${c.last_name}`);
+                                    }
+                                  }}
+                                  className="flex items-center justify-center h-12 w-12 rounded-xl text-[#175089] hover:text-[#fff] hover:bg-[#175089] transition-colors border border-[#c8d9ec]"
+                                  title={`Call ${c.phone}`}
+                                >
+                                  <Phone className="h-4 w-4" />
+                                </button>
+                              )}
                               <button
                                 onClick={async (e) => {
                                   e.stopPropagation();

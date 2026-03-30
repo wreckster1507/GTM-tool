@@ -1,10 +1,10 @@
 import { CSSProperties, useEffect, useMemo, useState } from "react";
 import { outreachApi } from "../../lib/api";
-import type { Contact, OutreachSequence } from "../../types";
+import type { Contact, OutreachSequence, OutreachStep } from "../../types";
 import {
   X, Sparkles, Copy, CheckCheck, Linkedin, Mail, RefreshCw,
   Send, Rocket, CheckCircle, Clock, MessageSquare, ExternalLink, ChevronDown, ChevronUp,
-  Pencil, Check,
+  Pencil, Check, Plus, Trash2,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../../lib/utils";
 
@@ -13,14 +13,21 @@ interface Props {
   onClose: () => void;
 }
 
-type TabKey = "email_1" | "email_2" | "email_3" | "linkedin";
+type TabKey = `step_${number}` | "linkedin";
 
-const TABS: { key: TabKey; label: string; day: string }[] = [
-  { key: "email_1", label: "Email 1", day: "Day 0" },
-  { key: "email_2", label: "Follow-up", day: "Day 3" },
-  { key: "email_3", label: "Final", day: "Day 7" },
-  { key: "linkedin", label: "LinkedIn", day: "" },
-];
+const LINKEDIN_TAB = "linkedin";
+const MAX_SEQUENCE_STEPS = 6;
+
+function stepTabKey(stepNumber: number): `step_${number}` {
+  return `step_${stepNumber}`;
+}
+
+function getStepNumberFromTab(tab: TabKey): number | null {
+  if (tab === LINKEDIN_TAB) return null;
+  const raw = tab.replace("step_", "");
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 const PERSONA_LABEL: Record<string, string> = {
   economic_buyer: "Economic Buyer",
@@ -60,7 +67,8 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
   const isOpen = !!contact;
 
   const [seq, setSeq] = useState<OutreachSequence | null>(null);
-  const [tab, setTab] = useState<TabKey>("email_1");
+  const [steps, setSteps] = useState<OutreachStep[]>([]);
+  const [tab, setTab] = useState<TabKey>(stepTabKey(1));
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -77,6 +85,9 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
   const [editBody, setEditBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
+  const [savingTiming, setSavingTiming] = useState(false);
+  const [timingError, setTimingError] = useState("");
+  const [timingOk, setTimingOk] = useState(false);
 
   // Replies state
   const [replies, setReplies] = useState<Array<{ subject?: string; body?: string; from_email?: string; timestamp?: string; created_at?: string }>>([]);
@@ -86,6 +97,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
   useEffect(() => {
     if (!contact) {
       setSeq(null);
+      setSteps([]);
       setError("");
       setLaunchError("");
       setReplies([]);
@@ -93,13 +105,14 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
     }
 
     setLoading(true);
-    setTab("email_1");
+    setTab(stepTabKey(1));
 
     outreachApi
       .getSequence(contact.id)
       .then((s) => {
         setSeq(s);
         setError("");
+        void loadSteps(s.id, s);
         // Auto-load replies if already launched
         if (s.instantly_campaign_id) {
           loadReplies(s.id);
@@ -107,10 +120,73 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
       })
       .catch(() => {
         setSeq(null);
+        setSteps([]);
         setError("");
       })
       .finally(() => setLoading(false));
   }, [contact?.id]);
+
+  const loadSteps = async (sequenceId: string, currentSeq?: OutreachSequence | null) => {
+    try {
+      const loaded = await outreachApi.getSteps(sequenceId);
+      if (loaded.length > 0) {
+        setSteps(loaded);
+        return;
+      }
+    } catch {
+      // Fall back to legacy timing if step records are not available yet.
+    }
+
+    const source = currentSeq ?? seq;
+    if (!source) {
+      setSteps([]);
+      return;
+    }
+
+    const fallback: OutreachStep[] = [
+      {
+        id: `${source.id}-1`,
+        sequence_id: source.id,
+        step_number: 1,
+        subject: source.subject_1,
+        body: source.email_1 ?? "",
+        delay_value: 0,
+        delay_unit: "days",
+        variants: null,
+        status: "draft",
+        created_at: source.created_at,
+        updated_at: source.updated_at,
+      },
+      {
+        id: `${source.id}-2`,
+        sequence_id: source.id,
+        step_number: 2,
+        subject: source.subject_2,
+        body: source.email_2 ?? "",
+        delay_value: 3,
+        delay_unit: "days",
+        variants: null,
+        status: "draft",
+        created_at: source.created_at,
+        updated_at: source.updated_at,
+      },
+      {
+        id: `${source.id}-3`,
+        sequence_id: source.id,
+        step_number: 3,
+        subject: source.subject_3,
+        body: source.email_3 ?? "",
+        delay_value: 7,
+        delay_unit: "days",
+        variants: null,
+        status: "draft",
+        created_at: source.created_at,
+        updated_at: source.updated_at,
+      },
+    ].filter((step) => !!step.body);
+
+    setSteps(fallback);
+  };
 
   const loadReplies = async (sequenceId: string) => {
     setLoadingReplies(true);
@@ -131,7 +207,8 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
     try {
       const result = await outreachApi.generate(contact.id);
       setSeq(result);
-      setTab("email_1");
+      await loadSteps(result.id, result);
+      setTab(stepTabKey(1));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Generation failed");
     } finally {
@@ -148,6 +225,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
       // Reload the sequence to get updated campaign ID and status
       const updated = await outreachApi.getSequence(contact!.id);
       setSeq(updated);
+      await loadSteps(updated.id, updated);
       // Load replies (will be empty initially but sets up the section)
       if (updated.instantly_campaign_id) {
         await loadReplies(updated.id);
@@ -159,23 +237,75 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
     }
   };
 
+  const sortedSteps = useMemo(
+    () => [...steps].sort((a, b) => a.step_number - b.step_number),
+    [steps]
+  );
+  const currentStepNumber = getStepNumberFromTab(tab);
+  const currentStep = currentStepNumber == null
+    ? null
+    : sortedSteps.find((step) => step.step_number === currentStepNumber) ?? null;
+
   const subject = useMemo(() => {
-    if (!seq) return null;
-    if (tab === "email_1") return seq.subject_1 ?? null;
-    if (tab === "email_2") return seq.subject_2 ?? null;
-    if (tab === "email_3") return seq.subject_3 ?? null;
-    return null;
-  }, [seq, tab]);
+    if (tab === LINKEDIN_TAB) return null;
+    return currentStep?.subject ?? null;
+  }, [currentStep, tab]);
 
   const body = useMemo(() => {
     if (!seq) return "";
-    let text = "";
-    if (tab === "email_1") text = seq.email_1 ?? "";
-    else if (tab === "email_2") text = seq.email_2 ?? "";
-    else if (tab === "email_3") text = seq.email_3 ?? "";
-    else text = seq.linkedin_message ?? "";
+    const text = tab === LINKEDIN_TAB ? (seq.linkedin_message ?? "") : (currentStep?.body ?? "");
     return text.replace(/^Subject:.*\n\n?/i, "").trim();
-  }, [seq, tab]);
+  }, [currentStep, seq, tab]);
+
+  const tabDayLabel = currentStep ? `Day ${currentStep.delay_value}` : "";
+  const visibleTimingSteps = sortedSteps;
+
+  const handleDelayChange = (stepId: string, rawValue: string) => {
+    const nextValue = Math.max(0, Number.parseInt(rawValue || "0", 10) || 0);
+
+    setSteps((current) =>
+      current.map((step) =>
+        step.id === stepId
+          ? { ...step, delay_value: nextValue }
+          : step
+      )
+    );
+    setTimingError("");
+    setTimingOk(false);
+  };
+
+  const handleSaveTiming = async () => {
+    if (!seq) return;
+    const editableSteps = visibleTimingSteps;
+
+    if (editableSteps.length === 0) return;
+
+    for (let i = 1; i < editableSteps.length; i += 1) {
+      if (editableSteps[i].delay_value < editableSteps[i - 1].delay_value) {
+        setTimingError("Each next step must be on the same day or later than the previous one.");
+        return;
+      }
+    }
+
+    setSavingTiming(true);
+    setTimingError("");
+    try {
+      const updatedSteps = await Promise.all(
+        editableSteps.map((step) =>
+          outreachApi.updateStep(step.id, { delay_value: step.delay_value })
+        )
+      );
+      setSteps((current) =>
+        current.map((step) => updatedSteps.find((item) => item.id === step.id) ?? step)
+      );
+      setTimingOk(true);
+      setTimeout(() => setTimingOk(false), 2500);
+    } catch (e: unknown) {
+      setTimingError(e instanceof Error ? e.message : "Could not save sequence timing");
+    } finally {
+      setSavingTiming(false);
+    }
+  };
 
   const handleCopy = async () => {
     const full = subject ? `Subject: ${subject}\n\n${body}` : body;
@@ -193,16 +323,30 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
   };
 
   const handleSave = async () => {
-    if (!seq) return;
+    if (!seq || !currentStep || tab === LINKEDIN_TAB) return;
     setSaving(true);
-    const subjectKey = tab === "email_1" ? "subject_1" : tab === "email_2" ? "subject_2" : "subject_3";
-    const bodyKey = tab === "email_1" ? "email_1" : tab === "email_2" ? "email_2" : tab === "email_3" ? "email_3" : "linkedin_message";
     try {
-      const updated = await outreachApi.updateSequence(seq.id, {
-        [subjectKey]: editSubject,
-        [bodyKey]: editBody,
+      await outreachApi.updateStep(currentStep.id, {
+        subject: editSubject,
+        body: editBody,
       });
-      setSeq(updated);
+      setSteps((current) =>
+        current.map((step) =>
+          step.id === currentStep.id
+            ? { ...step, subject: editSubject, body: editBody }
+            : step
+        )
+      );
+
+      if (currentStep.step_number <= 3) {
+        const suffix = String(currentStep.step_number) as "1" | "2" | "3";
+        const updated = await outreachApi.updateSequence(seq.id, {
+          [`subject_${suffix}`]: editSubject,
+          [`email_${suffix}`]: editBody,
+        } as Partial<Record<"email_1" | "email_2" | "email_3" | "subject_1" | "subject_2" | "subject_3", string>>);
+        setSeq(updated);
+      }
+
       setEditing(false);
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2500);
@@ -219,7 +363,55 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
     setSaveOk(false);
   };
 
-  const isLaunched = !!seq?.instantly_campaign_id;
+  const isLaunched = !!(seq?.instantly_campaign_id || seq?.launched_at);
+  const canEditTiming = !!seq && !isLaunched;
+
+  const handleAddTimingStep = async () => {
+    if (!seq || !canEditTiming || visibleTimingSteps.length >= MAX_SEQUENCE_STEPS) return;
+    const last = visibleTimingSteps[visibleTimingSteps.length - 1];
+    if (!last) return;
+
+    setSavingTiming(true);
+    setTimingError("");
+    try {
+      const created = await outreachApi.addStep(seq.id, {
+        step_number: last.step_number + 1,
+        subject: last.subject ?? "",
+        body: last.body,
+        delay_value: last.delay_value + 3,
+        delay_unit: last.delay_unit || "days",
+        variants: last.variants ?? null,
+      });
+      setSteps((current) => [...current, created]);
+      setTab(stepTabKey(created.step_number));
+      setTimingOk(true);
+      setTimeout(() => setTimingOk(false), 2500);
+    } catch (e: unknown) {
+      setTimingError(e instanceof Error ? e.message : "Could not add sequence step");
+    } finally {
+      setSavingTiming(false);
+    }
+  };
+
+  const handleRemoveTimingStep = async (stepId: string) => {
+    if (!canEditTiming || visibleTimingSteps.length <= 1) return;
+    setSavingTiming(true);
+    setTimingError("");
+    try {
+      await outreachApi.deleteStep(stepId);
+      const remaining = visibleTimingSteps.filter((step) => step.id !== stepId);
+      setSteps((current) => current.filter((step) => step.id !== stepId));
+      if (currentStep?.id === stepId && remaining.length > 0) {
+        setTab(stepTabKey(remaining[remaining.length - 1].step_number));
+      }
+      setTimingOk(true);
+      setTimeout(() => setTimingOk(false), 2500);
+    } catch (e: unknown) {
+      setTimingError(e instanceof Error ? e.message : "Could not remove sequence step");
+    } finally {
+      setSavingTiming(false);
+    }
+  };
 
   return (
     <>
@@ -343,35 +535,148 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
               </div>
 
               {/* ── Step timeline ───────────────────────────────────────────── */}
-              <StepTimeline seq={seq} />
+              <StepTimeline seq={seq} steps={steps} />
 
               {/* ── Email tabs ──────────────────────────────────────────────── */}
-              <div style={{ ...panel, padding: 8, display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6 }}>
-                {TABS.map((t) => (
+              <div style={{ ...panel, padding: 8, display: "grid", gridTemplateColumns: `repeat(${Math.max(visibleTimingSteps.length + 1, 2)}, minmax(0, 1fr))`, gap: 6 }}>
+                {visibleTimingSteps.map((step, index) => {
+                  const stepKey = stepTabKey(step.step_number);
+                  const label =
+                    index === 0 ? "Email 1" :
+                    index === 1 ? "Follow-up" :
+                    index === 2 ? "Final" :
+                    `Step ${step.step_number}`;
+                  return (
                   <button
-                    key={t.key}
-                    onClick={() => handleTabChange(t.key)}
+                    key={step.id}
+                    onClick={() => handleTabChange(stepKey)}
                     style={{
                       border: 0, borderRadius: 10, padding: "10px 8px",
                       cursor: "pointer", fontWeight: 700, fontSize: 13,
-                      color: tab === t.key ? palette.text : palette.sub,
-                      background: tab === t.key ? "#ffffff" : "transparent",
-                      boxShadow: tab === t.key ? "0 1px 5px rgba(30,50,80,0.15)" : "none",
+                      color: tab === stepKey ? palette.text : palette.sub,
+                      background: tab === stepKey ? "#ffffff" : "transparent",
+                      boxShadow: tab === stepKey ? "0 1px 5px rgba(30,50,80,0.15)" : "none",
                       display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
                       flexDirection: "column",
                     }}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                      {t.key === "linkedin" ? <Linkedin size={13} /> : <Mail size={13} />}
-                      {t.label}
+                      <Mail size={13} />
+                      {label}
                     </span>
-                    {t.day && <span style={{ fontSize: 10, fontWeight: 600, color: palette.muted }}>{t.day}</span>}
+                    <span style={{ fontSize: 10, fontWeight: 600, color: palette.muted }}>
+                      Day {step.delay_value}
+                    </span>
                   </button>
-                ))}
+                )})}
+                <button
+                  key={LINKEDIN_TAB}
+                  onClick={() => handleTabChange(LINKEDIN_TAB)}
+                  style={{
+                    border: 0, borderRadius: 10, padding: "10px 8px",
+                    cursor: "pointer", fontWeight: 700, fontSize: 13,
+                    color: tab === LINKEDIN_TAB ? palette.text : palette.sub,
+                    background: tab === LINKEDIN_TAB ? "#ffffff" : "transparent",
+                    boxShadow: tab === LINKEDIN_TAB ? "0 1px 5px rgba(30,50,80,0.15)" : "none",
+                    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    flexDirection: "column",
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <Linkedin size={13} />
+                    LinkedIn
+                  </span>
+                </button>
               </div>
 
+              {tab !== LINKEDIN_TAB && (
+                <div style={{ ...panel, padding: "14px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: palette.text, fontSize: 14 }}>Sequence timing override</div>
+                      <div style={{ marginTop: 4, color: palette.muted, fontSize: 12 }}>
+                        Set timing just for this prospect before the sequence starts. You can add or remove touches here.
+                      </div>
+                    </div>
+                    {!canEditTiming && (
+                      <span style={{ fontSize: 12, color: palette.green, fontWeight: 700 }}>
+                        Locked after launch
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(visibleTimingSteps.length, 1), 3)}, minmax(0, 1fr))`, gap: 10 }}>
+                    {visibleTimingSteps.map((step, index) => (
+                      <label key={step.id} style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: palette.sub }}>
+                          Step {index + 1}
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={step.delay_value}
+                          disabled={!canEditTiming}
+                          onChange={(e) => handleDelayChange(step.id, e.target.value)}
+                          style={{
+                            width: "100%",
+                            boxSizing: "border-box",
+                            border: `1px solid ${palette.line}`,
+                            borderRadius: 8,
+                            padding: "9px 12px",
+                            fontSize: 14,
+                            color: palette.text,
+                            fontFamily: "inherit",
+                            outline: "none",
+                            background: canEditTiming ? "#fff" : "#f4f8fc",
+                          }}
+                        />
+                        <span style={{ fontSize: 11, color: palette.muted }}>
+                          Send on Day {step.delay_value}
+                        </span>
+                        {canEditTiming && visibleTimingSteps.length > 1 && index === visibleTimingSteps.length - 1 && (
+                          <button
+                            onClick={() => void handleRemoveTimingStep(step.id)}
+                            type="button"
+                            style={{ ...copyBtn, justifyContent: "center" }}
+                          >
+                            <Trash2 size={12} />
+                            Remove last step
+                          </button>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 12, color: palette.blue }}>
+                      {tabDayLabel ? `This touch is currently set for ${tabDayLabel}. Changes here affect only this prospect.` : "Changes here affect only this prospect."}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {timingError && <span style={{ fontSize: 12, color: "#b42336" }}>{timingError}</span>}
+                      {timingOk && <span style={{ fontSize: 12, color: palette.green, fontWeight: 700 }}>Timing saved</span>}
+                      {canEditTiming && visibleTimingSteps.length < MAX_SEQUENCE_STEPS && (
+                        <button onClick={() => void handleAddTimingStep()} style={ghostBtn}>
+                          <Plus size={13} />
+                          Add step
+                        </button>
+                      )}
+                      <button
+                        onClick={handleSaveTiming}
+                        disabled={!canEditTiming || savingTiming}
+                        style={{
+                          ...ghostBtn,
+                          opacity: canEditTiming ? 1 : 0.6,
+                          cursor: canEditTiming ? "pointer" : "not-allowed",
+                        }}
+                      >
+                        {savingTiming ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                        {savingTiming ? "Saving..." : "Save timing"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Subject */}
-              {tab !== "linkedin" && (subject || editing) && (
+              {tab !== LINKEDIN_TAB && (subject || editing) && (
                 <div style={{ ...panel, padding: "12px 14px" }}>
                   <div style={{ color: palette.muted, fontSize: 11, letterSpacing: 0.4, fontWeight: 700, marginBottom: 6 }}>SUBJECT</div>
                   {editing ? (
@@ -434,7 +739,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
               </div>
 
               {/* LinkedIn profile link */}
-              {tab === "linkedin" && contact?.linkedin_url && (
+              {tab === LINKEDIN_TAB && contact?.linkedin_url && (
                 <a
                   href={contact.linkedin_url}
                   target="_blank" rel="noopener noreferrer"
@@ -445,7 +750,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
               )}
 
               {/* ── Launch section ──────────────────────────────────────────── */}
-              {tab !== "linkedin" && (
+              {tab !== LINKEDIN_TAB && (
                 isLaunched ? (
                   // Already launched — show campaign info
                   <div style={{ ...panel, padding: "14px 16px", borderLeft: `3px solid ${palette.green}` }}>
@@ -504,7 +809,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
                         background: palette.blueSoft, border: `1px solid ${palette.blueBorder}`,
                         fontSize: 12, color: palette.blue,
                       }}>
-                        Sends Day 0 → Day 3 → Day 7 · Auto-stops on reply · Opens & clicks tracked
+                        Sends {visibleTimingSteps.map((step) => `Day ${step.delay_value}`).join(" -> ")} · Auto-stops on reply · Opens & clicks tracked
                       </div>
 
                       {launchError && (
@@ -591,14 +896,20 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
 
 // ── Step Timeline ─────────────────────────────────────────────────────────────
 
-function StepTimeline({ seq }: { seq: OutreachSequence }) {
-  const steps = [
-    { label: "Initial email", day: "Day 0", body: seq.email_1 },
-    { label: "Follow-up", day: "Day 3", body: seq.email_2 },
-    { label: "Final touch", day: "Day 7", body: seq.email_3 },
-  ];
+function StepTimeline({ seq, steps }: { seq: OutreachSequence; steps: OutreachStep[] }) {
+  const timeline = [...steps]
+    .sort((a, b) => a.step_number - b.step_number)
+    .map((step, index) => ({
+      label:
+        index === 0 ? "Initial email" :
+        index === 1 ? "Follow-up" :
+        index === 2 ? "Final touch" :
+        `Step ${step.step_number}`,
+      day: `Day ${step.delay_value}`,
+      body: step.body,
+    }));
 
-  const isLaunched = !!seq.instantly_campaign_id;
+  const isLaunched = !!(seq.instantly_campaign_id || seq.launched_at);
   const isReplied = seq.status === "replied" || seq.status === "meeting_booked";
 
   return (
@@ -607,7 +918,7 @@ function StepTimeline({ seq }: { seq: OutreachSequence }) {
         SEQUENCE STEPS
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
-        {steps.map((step, i) => {
+        {timeline.map((step, i) => {
           const isReady = !!step.body;
           const isSent = isLaunched && !isReplied;
           const isDone = isReplied;
@@ -630,7 +941,7 @@ function StepTimeline({ seq }: { seq: OutreachSequence }) {
                   <div style={{ fontSize: 10, color: palette.muted }}>{step.day}</div>
                 </div>
               </div>
-              {i < steps.length - 1 && (
+              {i < timeline.length - 1 && (
                 <div style={{
                   height: 2, width: 24, flexShrink: 0, marginBottom: 20,
                   background: isSent || isDone ? palette.accent : palette.line,

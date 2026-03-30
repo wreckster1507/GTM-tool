@@ -27,11 +27,20 @@ class Activity(ActivityBase, table=True):
     event_metadata: Optional[Any] = Field(default=None, sa_column=Column("metadata", JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Call-specific fields (populated by Aircall webhook handler)
+    call_id: Optional[str] = Field(default=None, index=True)
+    call_duration: Optional[int] = None        # seconds
+    call_outcome: Optional[str] = None         # answered | missed | voicemail | failed
+    recording_url: Optional[str] = Field(default=None, sa_column=Column("recording_url", Text))
+    aircall_user_name: Optional[str] = None    # agent name from Aircall
+    created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
+
 
 class ActivityCreate(ActivityBase):
     deal_id: Optional[UUID] = None
     contact_id: Optional[UUID] = None
     event_metadata: Optional[Any] = None
+    created_by_id: Optional[UUID] = None
 
 
 class ActivityRead(ActivityBase):
@@ -40,6 +49,13 @@ class ActivityRead(ActivityBase):
     contact_id: Optional[UUID] = None
     event_metadata: Optional[Any] = None
     created_at: datetime
+    call_id: Optional[str] = None
+    call_duration: Optional[int] = None
+    call_outcome: Optional[str] = None
+    recording_url: Optional[str] = None
+    aircall_user_name: Optional[str] = None
+    created_by_id: Optional[UUID] = None
+    user_name: Optional[str] = None  # joined from users table
 
 
 class ActivityUpdate(SQLModel):

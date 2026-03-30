@@ -14,12 +14,15 @@ Instantly webhook events handled:
   lead_not_interested → update contact label, log activity
   lead_meeting_booked → update sequence_status to "meeting_booked", log activity
 """
+import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Request
 from sqlmodel import select
+
+logger = logging.getLogger(__name__)
 
 from app.core.dependencies import DBSession
 from app.models.activity import Activity
@@ -304,6 +307,161 @@ async def fireflies_webhook(request: Request, session: DBSession) -> dict:
         session.add(activity)
         await session.commit()
     return {"status": "ok", "activity_id": str(activity.id)}
+
+
+# ── Aircall webhook ────────────────────────────────────────────────────────────
+
+@router.post("/aircall")
+async def aircall_webhook(request: Request, session: DBSession) -> dict:
+    """
+    Receive Aircall webhook events and sync them into the CRM as Activity records.
+
+    Aircall sends a `event` field plus a `data` object containing the call details.
+    We match the call to a Contact by phone number, then log an Activity.
+
+    Events handled:
+      call.created       → log "Call started"
+      call.answered      → update activity outcome to "answered"
+      call.ended         → log full summary with duration + recording URL
+      call.voicemail_left → log voicemail activity
+      call.commented     → sync agent note to CRM activity
+      call.missed        → log missed call
+    """
+    payload: Dict[str, Any] = await request.json()
+
+    event = payload.get("event", "")
+    data: Dict[str, Any] = payload.get("data", {})
+
+    aircall_call_id = str(data.get("id", "")) if data.get("id") else None
+    direction = data.get("direction", "outbound")
+    raw_digits = data.get("raw_digits") or data.get("to", "") or ""
+    duration = data.get("duration")  # seconds, present on call.ended
+    recording_url = data.get("recording") or data.get("recording_short_url") or None
+    voicemail_url = data.get("voicemail") or data.get("voicemail_short_url") or None
+
+    # Agent info
+    agent = data.get("user") or {}
+    agent_name = agent.get("name") or agent.get("email") or "Agent"
+    agent_email = agent.get("email") or ""
+
+    # Number dialled / received on
+    number_obj = data.get("number") or {}
+    number_digits = number_obj.get("digits", "")
+    number_name = number_obj.get("name", "")
+
+    # Comment (for call.commented event)
+    comment_text = ""
+    comments = data.get("comments") or []
+    if comments:
+        comment_text = comments[-1].get("content", "")
+
+    # ── Match to a CRM contact by phone number ─────────────────────────────────
+    contact = None
+    if raw_digits:
+        # Try to find contact by phone — strip non-digits for loose match
+        clean = raw_digits.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+        result = await session.execute(
+            select(Contact).where(
+                Contact.phone.isnot(None)
+            ).limit(50)
+        )
+        candidates = result.scalars().all()
+        for c in candidates:
+            c_clean = (c.phone or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+            if c_clean and (c_clean == clean or c_clean.endswith(clean[-9:]) or clean.endswith(c_clean[-9:])):
+                contact = c
+                break
+
+    contact_id = contact.id if contact else None
+
+    # ── Route by event ─────────────────────────────────────────────────────────
+    call_outcome: Optional[str] = None
+    activity_type = "call"
+    source = "aircall"
+
+    if event == "call.created":
+        label = "inbound" if direction == "inbound" else "outbound"
+        content = f"📞 {label.capitalize()} call {'' if direction == 'inbound' else 'to '}{raw_digits} via {number_name or number_digits}"
+        if agent_name:
+            content += f" — {agent_name}"
+
+    elif event == "call.answered":
+        content = f"✅ Call answered — {agent_name} connected with {raw_digits}"
+        call_outcome = "answered"
+
+    elif event == "call.ended":
+        mins = (duration or 0) // 60
+        secs = (duration or 0) % 60
+        duration_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+        missed_reason = data.get("missed_call_reason")
+
+        if missed_reason:
+            call_outcome = "missed"
+            content = f"📵 Missed call from {raw_digits} ({missed_reason})"
+        else:
+            call_outcome = "answered"
+            content = f"📞 Call ended — {duration_str} with {raw_digits}"
+            if agent_name:
+                content += f" ({agent_name})"
+            if recording_url:
+                content += " · Recording available"
+
+    elif event == "call.voicemail_left":
+        call_outcome = "voicemail"
+        content = f"📬 Voicemail left by {raw_digits}"
+        if voicemail_url:
+            recording_url = voicemail_url
+            content += " · Voicemail recording available"
+
+    elif event == "call.missed":
+        call_outcome = "missed"
+        content = f"📵 Missed call from {raw_digits}"
+        if agent_name:
+            content += f" (assigned to {agent_name})"
+
+    elif event == "call.commented":
+        content = f"💬 Call note by {agent_name}: {comment_text}"
+        activity_type = "note"
+
+    elif event == "call.tagged":
+        tags = [t.get("name") for t in (data.get("tags") or []) if t.get("name")]
+        content = f"🏷 Call tagged: {', '.join(tags)}" if tags else "Call tagged"
+
+    else:
+        # Log unknown events for observability
+        content = f"Aircall event [{event}] — {raw_digits or 'unknown number'}"
+
+    # ── Create activity ────────────────────────────────────────────────────────
+    activity = Activity(
+        type=activity_type,
+        source=source,
+        content=content,
+        event_metadata=payload,
+        contact_id=contact_id,
+        call_id=aircall_call_id,
+        call_duration=duration,
+        call_outcome=call_outcome,
+        recording_url=recording_url,
+        aircall_user_name=agent_name or None,
+    )
+    session.add(activity)
+    await session.commit()
+    await session.refresh(activity)
+
+    logger.info(
+        "Aircall webhook: event=%s call_id=%s contact=%s outcome=%s",
+        event, aircall_call_id,
+        str(contact_id) if contact_id else "unmatched",
+        call_outcome,
+    )
+
+    return {
+        "status": "ok",
+        "event": event,
+        "activity_id": str(activity.id),
+        "contact_id": str(contact_id) if contact_id else None,
+        "matched": contact_id is not None,
+    }
 
 
 # ── RB2B webhook ───────────────────────────────────────────────────────────────

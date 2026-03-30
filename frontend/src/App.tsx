@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./lib/AuthContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import Layout from "./components/layout/Layout";
+import AircallPhonePanel from "./components/AircallPhone";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 import Pipeline from "./pages/Pipeline";
@@ -27,6 +28,8 @@ export default function App() {
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
+        {/* Aircall phone widget — mounted once, persists across all pages */}
+        <AircallPhonePanel />
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />

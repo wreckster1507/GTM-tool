@@ -4,6 +4,7 @@ import type {
   Deal,
   Activity,
   OutreachSequence,
+  OutreachStep,
   Signal,
   Meeting,
   Battlecard,
@@ -144,6 +145,8 @@ export const dealsApi = {
     if (stage) params.set("stage", stage);
     return requestList<Deal>(`/api/v1/deals/?${params}`);
   },
+  board: (pipelineType = "deal") =>
+    request<Record<string, Deal[]>>(`/api/v1/deals/board?pipeline_type=${pipelineType}`),
   get: (id: string) => request<Deal>(`/api/v1/deals/${id}`),
   create: (data: Partial<Deal>) =>
     request<Deal>("/api/v1/deals/", {
@@ -155,8 +158,36 @@ export const dealsApi = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  patch: (id: string, data: Partial<Deal>) =>
+    request<Deal>(`/api/v1/deals/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  moveStage: (dealId: string, stage: string) =>
+    request<Deal>(`/api/v1/deals/${dealId}/stage`, {
+      method: "PATCH",
+      body: JSON.stringify({ stage }),
+    }),
   delete: (id: string) =>
     request<void>(`/api/v1/deals/${id}`, { method: "DELETE" }),
+  // Deal contacts
+  getContacts: (dealId: string) =>
+    request<import("../types").DealContact[]>(`/api/v1/deals/${dealId}/contacts`),
+  addContact: (dealId: string, contactId: string, role?: string) =>
+    request<import("../types").DealContact>(`/api/v1/deals/${dealId}/contacts`, {
+      method: "POST",
+      body: JSON.stringify({ contact_id: contactId, role }),
+    }),
+  removeContact: (dealId: string, contactId: string) =>
+    request<void>(`/api/v1/deals/${dealId}/contacts/${contactId}`, { method: "DELETE" }),
+  // Deal activities
+  getActivities: (dealId: string) =>
+    request<Activity[]>(`/api/v1/deals/${dealId}/activities`),
+  addComment: (dealId: string, body: string) =>
+    request<Activity>(`/api/v1/deals/${dealId}/activities`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
 };
 
 export const enrichmentApi = {
@@ -193,6 +224,22 @@ export const outreachApi = {
     request<OutreachSequence>(`/api/v1/outreach/sequences/${sequenceId}`, {
       method: "PATCH",
       body: JSON.stringify(fields),
+    }),
+  getSteps: (sequenceId: string) =>
+    request<OutreachStep[]>(`/api/v1/outreach/sequences/${sequenceId}/steps`),
+  addStep: (sequenceId: string, step: Pick<OutreachStep, "step_number" | "subject" | "body" | "delay_value" | "delay_unit"> & { variants?: Array<Record<string, unknown>> | null }) =>
+    request<OutreachStep>(`/api/v1/outreach/sequences/${sequenceId}/steps`, {
+      method: "POST",
+      body: JSON.stringify(step),
+    }),
+  updateStep: (stepId: string, fields: Partial<Pick<OutreachStep, "subject" | "body" | "delay_value" | "delay_unit" | "status" | "variants">>) =>
+    request<OutreachStep>(`/api/v1/outreach/steps/${stepId}`, {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+    }),
+  deleteStep: (stepId: string) =>
+    request<{ status: string; step_id: string }>(`/api/v1/outreach/steps/${stepId}`, {
+      method: "DELETE",
     }),
   launch: (sequenceId: string, sendingAccount: string, campaignName?: string) =>
     request<{
@@ -820,4 +867,27 @@ export const settingsApi = {
       method: "PATCH",
       body: JSON.stringify({ step_delays }),
     }),
+};
+
+export const aircallApi = {
+  getConfig: () =>
+    request<{
+      configured: boolean;
+      numbers: { id: number; digits: string; name: string }[];
+      users: { id: number; name: string; email: string }[];
+      default_number: { id: number; digits: string; name: string } | null;
+    }>("/api/v1/aircall/config"),
+  getUserByEmail: (email: string) =>
+    request<{ found: boolean; aircall_user_id?: number; name?: string; availability?: string }>(
+      `/api/v1/aircall/user-by-email?email=${encodeURIComponent(email)}`
+    ),
+  getAvailabilities: () =>
+    request<{ id: number; name: string; availability_status: string }[]>("/api/v1/aircall/availabilities"),
+  initiateCall: (to: string, user_id: number, number_id: number) =>
+    request<{ success: boolean }>("/api/v1/aircall/call", {
+      method: "POST",
+      body: JSON.stringify({ to, user_id, number_id }),
+    }),
+  registerWebhook: () =>
+    request<{ status: string }>("/api/v1/aircall/register-webhook", { method: "POST" }),
 };

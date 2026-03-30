@@ -29,6 +29,15 @@ _ALLOWED_SEQUENCE_FIELDS = frozenset(
 )
 
 
+def _sequence_started(seq: OutreachSequence) -> bool:
+    return bool(
+        seq.instantly_campaign_id
+        or seq.launched_at
+        or seq.status in {"launched", "sent", "replied", "completed", "meeting_booked"}
+        or seq.instantly_campaign_status in {"active", "paused", "completed"}
+    )
+
+
 # ── Sequence generation ────────────────────────────────────────────────────────
 
 @router.post("/generate/{contact_id}", response_model=OutreachSequenceRead)
@@ -161,8 +170,8 @@ async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSe
     seq = await session.get(OutreachSequence, sequence_id)
     if not seq:
         raise NotFoundError("Sequence not found")
-    if seq.instantly_campaign_id:
-        raise ValidationError("Cannot add steps after sequence has been launched to Instantly")
+    if _sequence_started(seq):
+        raise ValidationError("Cannot change sequence timing after sequencing has started")
 
     step = OutreachStep(
         sequence_id=sequence_id,
@@ -186,6 +195,10 @@ async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSes
     if not step:
         raise NotFoundError("Step not found")
 
+    seq = await session.get(OutreachSequence, step.sequence_id)
+    if seq and _sequence_started(seq):
+        raise ValidationError("Cannot change sequence timing after sequencing has started")
+
     update_data = updates.model_dump(exclude_none=True)
     for key, val in update_data.items():
         setattr(step, key, val)
@@ -205,8 +218,8 @@ async def delete_step(step_id: UUID, session: DBSession):
         raise NotFoundError("Step not found")
 
     seq = await session.get(OutreachSequence, step.sequence_id)
-    if seq and seq.instantly_campaign_id:
-        raise ValidationError("Cannot delete steps after sequence has been launched to Instantly")
+    if seq and _sequence_started(seq):
+        raise ValidationError("Cannot change sequence timing after sequencing has started")
 
     await session.delete(step)
     await session.commit()
@@ -241,7 +254,7 @@ async def launch_sequence(
     if not seq:
         raise NotFoundError("Sequence not found")
 
-    if seq.instantly_campaign_id:
+    if _sequence_started(seq):
         raise ValidationError(
             f"Sequence already launched. Instantly campaign: {seq.instantly_campaign_id}"
         )
