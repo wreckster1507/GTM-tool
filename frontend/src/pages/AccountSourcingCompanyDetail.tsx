@@ -392,7 +392,16 @@ function ContactItem({ contact }: { contact: Contact }) {
           <div style={{ display: "inline-flex", gap: 10 }}>
             {contact.email ? <a href={`mailto:${contact.email}`}><Mail size={14} /></a> : null}
             {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer"><span><Globe size={14} /></span></a> : null}
-            {contact.phone ? <a href={`tel:${contact.phone}`}><Phone size={14} /></a> : null}
+            {contact.phone ? (
+              <button
+                type="button"
+                onClick={() => window.__aircallDial?.(contact.phone!, `${contact.first_name} ${contact.last_name}`)}
+                style={{ background: "none", border: "none", padding: 0, color: "inherit", cursor: "pointer" }}
+                title={`Call ${contact.phone} in Aircall`}
+              >
+                <Phone size={14} />
+              </button>
+            ) : null}
           </div>
 
           <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at)}</div>

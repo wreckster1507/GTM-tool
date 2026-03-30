@@ -594,7 +594,8 @@ export default function Contacts() {
                         <th>Title</th>
                         <th>Email</th>
                         <th>Persona</th>
-                        <th>Assigned To</th>
+                        <th>AE</th>
+                        <th>SDR</th>
                         <th>Verified</th>
                         <th>Action</th>
                       </tr>
@@ -646,6 +647,20 @@ export default function Contacts() {
                               currentAssignedId={c.assigned_to_id}
                               currentAssignedName={c.assigned_to_name || c.assigned_rep_email}
                               onAssigned={() => load()}
+                              role="ae"
+                              label="AE"
+                              compact
+                            />
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <AssignDropdown
+                              entityType="contact"
+                              entityId={c.id}
+                              currentAssignedId={c.sdr_id}
+                              currentAssignedName={c.sdr_name}
+                              onAssigned={() => load()}
+                              role="sdr"
+                              label="SDR"
                               compact
                             />
                           </td>

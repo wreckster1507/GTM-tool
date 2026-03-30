@@ -25,6 +25,7 @@ router = APIRouter(prefix="/assignments", tags=["assignments"])
 
 class AssignRequest(BaseModel):
     user_id: Optional[UUID] = None  # None = unassign
+    role: Optional[str] = None      # "ae" (default) or "sdr"
 
 
 class BulkAssignRequest(BaseModel):
@@ -77,22 +78,34 @@ async def assign_contact(
     session: DBSession,
     _admin: AdminUser,
 ):
-    """Assign a contact to a sales rep. Admin only. Pass user_id=null to unassign."""
+    """Assign a contact to a sales rep. Admin only.
+    role="ae" (default) sets AE, role="sdr" sets SDR. Pass user_id=null to unassign.
+    """
     contact = (
         await session.execute(select(Contact).where(Contact.id == contact_id))
     ).scalar_one_or_none()
     if not contact:
         raise NotFoundError("Contact not found")
 
+    is_sdr = (body.role or "ae") == "sdr"
+
     if body.user_id:
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
-        contact.assigned_to_id = user.id
-        contact.assigned_rep_email = user.email
+        if is_sdr:
+            contact.sdr_id = user.id
+            contact.sdr_name = user.name
+        else:
+            contact.assigned_to_id = user.id
+            contact.assigned_rep_email = user.email
     else:
-        contact.assigned_to_id = None
-        contact.assigned_rep_email = None
+        if is_sdr:
+            contact.sdr_id = None
+            contact.sdr_name = None
+        else:
+            contact.assigned_to_id = None
+            contact.assigned_rep_email = None
 
     contact.updated_at = datetime.utcnow()
     session.add(contact)

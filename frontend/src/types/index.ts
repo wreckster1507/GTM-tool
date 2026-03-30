@@ -60,9 +60,11 @@ export interface Contact {
   enriched_at?: string;
   enrichment_data?: Record<string, unknown>;
   persona_type?: string; // champion | buyer | evaluator | blocker
-  assigned_to_id?: string;
+  assigned_to_id?: string;   // AE
   assigned_to_name?: string;
   assigned_rep_email?: string;
+  sdr_id?: string;            // SDR
+  sdr_name?: string;
   outreach_lane?: string;
   sequence_status?: string;
   instantly_status?: string;

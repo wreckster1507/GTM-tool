@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./lib/AuthContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import Layout from "./components/layout/Layout";
@@ -24,12 +24,24 @@ import AccountSourcingContactDetail from "./pages/AccountSourcingContactDetail";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import TeamManagement from "./pages/TeamManagement";
 
+function RouteScopedAircallPhone() {
+  const location = useLocation();
+  const pathname = location.pathname;
+  const showAircall =
+    pathname === "/prospecting"
+    || pathname === "/contacts"
+    || pathname.startsWith("/contacts/")
+    || pathname.startsWith("/account-sourcing/contacts/");
+
+  return showAircall ? <AircallPhonePanel /> : null;
+}
+
 export default function App() {
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
-        {/* Aircall phone widget — mounted once, persists across all pages */}
-        <AircallPhonePanel />
+        {/* Aircall phone widget — only on prospecting/contact routes */}
+        <RouteScopedAircallPhone />
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />

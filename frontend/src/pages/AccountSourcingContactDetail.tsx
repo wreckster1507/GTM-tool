@@ -476,7 +476,26 @@ export default function AccountSourcingContactDetail() {
                   <div style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
                     {company ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
                     {contact.email ? <a href={`mailto:${contact.email}`} style={{ color: colors.sub, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}><Mail size={14} />{contact.email}</a> : null}
-                    {contact.phone ? <a href={`tel:${contact.phone}`} style={{ color: colors.sub, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={14} />{contact.phone}</a> : null}
+                    {contact.phone ? (
+                      <button
+                        type="button"
+                        onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          color: colors.sub,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          cursor: "pointer",
+                          font: "inherit",
+                        }}
+                        title={`Call ${contact.phone} in Aircall`}
+                      >
+                        <Phone size={14} />{contact.phone}
+                      </button>
+                    ) : null}
                     {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: colors.sub, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}><Globe size={14} />LinkedIn</a> : null}
                   </div>
                 </div>
@@ -657,7 +676,19 @@ export default function AccountSourcingContactDetail() {
               <KV label="Name" value={fullName} />
               <KV label="Title" value={contact.title} />
               <KV label="Email" value={contact.email ? <a href={`mailto:${contact.email}`} style={{ color: colors.primary }}>{contact.email}</a> : undefined} />
-              <KV label="Phone" value={contact.phone ? <a href={`tel:${contact.phone}`} style={{ color: colors.primary }}>{contact.phone}</a> : undefined} />
+              <KV
+                label="Phone"
+                value={contact.phone ? (
+                  <button
+                    type="button"
+                    onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                    style={{ background: "none", border: "none", padding: 0, color: colors.primary, cursor: "pointer", font: "inherit" }}
+                    title={`Call ${contact.phone} in Aircall`}
+                  >
+                    {contact.phone}
+                  </button>
+                ) : undefined}
+              />
               <KV label="LinkedIn" value={contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: colors.primary, display: "inline-flex", alignItems: "center", gap: 6 }}>Profile <ExternalLink size={12} /></a> : undefined} />
               <KV label="Assigned Rep" value={contact.assigned_rep_email || company?.assigned_rep_email} />
               <KV label="Persona" value={contact.persona_type || contact.persona} />
@@ -665,7 +696,16 @@ export default function AccountSourcingContactDetail() {
               <KV label="Updated" value={formatDate(contact.updated_at)} />
               <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
                 {contact.email ? <a href={`mailto:${contact.email}`} style={{ color: colors.primary }}><Mail size={15} /></a> : null}
-                {contact.phone ? <a href={`tel:${contact.phone}`} style={{ color: colors.primary }}><Phone size={15} /></a> : null}
+                {contact.phone ? (
+                  <button
+                    type="button"
+                    onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                    style={{ background: "none", border: "none", padding: 0, color: colors.primary, cursor: "pointer" }}
+                    title={`Call ${contact.phone} in Aircall`}
+                  >
+                    <Phone size={15} />
+                  </button>
+                ) : null}
                 {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: colors.primary }}><Globe size={15} /></a> : null}
               </div>
             </Section>

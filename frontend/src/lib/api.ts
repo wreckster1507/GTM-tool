@@ -842,10 +842,10 @@ export const assignmentsApi = {
       method: "PATCH",
       body: JSON.stringify({ user_id: userId }),
     }),
-  assignContact: (contactId: string, userId: string | null) =>
+  assignContact: (contactId: string, userId: string | null, role: "ae" | "sdr" = "ae") =>
     request<Contact>(`/api/v1/assignments/contact/${contactId}`, {
       method: "PATCH",
-      body: JSON.stringify({ user_id: userId }),
+      body: JSON.stringify({ user_id: userId, role }),
     }),
   bulkAssignCompanies: (ids: string[], userId: string | null) =>
     request<{ updated: number; user_id: string | null }>("/api/v1/assignments/bulk-companies", {

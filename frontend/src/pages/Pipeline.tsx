@@ -1,9 +1,10 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import {
   Search, Plus, X, ChevronDown, Building2, CalendarDays,
   Users, Target, DollarSign, Flag, Clock3, UserCircle2,
+  BarChart3, ArrowRightLeft, TrendingUp, Filter, RotateCcw,
 } from "lucide-react";
-import { dealsApi, companiesApi, authApi, contactsApi } from "../lib/api";
+import { dealsApi, companiesApi, authApi } from "../lib/api";
 import type { Company, Deal, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
@@ -53,34 +54,6 @@ const STAGE_COLOR: Record<string, string> = {
   todo: "#3b82f6", in_progress: "#8b5cf6", converted: "#22c55e", blocked: "#ef4444",
 };
 
-// ── Select with custom ChevronDown ──────────────────────────────────────────
-
-function StyledSelect({ value, onChange, children, active }: {
-  value: string; onChange: (v: string) => void; children: React.ReactNode; active?: boolean;
-}) {
-  return (
-    <div style={{ position: "relative", display: "inline-flex" }}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          appearance: "none", height: 34, borderRadius: 10,
-          border: active ? "1.5px solid #b8d0f0" : "1px solid #dbe6f2",
-          background: active ? "#f0f6ff" : "#fff",
-          padding: "0 30px 0 12px", fontSize: 13, fontWeight: 500,
-          color: "#2d4258", cursor: "pointer", outline: "none",
-        }}
-      >
-        {children}
-      </select>
-      <ChevronDown size={13} style={{
-        position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
-        pointerEvents: "none", color: "#7a96b0",
-      }} />
-    </div>
-  );
-}
-
 // ── Deal Card ───────────────────────────────────────────────────────────────
 
 function DealCard({ deal, onClick }: { deal: Deal; onClick: () => void }) {
@@ -92,18 +65,20 @@ function DealCard({ deal, onClick }: { deal: Deal; onClick: () => void }) {
       onClick={onClick}
       style={{
         width: "100%", textAlign: "left", cursor: "pointer",
-        borderRadius: 16, border: "1px solid #e8eef5", background: "#ffffff",
-        boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
-        padding: 16, display: "flex", flexDirection: "column", gap: 10,
+        borderRadius: 14, border: "1px solid #e8eef5", background: "#ffffff",
+        boxShadow: "0 1px 4px rgba(17,34,68,0.04)",
+        padding: 14, display: "flex", flexDirection: "column", gap: 8,
         transition: "all 0.15s ease",
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.boxShadow = "0 6px 20px rgba(17,34,68,0.08)";
+        e.currentTarget.style.boxShadow = "0 4px 16px rgba(17,34,68,0.08)";
         e.currentTarget.style.borderColor = "#c8d6e8";
+        e.currentTarget.style.transform = "translateY(-1px)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.boxShadow = "0 2px 8px rgba(17,34,68,0.04)";
+        e.currentTarget.style.boxShadow = "0 1px 4px rgba(17,34,68,0.04)";
         e.currentTarget.style.borderColor = "#e8eef5";
+        e.currentTarget.style.transform = "translateY(0)";
       }}
     >
       {/* Top: name + priority dot */}
@@ -112,21 +87,21 @@ function DealCard({ deal, onClick }: { deal: Deal; onClick: () => void }) {
           width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 5,
           background: PRIORITY_COLOR[deal.priority] ?? "#94a3b8",
         }} />
-        <span style={{ fontSize: 14, fontWeight: 600, color: "#1f2d3d", lineHeight: 1.35, flex: 1 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d", lineHeight: 1.35, flex: 1 }}>
           {deal.name}
         </span>
       </div>
 
       {/* Company */}
       {deal.company_name && (
-        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#5e738b" }}>
-          <Building2 size={12} />
+        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#5e738b" }}>
+          <Building2 size={11} />
           <span>{deal.company_name}</span>
         </div>
       )}
 
       {/* Amount */}
-      <div style={{ fontSize: 16, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4", fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4", fontVariantNumeric: "tabular-nums" }}>
         {formatCurrency(deal.value)}
       </div>
 
@@ -141,53 +116,53 @@ function DealCard({ deal, onClick }: { deal: Deal; onClick: () => void }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
         {deal.department && (
           <span style={{
-            fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
+            fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 5,
             background: "#f0f4f8", color: "#4d6178", border: "1px solid #e2eaf2",
           }}>
             {deal.department}
           </span>
         )}
-        {(deal.tags ?? []).slice(0, 3).map((tag) => (
+        {(deal.tags ?? []).slice(0, 2).map((tag) => (
           <span key={tag} style={{
-            fontSize: 11, padding: "2px 8px", borderRadius: 6,
+            fontSize: 10, padding: "2px 7px", borderRadius: 5,
             background: "#f8f0ff", color: "#6b46a0", border: "1px solid #e8d8f8",
           }}>
             {tag}
           </span>
         ))}
-        {(deal.tags ?? []).length > 3 && (
-          <span style={{ fontSize: 11, color: "#94a3b8" }}>+{deal.tags.length - 3}</span>
+        {(deal.tags ?? []).length > 2 && (
+          <span style={{ fontSize: 10, color: "#94a3b8" }}>+{deal.tags.length - 2}</span>
         )}
       </div>
 
       {/* Bottom row: assignee + date + contacts */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        paddingTop: 8, borderTop: "1px solid #f0f4f8", marginTop: 2,
+        paddingTop: 6, borderTop: "1px solid #f0f4f8", marginTop: 2,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {deal.assigned_rep_name ? (
             <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(deal.assigned_rep_name)}`}
-              style={{ width: 22, height: 22 }}>
+              style={{ width: 20, height: 20 }}>
               {getInitials(deal.assigned_rep_name)}
             </div>
           ) : (
-            <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />
+            <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#e8eef5" }} />
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#7a8ca1" }}>
-            <Clock3 size={11} />
+          <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: "#7a8ca1" }}>
+            <Clock3 size={10} />
             <span>{deal.days_in_stage ?? 0}d</span>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {deal.close_date_est && (
-            <span style={{ fontSize: 11, color: isOverdue ? "#dc2626" : "#7a8ca1", fontWeight: isOverdue ? 600 : 400 }}>
+            <span style={{ fontSize: 10, color: isOverdue ? "#dc2626" : "#7a8ca1", fontWeight: isOverdue ? 600 : 400 }}>
               {formatDate(deal.close_date_est)}
             </span>
           )}
           {(deal.contact_count ?? 0) > 0 && (
-            <span style={{ fontSize: 11, color: "#5e738b", display: "flex", alignItems: "center", gap: 3 }}>
-              <UserCircle2 size={11} />{deal.contact_count}
+            <span style={{ fontSize: 10, color: "#5e738b", display: "flex", alignItems: "center", gap: 2 }}>
+              <UserCircle2 size={10} />{deal.contact_count}
             </span>
           )}
         </div>
@@ -206,52 +181,52 @@ function Column({ stageId, label, deals, group, onCardClick, onNewDeal }: {
   const isClosed = group === "closed";
 
   return (
-    <div style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+    <div style={{ width: 264, flexShrink: 0, display: "flex", flexDirection: "column" }}>
       {/* Column header */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 12, padding: "0 4px",
+        marginBottom: 10, padding: "0 4px",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{
             width: 8, height: 8, borderRadius: "50%",
             background: STAGE_COLOR[stageId] ?? "#94a3b8",
           }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: isClosed ? "#7a8ca1" : "#2d4258" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: isClosed ? "#7a8ca1" : "#2d4258" }}>
             {label}
           </span>
           <span style={{
-            fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+            fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999,
             background: "#ecf1f7", color: "#48607b",
           }}>
             {deals.length}
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {total > 0 && (
-            <span style={{ fontSize: 11, color: "#7a8ca1", fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ fontSize: 10, color: "#7a8ca1", fontVariantNumeric: "tabular-nums" }}>
               {formatCurrency(total)}
             </span>
           )}
           <button
             onClick={() => onNewDeal(stageId)}
             style={{
-              width: 24, height: 24, borderRadius: 8, border: "1px solid #dbe6f2",
+              width: 22, height: 22, borderRadius: 7, border: "1px solid #dbe6f2",
               background: "#fff", cursor: "pointer", display: "flex",
               alignItems: "center", justifyContent: "center", color: "#7a96b0",
               transition: "all 0.15s ease",
             }}
             title={`New deal in ${label}`}
           >
-            <Plus size={13} />
+            <Plus size={12} />
           </button>
         </div>
       </div>
 
       {/* Cards container */}
       <div style={{
-        flex: 1, minHeight: 200, borderRadius: 16,
-        padding: 10, display: "flex", flexDirection: "column", gap: 10,
+        flex: 1, minHeight: 200, borderRadius: 14,
+        padding: 8, display: "flex", flexDirection: "column", gap: 8,
         background: isClosed ? "#f4f6f9" : "#f9fbfe",
         border: "1px solid #e8eef5",
         overflowY: "auto",
@@ -265,7 +240,7 @@ function Column({ stageId, label, deals, group, onCardClick, onNewDeal }: {
             display: "flex", height: 80, alignItems: "center", justifyContent: "center",
             borderRadius: 12, border: "2px dashed #dbe6f2",
           }}>
-            <span style={{ fontSize: 12, color: "#96a7ba" }}>No deals</span>
+            <span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span>
           </div>
         )}
       </div>
@@ -425,7 +400,6 @@ function ConvertToDealModal({ deal, onClose, onConverted }: {
         value: form.value ? Number(form.value) : undefined,
         assigned_to_id: deal.assigned_to_id,
       } as Partial<Deal>);
-      // Move prospect to converted
       await dealsApi.moveStage(deal.id, "converted");
       onConverted(newDeal);
       onClose();
@@ -471,6 +445,39 @@ function ConvertToDealModal({ deal, onClose, onConverted }: {
         </div>
       </div>
     </>
+  );
+}
+
+// ── Sidebar Filter Select ──────────────────────────────────────────────────
+
+function SidebarSelect({ value, onChange, children, label }: {
+  value: string; onChange: (v: string) => void; children: React.ReactNode; label: string;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+        {label}
+      </label>
+      <div style={{ position: "relative" }}>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            width: "100%", appearance: "none", height: 34, borderRadius: 8,
+            border: value !== "all" ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2",
+            background: value !== "all" ? "#f0f6ff" : "#f8fafc",
+            padding: "0 28px 0 10px", fontSize: 12, fontWeight: 500,
+            color: "#2d4258", cursor: "pointer", outline: "none",
+          }}
+        >
+          {children}
+        </select>
+        <ChevronDown size={12} style={{
+          position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+          pointerEvents: "none", color: "#7a96b0",
+        }} />
+      </div>
+    </div>
   );
 }
 
@@ -547,16 +554,19 @@ export default function Pipeline() {
     const s = stages.find((st) => st.id === d.stage);
     return s?.group === "active";
   });
+  const closedDeals = allDeals.filter((d) => {
+    const s = stages.find((st) => st.id === d.stage);
+    return s?.group === "closed";
+  });
   const totalValue = activeDeals.reduce((s, d) => s + (d.value ?? 0), 0);
+  const wonDeals = allDeals.filter((d) => d.stage === "closed_won" || d.stage === "converted");
 
   const handleDealUpdated = (updated: Deal) => {
     setBoard((prev) => {
       const next = { ...prev };
-      // Remove from old position
       for (const key of Object.keys(next)) {
         next[key] = next[key].filter((d) => d.id !== updated.id);
       }
-      // Add to new stage
       if (!next[updated.stage]) next[updated.stage] = [];
       next[updated.stage].push(updated);
       return next;
@@ -571,206 +581,313 @@ export default function Pipeline() {
     }));
   };
 
+  const resetFilters = () => {
+    setSearch(""); setStageGroup("all"); setPriorityFilter("all"); setAssigneeFilter("all");
+  };
+
   const hasActiveFilters = search || stageGroup !== "all" || priorityFilter !== "all" || assigneeFilter !== "all";
+
+  const isDeal = tab === "deal";
+  const accentColor = isDeal ? "#175089" : "#177b75";
+  const accentBg = isDeal ? "#f0f6ff" : "#f0faf9";
+  const accentBorder = isDeal ? "#b8d0f0" : "#b2e0dc";
 
   return (
     <>
-      <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "column", gap: 16, height: "100%" }}>
+      <div
+        className="crm-page pipeline-page"
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "stretch",
+          height: "100%",
+          minHeight: 0,
+          gap: 0,
+        }}
+      >
 
-        {/* ── Tab cards ──────────────────────────────────────────────── */}
-        <div style={{ display: "flex", gap: 12 }}>
-          {/* Deals tab */}
-          <button
-            type="button"
-            onClick={() => { setTab("deal"); setStageGroup("all"); setPriorityFilter("all"); setAssigneeFilter("all"); setSearch(""); }}
-            style={{
-              flex: 1, display: "flex", alignItems: "center", gap: 14,
-              padding: "16px 20px", borderRadius: 16, cursor: "pointer",
-              border: tab === "deal" ? "1.5px solid #b8d0f0" : "1.5px solid #e8eef5",
-              background: tab === "deal"
-                ? "linear-gradient(135deg, #f0f6ff 0%, #e8f0fb 100%)"
-                : "#fff",
-              boxShadow: tab === "deal"
-                ? "0 4px 16px rgba(23,80,137,0.08)"
-                : "0 2px 8px rgba(17,34,68,0.04)",
-              transition: "all 0.15s ease",
-              textAlign: "left",
-            }}
-          >
-            <div style={{
-              width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: tab === "deal" ? "#175089" : "#eaf2ff",
-              color: tab === "deal" ? "#fff" : "#175089",
-            }}>
-              <DollarSign size={17} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Deals</span>
-                <span style={{
-                  fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
-                  background: tab === "deal" ? "#175089" : "#e8f0fb",
-                  color: tab === "deal" ? "#fff" : "#175089",
-                }}>{allDeals.length}</span>
-              </div>
-              <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 2 }}>
-                Full sales pipeline with stages and tracking
-              </div>
-            </div>
-          </button>
-
-          {/* Prospects tab */}
-          <button
-            type="button"
-            onClick={() => { setTab("prospect"); setStageGroup("all"); setPriorityFilter("all"); setAssigneeFilter("all"); setSearch(""); }}
-            style={{
-              flex: 1, display: "flex", alignItems: "center", gap: 14,
-              padding: "16px 20px", borderRadius: 16, cursor: "pointer",
-              border: tab === "prospect" ? "1.5px solid #b2e0dc" : "1.5px solid #e8eef5",
-              background: tab === "prospect"
-                ? "linear-gradient(135deg, #f0faf9 0%, #e6f5f4 100%)"
-                : "#fff",
-              boxShadow: tab === "prospect"
-                ? "0 4px 16px rgba(23,123,117,0.08)"
-                : "0 2px 8px rgba(17,34,68,0.04)",
-              transition: "all 0.15s ease",
-              textAlign: "left",
-            }}
-          >
-            <div style={{
-              width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: tab === "prospect" ? "#177b75" : "#e7f7f5",
-              color: tab === "prospect" ? "#fff" : "#177b75",
-            }}>
-              <Target size={17} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Prospects</span>
-                <span style={{
-                  fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
-                  background: tab === "prospect" ? "#177b75" : "#e7f7f5",
-                  color: tab === "prospect" ? "#fff" : "#177b75",
-                }}>-</span>
-              </div>
-              <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 2 }}>
-                Prospect qualification and conversion tracking
-              </div>
-            </div>
-          </button>
-        </div>
-
-        {/* ── Filter bar ─────────────────────────────────────────────── */}
+        {/* ── Left Sidebar ─────────────────────────────────────────── */}
         <div style={{
-          display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
-          borderRadius: 14, background: "#fff", border: "1px solid #e8eef5",
-          boxShadow: "0 2px 8px rgba(17,34,68,0.03)",
+          width: 228, flexShrink: 0, display: "flex", flexDirection: "column",
+          background: "#fff", borderRight: "1px solid #e8eef5",
+          padding: "20px 16px", gap: 20, overflowY: "auto",
         }}>
-          {/* Search */}
-          <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
-            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
-            <input
-              type="text"
-              placeholder="Search deals..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+
+          {/* Pipeline switcher */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 2 }}>
+              Pipeline
+            </span>
+
+            {/* Deals button */}
+            <button
+              type="button"
+              onClick={() => { setTab("deal"); resetFilters(); }}
               style={{
-                width: "100%", height: 34, borderRadius: 10,
-                border: "1px solid #dbe6f2", paddingLeft: 32, paddingRight: 12,
-                fontSize: 13, outline: "none",
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                border: tab === "deal" ? `1.5px solid ${accentBorder}` : "1.5px solid transparent",
+                background: tab === "deal" ? accentBg : "transparent",
+                transition: "all 0.15s ease",
+                textAlign: "left",
               }}
-            />
+            >
+              <div style={{
+                width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: tab === "deal" ? "#175089" : "#eaf2ff",
+                color: tab === "deal" ? "#fff" : "#175089",
+                transition: "all 0.15s ease",
+              }}>
+                <DollarSign size={15} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: tab === "deal" ? "#0f2744" : "#4d6178" }}>
+                  Deals
+                </div>
+                <div style={{ fontSize: 10, color: "#7a96b0", marginTop: 1 }}>
+                  Sales pipeline
+                </div>
+              </div>
+            </button>
+
+            {/* Prospects button */}
+            <button
+              type="button"
+              onClick={() => { setTab("prospect"); resetFilters(); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                border: tab === "prospect" ? "1.5px solid #b2e0dc" : "1.5px solid transparent",
+                background: tab === "prospect" ? "#f0faf9" : "transparent",
+                transition: "all 0.15s ease",
+                textAlign: "left",
+              }}
+            >
+              <div style={{
+                width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: tab === "prospect" ? "#177b75" : "#e7f7f5",
+                color: tab === "prospect" ? "#fff" : "#177b75",
+                transition: "all 0.15s ease",
+              }}>
+                <Target size={15} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: tab === "prospect" ? "#0f2744" : "#4d6178" }}>
+                  Prospects
+                </div>
+                <div style={{ fontSize: 10, color: "#7a96b0", marginTop: 1 }}>
+                  Qualification
+                </div>
+              </div>
+            </button>
           </div>
 
-          {/* Stage group filter */}
-          <StyledSelect value={stageGroup} onChange={setStageGroup} active={stageGroup !== "all"}>
-            <option value="all">All Stages</option>
-            <option value="active">Active</option>
-            <option value="closed">Closed</option>
-          </StyledSelect>
+          {/* Divider */}
+          <div style={{ height: 1, background: "#e8eef5" }} />
 
-          {/* Priority (deals only) */}
-          {tab === "deal" && (
-            <StyledSelect value={priorityFilter} onChange={setPriorityFilter} active={priorityFilter !== "all"}>
-              <option value="all">Any Priority</option>
-              <option value="urgent">Urgent</option>
-              <option value="high">High</option>
-              <option value="normal">Normal</option>
-              <option value="low">Low</option>
-            </StyledSelect>
-          )}
+          {/* Summary stats */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              Summary
+            </span>
 
-          {/* Assignee */}
-          <StyledSelect value={assigneeFilter} onChange={setAssigneeFilter} active={assigneeFilter !== "all"}>
-            <option value="all">All Reps</option>
-            <option value="unassigned">Unassigned</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </StyledSelect>
+            <div style={{
+              display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8,
+            }}>
+              <div style={{
+                padding: "10px 10px", borderRadius: 10,
+                background: accentBg, border: `1px solid ${accentBorder}`,
+              }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, lineHeight: 1 }}>
+                  {activeDeals.length}
+                </div>
+                <div style={{ fontSize: 10, color: "#7a96b0", marginTop: 3 }}>Active</div>
+              </div>
+              <div style={{
+                padding: "10px 10px", borderRadius: 10,
+                background: "#f8fafc", border: "1px solid #e8eef5",
+              }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#48607b", lineHeight: 1 }}>
+                  {closedDeals.length}
+                </div>
+                <div style={{ fontSize: 10, color: "#7a96b0", marginTop: 3 }}>Closed</div>
+              </div>
+            </div>
 
-          {/* Stats */}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "#5e738b" }}>
-            <span style={{ fontWeight: 700 }}>{activeDeals.length} active</span>
-            {totalValue > 0 && <span style={{ fontWeight: 700 }}>{formatCurrency(totalValue)}</span>}
+            {totalValue > 0 && (
+              <div style={{
+                padding: "10px 10px", borderRadius: 10,
+                background: "#f0fdf4", border: "1px solid #bbf7d0",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <TrendingUp size={13} style={{ color: "#16a34a" }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#15803d", fontVariantNumeric: "tabular-nums" }}>
+                    {formatCurrency(totalValue)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 10, color: "#6b9e7a", marginTop: 2 }}>
+                  Active pipeline value
+                </div>
+              </div>
+            )}
+
+            {wonDeals.length > 0 && (
+              <div style={{ fontSize: 11, color: "#5e738b", display: "flex", alignItems: "center", gap: 5 }}>
+                <BarChart3 size={12} style={{ color: "#22c55e" }} />
+                <span><strong>{wonDeals.length}</strong> {isDeal ? "won" : "converted"}</span>
+              </div>
+            )}
           </div>
 
-          {/* New deal button */}
+          {/* Divider */}
+          <div style={{ height: 1, background: "#e8eef5" }} />
+
+          {/* Filters */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: 4 }}>
+                <Filter size={10} />
+                Filters
+              </span>
+              {hasActiveFilters && (
+                <button
+                  onClick={resetFilters}
+                  style={{
+                    fontSize: 10, color: "#dc2626", background: "none", border: "none",
+                    cursor: "pointer", display: "flex", alignItems: "center", gap: 3,
+                    fontWeight: 500,
+                  }}
+                >
+                  <RotateCcw size={9} />
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {/* Search */}
+            <div style={{ position: "relative" }}>
+              <Search size={12} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+              <input
+                type="text"
+                placeholder={`Search ${isDeal ? "deals" : "prospects"}...`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{
+                  width: "100%", height: 32, borderRadius: 8,
+                  border: search ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2",
+                  background: search ? "#f0f6ff" : "#f8fafc",
+                  paddingLeft: 28, paddingRight: 10,
+                  fontSize: 12, outline: "none",
+                }}
+              />
+            </div>
+
+            <SidebarSelect value={stageGroup} onChange={setStageGroup} label="Stage">
+              <option value="all">All Stages</option>
+              <option value="active">Active Only</option>
+              <option value="closed">Closed Only</option>
+            </SidebarSelect>
+
+            {isDeal && (
+              <SidebarSelect value={priorityFilter} onChange={setPriorityFilter} label="Priority">
+                <option value="all">Any Priority</option>
+                <option value="urgent">Urgent</option>
+                <option value="high">High</option>
+                <option value="normal">Normal</option>
+                <option value="low">Low</option>
+              </SidebarSelect>
+            )}
+
+            <SidebarSelect value={assigneeFilter} onChange={setAssigneeFilter} label="Assignee">
+              <option value="all">All Reps</option>
+              <option value="unassigned">Unassigned</option>
+              {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </SidebarSelect>
+          </div>
+
+          {/* Spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* New deal button at bottom of sidebar */}
           <button
             className="crm-button primary"
-            onClick={() => setCreateStage(tab === "deal" ? "open" : "todo")}
-            style={{ height: 34, fontSize: 13 }}
+            onClick={() => setCreateStage(isDeal ? "open" : "todo")}
+            style={{
+              width: "100%", height: 38, fontSize: 13, borderRadius: 10,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              background: accentColor,
+            }}
           >
             <Plus size={14} />
-            New {tab === "deal" ? "Deal" : "Prospect"}
+            New {isDeal ? "Deal" : "Prospect"}
           </button>
-
-          {hasActiveFilters && (
-            <button
-              className="crm-button soft"
-              style={{ height: 34, fontSize: 12 }}
-              onClick={() => { setSearch(""); setStageGroup("all"); setPriorityFilter("all"); setAssigneeFilter("all"); }}
-            >
-              Reset
-            </button>
-          )}
         </div>
 
-        {/* ── Board ──────────────────────────────────────────────────── */}
-        {loading ? (
-          <div className="crm-panel" style={{ padding: 56, textAlign: "center", color: "#7a96b0" }}>
-            Loading pipeline...
-          </div>
-        ) : (
-          <div style={{ flex: 1, overflowX: "auto", paddingBottom: 16 }}>
-            <div style={{ display: "flex", gap: 14, minWidth: "max-content" }}>
-              {stages.map((stage, i) => {
-                // Add divider between active and closed groups
-                const prev = stages[i - 1];
-                const showDivider = prev && prev.group === "active" && stage.group === "closed";
+        {/* ── Kanban Board Area ─────────────────────────────────────── */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
 
-                return (
-                  <div key={stage.id} style={{ display: "flex", gap: 14 }}>
-                    {showDivider && (
-                      <div style={{
-                        width: 1, background: "#dbe6f2", margin: "28px 4px 0",
-                        alignSelf: "stretch",
-                      }} />
-                    )}
-                    <Column
-                      stageId={stage.id}
-                      label={stage.label}
-                      group={stage.group}
-                      deals={filteredBoard[stage.id] ?? []}
-                      onCardClick={setSelectedDeal}
-                      onNewDeal={(s) => setCreateStage(s)}
-                    />
-                  </div>
-                );
-              })}
+          {/* Board header */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "14px 20px", borderBottom: "1px solid #e8eef5",
+            background: "#fff",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f2744", margin: 0 }}>
+                {isDeal ? "Deals" : "Prospects"} Board
+              </h2>
+              <span style={{
+                fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
+                background: accentBg, color: accentColor, border: `1px solid ${accentBorder}`,
+              }}>
+                {allDeals.length} total
+              </span>
             </div>
+            {hasActiveFilters && (
+              <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                <Filter size={11} />
+                Filters active
+              </span>
+            )}
           </div>
-        )}
+
+          {/* Board content */}
+          {loading ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#7a96b0" }}>
+              Loading pipeline...
+            </div>
+          ) : (
+            <div style={{ flex: 1, overflowX: "auto", padding: "16px 16px 16px 20px" }}>
+              <div style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%" }}>
+                {stages.map((stage, i) => {
+                  const prev = stages[i - 1];
+                  const showDivider = prev && prev.group === "active" && stage.group === "closed";
+
+                  return (
+                    <div key={stage.id} style={{ display: "flex", gap: 12, height: "100%" }}>
+                      {showDivider && (
+                        <div style={{
+                          width: 1, background: "linear-gradient(180deg, #dbe6f2 0%, transparent 100%)",
+                          margin: "28px 2px 0", alignSelf: "stretch",
+                        }} />
+                      )}
+                      <Column
+                        stageId={stage.id}
+                        label={stage.label}
+                        group={stage.group}
+                        deals={filteredBoard[stage.id] ?? []}
+                        onCardClick={setSelectedDeal}
+                        onNewDeal={(s) => setCreateStage(s)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Modals / Drawers ───────────────────────────────────────── */}
@@ -801,7 +918,7 @@ export default function Pipeline() {
         <ConvertToDealModal
           deal={convertDeal}
           onClose={() => setConvertDeal(null)}
-          onConverted={(newDeal) => {
+          onConverted={() => {
             loadBoard();
             setConvertDeal(null);
           }}

@@ -11,6 +11,8 @@ interface Props {
   currentAssignedName?: string | null;
   onAssigned?: (userId: string | null, userName: string | null) => void;
   compact?: boolean;
+  role?: "ae" | "sdr";
+  label?: string;
 }
 
 export default function AssignDropdown({
@@ -20,6 +22,8 @@ export default function AssignDropdown({
   currentAssignedName,
   onAssigned,
   compact = false,
+  role = "ae",
+  label,
 }: Props) {
   const { isAdmin } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
@@ -54,8 +58,11 @@ export default function AssignDropdown({
   const handleAssign = async (userId: string | null) => {
     setLoading(true);
     try {
-      const assignFn = entityType === "company" ? assignmentsApi.assignCompany : assignmentsApi.assignContact;
-      await assignFn(entityId, userId);
+      if (entityType === "company") {
+        await assignmentsApi.assignCompany(entityId, userId);
+      } else {
+        await assignmentsApi.assignContact(entityId, userId, role);
+      }
       const user = userId ? users.find((u) => u.id === userId) : null;
       onAssigned?.(userId, user?.name ?? null);
       setOpen(false);
@@ -88,7 +95,7 @@ export default function AssignDropdown({
         }}
       >
         <UserPlus size={compact ? 12 : 14} />
-        {loading ? "..." : currentAssignedName || "Assign"}
+        {loading ? "..." : currentAssignedName || (label ?? "Assign")}
       </button>
 
       {open && (

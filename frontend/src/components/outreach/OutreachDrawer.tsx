@@ -4,7 +4,7 @@ import type { Contact, OutreachSequence, OutreachStep } from "../../types";
 import {
   X, Sparkles, Copy, CheckCheck, Linkedin, Mail, RefreshCw,
   Send, Rocket, CheckCircle, Clock, MessageSquare, ExternalLink, ChevronDown, ChevronUp,
-  Pencil, Check, Plus, Trash2,
+  Pencil, Check, Plus, Trash2, Phone,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../../lib/utils";
 
@@ -214,6 +214,11 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const handleCallContact = () => {
+    if (!contact?.phone) return;
+    window.__aircallDial?.(contact.phone, `${contact.first_name} ${contact.last_name}`);
   };
 
   const handleLaunch = async () => {
@@ -487,6 +492,52 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
                 {contact?.title ?? ""}
                 {contact?.email ? ` · ${contact.email}` : ""}
               </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                {contact?.email && (
+                  <a
+                    href={`mailto:${contact.email}`}
+                    style={{
+                      ...ghostBtn,
+                      textDecoration: "none",
+                      fontSize: 12,
+                      padding: "7px 11px",
+                    }}
+                  >
+                    <Mail size={12} /> Email
+                  </a>
+                )}
+                {contact?.phone && (
+                  <button
+                    onClick={handleCallContact}
+                    style={{
+                      ...ghostBtn,
+                      fontSize: 12,
+                      padding: "7px 11px",
+                      color: palette.green,
+                      borderColor: palette.greenBorder,
+                      background: "#f4fbf7",
+                    }}
+                    title={`Call ${contact.phone} in Aircall`}
+                  >
+                    <Phone size={12} /> {contact.phone}
+                  </button>
+                )}
+                {contact?.linkedin_url && (
+                  <a
+                    href={contact.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      ...ghostBtn,
+                      textDecoration: "none",
+                      fontSize: 12,
+                      padding: "7px 11px",
+                    }}
+                  >
+                    <Linkedin size={12} /> LinkedIn
+                  </a>
+                )}
+              </div>
             </div>
           </div>
           <button onClick={onClose} style={{ border: 0, background: "transparent", color: palette.muted, cursor: "pointer", padding: 2 }}>

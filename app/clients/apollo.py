@@ -5,9 +5,12 @@ Real mode: uses Hunter's Company Enrichment API (same key) when
 APOLLO_API_KEY is empty but HUNTER_API_KEY is set.
 Mock mode: returns Faker data when both keys are empty.
 """
+import logging
 from typing import Optional
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_hunter_size(size_str: Optional[str]) -> Optional[int]:
@@ -101,15 +104,13 @@ class ApolloClient:
 
         import httpx
         import logging
-        logger = logging.getLogger(__name__)
-
         headers = {"X-Api-Key": self.api_key, "Content-Type": "application/json"}
 
         # ── Attempt 1: mixed_people/search ──────────────────────────────────
         body: dict = {
             "q_organization_domains": domain,
             "page": 1,
-            "per_page": min(limit, 10),
+            "per_page": min(limit, 25),
         }
         if titles:
             body["person_titles"] = titles
@@ -151,7 +152,7 @@ class ApolloClient:
                 contacts_body: dict = {
                     "q_organization_domains": domain,
                     "page": 1,
-                    "per_page": min(limit, 10),
+                    "per_page": min(limit, 25),
                 }
                 resp = await client.post(
                     "https://api.apollo.io/v1/contacts/search",
@@ -206,30 +207,133 @@ class ApolloClient:
         if domain:
             body["organization_domain"] = domain
 
+        person = None
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                "https://api.apollo.io/v1/people/match",
-                headers={"X-Api-Key": self.api_key, "Content-Type": "application/json"},
-                json=body,
-            )
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            person = resp.json().get("person")
-            if not person:
-                return None
+            try:
+                resp = await client.post(
+                    "https://api.apollo.io/v1/people/match",
+                    headers={"X-Api-Key": self.api_key, "Content-Type": "application/json"},
+                    json=body,
+                )
+                if resp.status_code == 404:
+                    person = None
+                else:
+                    resp.raise_for_status()
+                    person = resp.json().get("person")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 422:
+                    logger.info("Apollo people/match returned 422 for %s; falling back to people search", email or f"{first_name} {last_name}".strip())
+                else:
+                    raise
 
-        return {
-            "first_name": person.get("first_name", ""),
-            "last_name": person.get("last_name", ""),
-            "email": person.get("email"),
-            "title": person.get("title"),
-            "seniority": person.get("seniority"),
-            "linkedin_url": person.get("linkedin_url"),
-            "phone": person.get("phone_numbers", [{}])[0].get("sanitized_number") if person.get("phone_numbers") else None,
-            "headline": person.get("headline"),
-            "employment_history": person.get("employment_history", [])[:3],
+        result = {
+            "first_name": person.get("first_name", "") if person else first_name,
+            "last_name": person.get("last_name", "") if person else last_name,
+            "email": person.get("email") if person else (email or None),
+            "title": person.get("title") if person else None,
+            "seniority": person.get("seniority") if person else None,
+            "linkedin_url": person.get("linkedin_url") if person else None,
+            "phone": person.get("phone_numbers", [{}])[0].get("sanitized_number") if person and person.get("phone_numbers") else None,
+            "headline": person.get("headline") if person else None,
+            "employment_history": person.get("employment_history", [])[:3] if person else [],
         }
+
+        if result.get("phone"):
+            return result
+
+        fallback = await self._find_person_phone_via_search(
+            domain=domain,
+            email=email or result.get("email") or "",
+            first_name=first_name or result.get("first_name") or "",
+            last_name=last_name or result.get("last_name") or "",
+            title=result.get("title") or "",
+            seniority=result.get("seniority") or "",
+            linkedin_url=result.get("linkedin_url") or "",
+        )
+        if fallback:
+            result["phone"] = fallback.get("phone") or result.get("phone")
+            result["email"] = result.get("email") or fallback.get("email")
+            result["title"] = result.get("title") or fallback.get("title")
+            result["seniority"] = result.get("seniority") or fallback.get("seniority")
+            result["linkedin_url"] = result.get("linkedin_url") or fallback.get("linkedin_url")
+
+        return result if any(result.values()) else None
+
+    async def _find_person_phone_via_search(
+        self,
+        *,
+        domain: str,
+        email: str,
+        first_name: str,
+        last_name: str,
+        title: str,
+        seniority: str,
+        linkedin_url: str,
+    ) -> dict | None:
+        """
+        Apollo people/match often returns the right person but omits phone.
+        Fall back to people search for the same domain and choose the best hit.
+        """
+        if not domain or not self.api_key:
+            return None
+
+        narrowed = await self.search_people(
+            domain=domain,
+            limit=25,
+            titles=[title] if title else None,
+            seniorities=[seniority] if seniority else None,
+        )
+        best = self._pick_best_person_match(
+            narrowed,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            linkedin_url=linkedin_url,
+        )
+        if best and best.get("phone"):
+            return best
+
+        broader = await self.search_people(domain=domain, limit=25)
+        return self._pick_best_person_match(
+            broader,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            linkedin_url=linkedin_url,
+        )
+
+    def _pick_best_person_match(
+        self,
+        people: list[dict],
+        *,
+        email: str,
+        first_name: str,
+        last_name: str,
+        linkedin_url: str,
+    ) -> dict | None:
+        normalized_email = (email or "").strip().lower()
+        normalized_first = (first_name or "").strip().lower()
+        normalized_last = (last_name or "").strip().lower()
+        normalized_linkedin = (linkedin_url or "").strip().lower()
+
+        for person in people:
+            if normalized_email and (person.get("email") or "").strip().lower() == normalized_email:
+                return person
+
+        for person in people:
+            if normalized_linkedin and (person.get("linkedin_url") or "").strip().lower() == normalized_linkedin:
+                return person
+
+        for person in people:
+            if (
+                normalized_first
+                and normalized_last
+                and (person.get("first_name") or "").strip().lower() == normalized_first
+                and (person.get("last_name") or "").strip().lower() == normalized_last
+            ):
+                return person
+
+        return None
 
     # ── Hunter fallback ────────────────────────────────────────────────────────
 
@@ -259,4 +363,3 @@ class ApolloClient:
             "has_dap": False,
             "dap_tool": None,
         }
-

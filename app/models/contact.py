@@ -28,8 +28,10 @@ class Contact(ContactBase, table=True):
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     persona_type: Optional[str] = None  # champion | buyer | evaluator | blocker
-    assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)  # AE
     assigned_rep_email: Optional[str] = None
+    sdr_id: Optional[UUID] = Field(default=None, index=True)  # SDR
+    sdr_name: Optional[str] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
     instantly_status: Optional[str] = None
@@ -54,9 +56,11 @@ class ContactRead(ContactBase):
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
     persona_type: Optional[str] = None
-    assigned_to_id: Optional[UUID] = None
-    assigned_to_name: Optional[str] = None  # populated via JOIN
+    assigned_to_id: Optional[UUID] = None    # AE
+    assigned_to_name: Optional[str] = None   # populated via JOIN
     assigned_rep_email: Optional[str] = None
+    sdr_id: Optional[UUID] = None            # SDR
+    sdr_name: Optional[str] = None           # populated via JOIN
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
     instantly_status: Optional[str] = None
@@ -86,6 +90,8 @@ class ContactUpdate(SQLModel):
     persona_type: Optional[str] = None
     assigned_to_id: Optional[UUID] = None
     assigned_rep_email: Optional[str] = None
+    sdr_id: Optional[UUID] = None
+    sdr_name: Optional[str] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
     instantly_status: Optional[str] = None

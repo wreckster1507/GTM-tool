@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   X, ChevronDown, Building2, CalendarDays, Flag, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
+  Activity as ActivityIcon, Phone, Mail, Video, FileText,
 } from "lucide-react";
 import { dealsApi, contactsApi } from "../../lib/api";
 import type { Activity, Company, Contact, Deal, DealContact, User } from "../../types";
@@ -27,9 +28,22 @@ const PERSONA_STYLE: Record<string, { bg: string; color: string }> = {
   technical_evaluator: { bg: "#eaf4ff", color: "#24567e" },
 };
 
+const ACTIVITY_ICON: Record<string, typeof ActivityIcon> = {
+  comment: ActivityIcon,
+  call: Phone,
+  email: Mail,
+  meeting: Video,
+  note: FileText,
+  transcript: FileText,
+  visit: Globe,
+};
+
+type DrawerTab = "overview" | "activity";
+
 export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onConvert }: Props) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [dealContacts, setDealContacts] = useState<DealContact[]>([]);
+  const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
   const [comment, setComment] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
 
@@ -51,6 +65,11 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   useEffect(() => {
     dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
     dealsApi.getContacts(deal.id).then(setDealContacts).catch(() => {});
+  }, [deal.id]);
+
+  useEffect(() => {
+    setActiveTab("overview");
+    setComment("");
   }, [deal.id]);
 
   // ── Field updates ─────────────────────────────────────────────────────────
@@ -140,22 +159,39 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
     <>
       {/* Backdrop */}
       <div
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", zIndex: 50 }}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.22)",
+          backdropFilter: "blur(3px)",
+          zIndex: 50,
+        }}
         onClick={onClose}
       />
 
       {/* Drawer panel */}
       <div style={{
-        position: "fixed", top: 0, right: 0, bottom: 0, width: 580, zIndex: 51,
-        background: "#fff", boxShadow: "-8px 0 40px rgba(0,0,0,0.12)",
+        position: "fixed",
+        top: 12,
+        right: 12,
+        bottom: 12,
+        width: "min(860px, calc(100vw - 24px))",
+        maxWidth: "100%",
+        zIndex: 51,
+        background: "#fff",
+        border: "1px solid #dfe8f2",
+        borderRadius: 22,
+        boxShadow: "-18px 0 60px rgba(15, 23, 42, 0.16)",
         display: "flex", flexDirection: "column",
         animation: "slideInRight 0.2s ease-out",
+        overflow: "hidden",
       }}>
 
         {/* ── Header ───────────────────────────────────────────────── */}
         <div style={{
-          padding: "20px 24px", borderBottom: "1px solid #e8eef5",
+          padding: "22px 28px 18px", borderBottom: "1px solid #e8eef5",
           display: "flex", flexDirection: "column", gap: 12,
+          background: "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
         }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
             {/* Name */}
@@ -287,8 +323,39 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
           </div>
         </div>
 
+        <div style={{ padding: "0 28px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
+          <div style={{ display: "flex", gap: 8, padding: "12px 0 14px" }}>
+            {[
+              { id: "overview", label: "Overview" },
+              { id: "activity", label: `Activity (${activities.length})` },
+            ].map((item) => {
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id as DrawerTab)}
+                  style={{
+                    border: active ? "1px solid #bfd6f3" : "1px solid transparent",
+                    background: active ? "#f0f6ff" : "transparent",
+                    color: active ? "#175089" : "#6f8399",
+                    borderRadius: 10,
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* ── Scrollable body ──────────────────────────────────────── */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 24 }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 28px 28px", display: "flex", flexDirection: "column", gap: 24, background: "#fcfdff" }}>
+          {activeTab === "overview" ? (
+            <>
 
           {/* ── Fields section ──────────────────────────────────────── */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -606,87 +673,16 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
             )}
           </div>
 
-          {/* ── Activity log ───────────────────────────────────────── */}
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#1f2d3d", marginBottom: 12 }}>
-              Activity ({activities.length})
-            </div>
-
-            {/* Comment box */}
-            <div style={{
-              display: "flex", gap: 8, marginBottom: 16, alignItems: "flex-end",
-            }}>
-              <textarea
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="Add a comment..."
-                rows={2}
-                style={{
-                  flex: 1, borderRadius: 10, border: "1px solid #dbe6f2",
-                  padding: "8px 12px", fontSize: 13, resize: "none", outline: "none",
-                  fontFamily: "inherit",
-                }}
-              />
-              <button
-                onClick={handleAddComment}
-                disabled={!comment.trim() || sendingComment}
-                style={{
-                  width: 36, height: 36, borderRadius: 10, border: "none",
-                  background: comment.trim() ? "#175089" : "#e8eef5",
-                  color: comment.trim() ? "#fff" : "#94a3b8",
-                  cursor: comment.trim() ? "pointer" : "default",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  flexShrink: 0,
-                }}
-              >
-                <Send size={14} />
-              </button>
-            </div>
-
-            {/* Activity feed */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {activities.map((act) => {
-                const isSystem = act.type !== "comment";
-                return (
-                  <div key={act.id} style={{
-                    padding: "10px 14px", borderRadius: 12,
-                    background: isSystem ? "#f4f6f9" : "#fff",
-                    border: isSystem ? "none" : "1px solid #e8eef5",
-                  }}>
-                    {!isSystem && act.user_name && (
-                      <div style={{
-                        display: "flex", alignItems: "center", gap: 6, marginBottom: 6,
-                      }}>
-                        <div className={`flex items-center justify-center rounded-full text-[8px] font-bold ${avatarColor(act.user_name)}`}
-                          style={{ width: 20, height: 20 }}>
-                          {getInitials(act.user_name)}
-                        </div>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: "#2d4258" }}>{act.user_name}</span>
-                        <span style={{ fontSize: 11, color: "#94a3b8" }}>{formatDate(act.created_at)}</span>
-                      </div>
-                    )}
-                    <div style={{
-                      fontSize: 13,
-                      color: isSystem ? "#5e738b" : "#2d4258",
-                      fontStyle: isSystem ? "italic" : "normal",
-                    }}>
-                      {act.content}
-                      {isSystem && (
-                        <span style={{ fontSize: 11, color: "#94a3b8", marginLeft: 8 }}>
-                          {formatDate(act.created_at)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              {activities.length === 0 && (
-                <div style={{ fontSize: 13, color: "#94a3b8", textAlign: "center", padding: 16 }}>
-                  No activity yet.
-                </div>
-              )}
-            </div>
-          </div>
+            </>
+          ) : (
+            <ActivityPanel
+              activities={activities}
+              comment={comment}
+              sendingComment={sendingComment}
+              onCommentChange={setComment}
+              onAddComment={handleAddComment}
+            />
+          )}
         </div>
       </div>
 
@@ -710,6 +706,187 @@ function FieldRow({ label, icon, children }: { label: string; icon: React.ReactN
         {icon} {label}
       </div>
       {children}
+    </div>
+  );
+}
+
+function ActivityPanel({
+  activities,
+  comment,
+  sendingComment,
+  onCommentChange,
+  onAddComment,
+}: {
+  activities: Activity[];
+  comment: string;
+  sendingComment: boolean;
+  onCommentChange: (value: string) => void;
+  onAddComment: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minHeight: "100%" }}>
+      <div style={{
+        padding: "18px 18px 16px",
+        borderRadius: 16,
+        border: "1px solid #dbe6f2",
+        background: "linear-gradient(180deg, #fbfdff 0%, #f6faff 100%)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1f2d3d" }}>Activity</div>
+            <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 3 }}>
+              Log manual notes and review the full deal timeline in one place.
+            </div>
+          </div>
+          <span style={{
+            fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999,
+            background: "#eef4fb", color: "#4d6178", border: "1px solid #d7e2ee",
+          }}>
+            {activities.length} events
+          </span>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <textarea
+            value={comment}
+            onChange={(e) => onCommentChange(e.target.value)}
+            placeholder="Add a note, call outcome, next-step update, or stakeholder context..."
+            rows={5}
+            style={{
+              width: "100%",
+              borderRadius: 14,
+              border: "1px solid #dbe6f2",
+              padding: "12px 14px",
+              fontSize: 14,
+              resize: "vertical",
+              outline: "none",
+              fontFamily: "inherit",
+              background: "#fff",
+              lineHeight: 1.6,
+            }}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button
+              onClick={onAddComment}
+              disabled={!comment.trim() || sendingComment}
+              style={{
+                minWidth: 120,
+                height: 40,
+                borderRadius: 10,
+                border: "none",
+                background: comment.trim() ? "#175089" : "#e8eef5",
+                color: comment.trim() ? "#fff" : "#94a3b8",
+                cursor: comment.trim() ? "pointer" : "default",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                fontSize: 13,
+                fontWeight: 700,
+              }}
+            >
+              <Send size={14} />
+              {sendingComment ? "Saving..." : "Add Activity"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {activities.map((act) => (
+          <ActivityFeedItem key={act.id} activity={act} />
+        ))}
+        {activities.length === 0 && (
+          <div style={{
+            borderRadius: 16,
+            border: "1px dashed #d7e2ee",
+            background: "#fbfdff",
+            padding: "36px 20px",
+            textAlign: "center",
+            color: "#94a3b8",
+          }}>
+            <ActivityIcon size={24} style={{ margin: "0 auto 10px", opacity: 0.5 }} />
+            <div style={{ fontSize: 14, fontWeight: 600 }}>No activity yet</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Use the composer above to add the first update for this deal.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActivityFeedItem({ activity }: { activity: Activity }) {
+  const Icon = ACTIVITY_ICON[activity.type] ?? ActivityIcon;
+  const isSystem = activity.type !== "comment";
+  const actor = activity.user_name || activity.aircall_user_name || activity.source || "System";
+
+  return (
+    <div style={{
+      padding: "14px 16px",
+      borderRadius: 16,
+      background: isSystem ? "#f7f9fc" : "#fff",
+      border: "1px solid #e8eef5",
+      boxShadow: "0 1px 3px rgba(17,34,68,0.04)",
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <div style={{
+          width: 36,
+          height: 36,
+          borderRadius: 12,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: isSystem ? "#eaf0f7" : "#eef4fb",
+          color: isSystem ? "#60758b" : "#175089",
+          flexShrink: 0,
+        }}>
+          <Icon size={16} />
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#2d4258", textTransform: "capitalize" }}>
+                {activity.type.replace(/_/g, " ")}
+              </span>
+              <span style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: "#eef4fb",
+                color: "#60758b",
+              }}>
+                {actor}
+              </span>
+            </div>
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>{formatDate(activity.created_at)}</span>
+          </div>
+          {activity.content && (
+            <div style={{
+              fontSize: 14,
+              color: "#33485f",
+              lineHeight: 1.65,
+              marginTop: 8,
+              whiteSpace: "pre-wrap",
+            }}>
+              {activity.content}
+            </div>
+          )}
+          {activity.ai_summary && (
+            <div style={{
+              marginTop: 10,
+              padding: "10px 12px",
+              borderRadius: 12,
+              background: "#fff6ef",
+              border: "1px solid #ffd9c2",
+              fontSize: 12,
+              color: "#b45309",
+            }}>
+              AI summary: {activity.ai_summary}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

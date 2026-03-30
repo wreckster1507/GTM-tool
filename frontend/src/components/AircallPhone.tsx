@@ -4,7 +4,7 @@
  * Mount once at the app root. Exposes window.__aircallDial(phoneNumber) so any
  * component can trigger a call without prop drilling.
  *
- * The panel slides in from the bottom-right when a call is triggered or when
+ * The panel slides in from the top-right when a call is triggered or when
  * the rep manually opens it. It can be minimised to a small tab.
  */
 import { useEffect, useRef, useState } from "react";
@@ -28,6 +28,7 @@ interface CallState {
 }
 
 export default function AircallPhonePanel() {
+  const panelTop = 118;
   const [open, setOpen] = useState(false);
   const [minimised, setMinimised] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
@@ -167,6 +168,16 @@ export default function AircallPhonePanel() {
     ended: "#64748b",
   }[callState.status];
 
+  const statusLabel = callState.active
+    ? callState.status === "answered"
+      ? formatDuration(callState.duration)
+      : callState.status === "ringing"
+        ? "Ringing..."
+        : "Call ended"
+    : sdkReady
+      ? "Ready for calls"
+      : "Loading workspace...";
+
   return (
     <>
       {/* ── Aircall workspace div — ALWAYS in DOM (hidden offscreen when closed) ── */}
@@ -188,27 +199,58 @@ export default function AircallPhonePanel() {
         <button
           onClick={() => { setOpen(true); setMinimised(false); }}
           style={{
-            position: "fixed", bottom: 24, right: 24, zIndex: 900,
-            width: 52, height: 52, borderRadius: "50%",
-            background: callState.active
-              ? "linear-gradient(135deg, #16a34a, #15803d)"
-              : "linear-gradient(135deg, #0f2744, #175089)",
-            border: "none", cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 8px 24px rgba(15,39,68,0.28)",
+            position: "fixed", top: panelTop, right: 24, zIndex: 900,
+            width: 194,
+            borderRadius: 20,
+            border: "1px solid #d9e6f2",
+            background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(243,248,255,0.98) 100%)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "12px 14px",
+            boxShadow: "0 16px 36px rgba(15,39,68,0.10)",
             transition: "all 0.2s ease",
+            textAlign: "left",
+            backdropFilter: "blur(12px)",
           }}
           title="Open Aircall phone"
         >
-          {callState.active
-            ? <PhoneCall size={22} color="#fff" />
-            : <Phone size={20} color="#fff" />
-          }
+          <span
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 14,
+              background: callState.active
+                ? "linear-gradient(135deg, #0f7b4b, #16a34a)"
+                : "linear-gradient(135deg, #0f2744, #175089)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
+            }}
+          >
+            {callState.status === "ended"
+              ? <PhoneMissed size={16} color="#ffffff" />
+              : callState.active
+                ? <PhoneCall size={16} color="#ffffff" />
+                : <Phone size={16} color="#ffffff" />
+            }
+          </span>
+          <span style={{ minWidth: 0, display: "grid", gap: 2 }}>
+            <span style={{ color: "#18324b", fontSize: 13, fontWeight: 800, lineHeight: 1.1 }}>
+              Aircall
+            </span>
+            <span style={{ color: "#6a7f96", fontSize: 11.5, fontWeight: 600, lineHeight: 1.2 }}>
+              {statusLabel}
+            </span>
+          </span>
           {callState.active && (
             <span style={{
-              position: "absolute", top: -4, right: -4,
-              width: 14, height: 14, borderRadius: "50%",
-              background: "#ef4444", border: "2px solid #fff",
+              position: "absolute", top: 10, right: 10,
+              width: 10, height: 10, borderRadius: "50%",
+              background: "#ef4444", border: "2px solid #ffffff",
               animation: "pulse 1.5s infinite",
             }} />
           )}
@@ -218,75 +260,69 @@ export default function AircallPhonePanel() {
       {/* ── Phone panel ── */}
       {open && (
         <div style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 950,
-          width: minimised ? 260 : 400,
-          borderRadius: 20,
-          background: "#fff",
-          border: "1px solid #d5e3ef",
-          boxShadow: "0 24px 48px rgba(14,38,66,0.18)",
+          position: "fixed", top: panelTop, right: 24, zIndex: 950,
+          width: minimised ? 244 : 392,
+          maxWidth: "calc(100vw - 36px)",
+          borderRadius: 24,
+          background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,251,255,0.98) 100%)",
+          border: "1px solid #d8e4ef",
+          boxShadow: "0 24px 54px rgba(14,38,66,0.14)",
           overflow: "hidden",
-          transition: "width 0.2s ease",
+          transition: "width 0.2s ease, transform 0.2s ease",
           display: "flex", flexDirection: "column",
+          backdropFilter: "blur(14px)",
         }}>
           {/* Header — z-index ensures it stays clickable above iframe */}
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "12px 16px",
-            background: "linear-gradient(135deg, #0f2744, #175089)",
-            color: "#fff",
+            padding: "14px 16px",
+            background: "linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(240,246,255,0.92) 100%)",
+            color: "#18324b",
             position: "relative",
             zIndex: 2,
             flexShrink: 0,
+            borderBottom: "1px solid #e3edf6",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{
-                width: 30, height: 30, borderRadius: "50%",
-                background: "rgba(255,255,255,0.12)",
+                width: 36, height: 36, borderRadius: 14,
+                background: callState.active
+                  ? "linear-gradient(135deg, #e8f8f0, #d8f2e5)"
+                  : "linear-gradient(135deg, #eef5ff, #e6f0fb)",
                 display: "flex", alignItems: "center", justifyContent: "center",
+                border: "1px solid #d8e5f2",
               }}>
                 {callState.status === "answered"
-                  ? <PhoneCall size={14} color="#4ade80" />
+                  ? <PhoneCall size={15} color="#1f8f5f" />
                   : callState.status === "ended"
-                    ? <PhoneOff size={14} color="#94a3b8" />
-                    : <Phone size={14} color="#fff" />
+                    ? <PhoneOff size={15} color="#7b8ea3" />
+                    : <Phone size={15} color="#175089" />
                 }
               </div>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>
+                <div style={{ fontSize: 13, fontWeight: 800 }}>
                   {callState.active
                     ? callState.contactName || callState.phoneNumber || "Calling…"
                     : "Aircall Phone"
                   }
                 </div>
-                {callState.active && (
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, display: "inline-block" }} />
-                    {callState.status === "answered"
-                      ? formatDuration(callState.duration)
-                      : callState.status === "ringing"
-                        ? "Ringing…"
-                        : "Call ended"
-                    }
-                  </div>
-                )}
-                {!callState.active && (
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
-                    {sdkReady ? "Ready" : "Loading…"}
-                  </div>
-                )}
+                <div style={{ fontSize: 11.5, color: "#6d8297", display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, display: "inline-block" }} />
+                  {statusLabel}
+                </div>
               </div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
               <button
                 onClick={() => setMinimised(m => !m)}
-                style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer", color: "#fff" }}
+                style={{ background: "#ffffff", border: "1px solid #d9e5f0", borderRadius: 10, padding: "6px 8px", cursor: "pointer", color: "#5b7087" }}
                 title={minimised ? "Expand" : "Minimise"}
               >
                 <Minus size={14} />
               </button>
               <button
                 onClick={() => setOpen(false)}
-                style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer", color: "#fff" }}
+                style={{ background: "#ffffff", border: "1px solid #d9e5f0", borderRadius: 10, padding: "6px 8px", cursor: "pointer", color: "#5b7087" }}
                 title="Close"
               >
                 <X size={14} />
@@ -310,9 +346,10 @@ export default function AircallPhonePanel() {
               }}
               style={{
                 width: "100%",
-                height: 650,
+                height: 620,
                 position: "relative",
                 zIndex: 1,
+                background: "#ffffff",
               }}
             />
           )}
@@ -321,8 +358,8 @@ export default function AircallPhonePanel() {
           {callState.status === "ended" && !minimised && (
             <div style={{
               padding: "10px 16px",
-              background: "#f0fdf4",
-              borderTop: "1px solid #bbf7d0",
+              background: "#edf9f3",
+              borderTop: "1px solid #cdeed9",
               fontSize: 12, color: "#166534",
               display: "flex", alignItems: "center", gap: 6,
               flexShrink: 0,
