@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { accountSourcingApi, angelMappingApi, companiesApi, contactsApi } from "../lib/api";
-import type { Company, Contact, AngelInvestor, AngelMapping } from "../types";
+import { accountSourcingApi, angelMappingApi, contactsApi } from "../lib/api";
+import type { Contact, AngelInvestor, AngelMapping } from "../types";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
@@ -92,16 +92,19 @@ export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
+  const pageSize = 50;
 
   // ── Contacts state ───────────────────────────────────────────────────
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [companyNameById, setCompanyNameById] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
-  const [companyFilter, setCompanyFilter] = useState("");
   const [personaFilter, setPersonaFilter] = useState("");
   const [laneFilter, setLaneFilter] = useState("");
   const [sequenceFilter, setSequenceFilter] = useState("");
   const [emailFilter, setEmailFilter] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [contactsTotal, setContactsTotal] = useState(0);
+  const [contactsPages, setContactsPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [resetting, setResetting] = useState(false);
@@ -117,13 +120,21 @@ export default function Contacts() {
   const [showAddInvestor, setShowAddInvestor] = useState(false);
   const [newInvestor, setNewInvestor] = useState({ name: "", current_role: "", current_company: "" });
 
-  const load = () => {
+  const loadContacts = () => {
     setLoading(true);
-    Promise.all([contactsApi.list(), companiesApi.list()]).then(([cs, co]) => {
-      setContacts(cs);
-      setCompanyNameById(Object.fromEntries(co.map((c: Company) => [c.id, c.name])));
-      setLoading(false);
-    });
+    contactsApi.searchPaginated({
+      skip: (page - 1) * pageSize,
+      limit: pageSize,
+      q: debouncedSearch || undefined,
+      persona: personaFilter || undefined,
+      outreachLane: laneFilter || undefined,
+      sequenceStatus: sequenceFilter || undefined,
+      emailState: emailFilter || undefined,
+    }).then((result) => {
+      setContacts(result.items);
+      setContactsTotal(result.total);
+      setContactsPages(result.pages);
+    }).finally(() => setLoading(false));
   };
 
   const loadAngels = () => {
@@ -139,7 +150,6 @@ export default function Contacts() {
   };
 
   useEffect(() => {
-    load();
     loadAngels();
   }, []);
 
@@ -147,37 +157,21 @@ export default function Contacts() {
     setTab(location.pathname === "/angel-mapping" ? "angel-mapping" : "contacts");
   }, [location.pathname]);
 
-  // ── Contacts filtering ──────────────────────────────────────────────
-  const companyOptions = Array.from(
-    new Set(
-      contacts
-        .map((c) => c.company_name || (c.company_id ? companyNameById[c.company_id] : ""))
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [search]);
 
-  const filtered = contacts.filter((c) => {
-    const companyLabel = c.company_name || (c.company_id ? companyNameById[c.company_id] : "") || "";
-    const matchesSearch =
-      !search.trim()
-      || `${c.first_name} ${c.last_name}`.toLowerCase().includes(search.toLowerCase())
-      || (c.email || "").toLowerCase().includes(search.toLowerCase())
-      || (c.title || "").toLowerCase().includes(search.toLowerCase())
-      || companyLabel.toLowerCase().includes(search.toLowerCase());
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter]);
 
-    const matchesCompany = !companyFilter || companyLabel === companyFilter;
-    const matchesPersona = !personaFilter || (c.persona || "unknown") === personaFilter;
-    const matchesLane = !laneFilter || (c.outreach_lane || "") === laneFilter;
-    const matchesSequence = !sequenceFilter || (c.sequence_status || "") === sequenceFilter;
-    const matchesEmail =
-      !emailFilter
-      || (emailFilter === "has_email" && Boolean(c.email))
-      || (emailFilter === "missing_email" && !c.email)
-      || (emailFilter === "verified" && c.email_verified)
-      || (emailFilter === "unverified" && !c.email_verified);
-
-    return matchesSearch && matchesCompany && matchesPersona && matchesLane && matchesSequence && matchesEmail;
-  });
+  useEffect(() => {
+    if (tab !== "contacts") return;
+    loadContacts();
+  }, [tab, page, debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter]);
 
   // ── Angel mapping grouping ──────────────────────────────────────────
   const filteredMappings = mappings
@@ -308,7 +302,7 @@ export default function Contacts() {
                     fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
                     background: tab === "contacts" ? "#175089" : "#e8f0fb",
                     color: tab === "contacts" ? "#fff" : "#175089",
-                  }}>{contacts.length}</span>
+                  }}>{contactsTotal}</span>
                 </div>
                 <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 2 }}>
                   Stakeholders, personas, and outreach readiness
@@ -411,7 +405,8 @@ export default function Contacts() {
                     setResetting(true);
                     try {
                       const result = await accountSourcingApi.resetData("prospecting");
-                      load();
+                      setPage(1);
+                      loadContacts();
                       window.alert(`Prospecting cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
                     } finally {
                       setResetting(false);
@@ -473,7 +468,7 @@ export default function Contacts() {
           <>
             {/* Filters */}
             {(() => {
-              const hasFilters = !!(companyFilter || personaFilter || laneFilter || sequenceFilter || emailFilter || search);
+              const hasFilters = !!(personaFilter || laneFilter || sequenceFilter || emailFilter || search);
               const selectStyle = (active: boolean): CSSProperties => ({
                 appearance: "none" as const,
                 WebkitAppearance: "none" as const,
@@ -493,13 +488,12 @@ export default function Contacts() {
                   border: "1px solid #e8eef5",
                   padding: "10px 14px",
                   boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
+                  position: "sticky",
+                  top: 16,
+                  zIndex: 5,
                 }}>
                   {/* Selects */}
                   {[
-                    {
-                      value: companyFilter, onChange: setCompanyFilter,
-                      options: [["", "All companies"], ...companyOptions.map(o => [o, o])],
-                    },
                     {
                       value: personaFilter, onChange: setPersonaFilter,
                       options: [["", "All personas"], ["economic_buyer", "Economic Buyer"], ["champion", "Champion"], ["technical_evaluator", "Tech Evaluator"], ["unknown", "Unknown"]],
@@ -548,7 +542,7 @@ export default function Contacts() {
                     background: "#f0f5fb", border: "1px solid #dce8f4",
                     borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap",
                   }}>
-                    {filtered.length} shown
+                    {contactsTotal === 0 ? "0 shown" : `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, contactsTotal)} of ${contactsTotal}`}
                   </span>
 
                   {/* Reset — only when filters active */}
@@ -556,7 +550,7 @@ export default function Contacts() {
                     <button
                       type="button"
                       onClick={() => {
-                        setSearch(""); setCompanyFilter(""); setPersonaFilter("");
+                        setSearch(""); setPersonaFilter("");
                         setLaneFilter(""); setSequenceFilter(""); setEmailFilter("");
                       }}
                       style={{
@@ -578,7 +572,7 @@ export default function Contacts() {
             {/* Contacts Table */}
             {loading ? (
               <div className="crm-panel p-14 text-center crm-muted">Loading contacts...</div>
-            ) : filtered.length === 0 ? (
+            ) : contacts.length === 0 ? (
               <div className="crm-panel p-14 text-center text-[#6f8297]">
                 <Users className="h-12 w-12 mx-auto mb-4 opacity-30" />
                 No contacts match your search.
@@ -589,19 +583,19 @@ export default function Contacts() {
                   <table className="crm-table" style={{ minWidth: 1080 }}>
                     <thead>
                       <tr>
-                        <th>Name</th>
-                        <th>Company</th>
-                        <th>Title</th>
-                        <th>Email</th>
-                        <th>Persona</th>
-                        <th>AE</th>
-                        <th>SDR</th>
-                        <th>Verified</th>
-                        <th>Action</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Name</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Company</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Title</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Persona</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>AE</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>SDR</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Verified</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered.map((c) => (
+                      {contacts.map((c) => (
                         <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
                           <td>
                             <div className="flex items-center gap-3 min-w-0">
@@ -615,12 +609,12 @@ export default function Contacts() {
                             </div>
                           </td>
                           <td>
-                            {c.company_name || (c.company_id ? companyNameById[c.company_id] : undefined) ? (
+                            {c.company_name ? (
                               <button
                                 onClick={(e) => { e.stopPropagation(); navigate(`/companies/${c.company_id}`); }}
                                 className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
                               >
-                                {c.company_name ?? (c.company_id ? companyNameById[c.company_id] : "")}
+                                {c.company_name}
                               </button>
                             ) : (
                               <span className="text-[#96a7ba]">-</span>
@@ -646,7 +640,7 @@ export default function Contacts() {
                               entityId={c.id}
                               currentAssignedId={c.assigned_to_id}
                               currentAssignedName={c.assigned_to_name || c.assigned_rep_email}
-                              onAssigned={() => load()}
+                              onAssigned={() => loadContacts()}
                               role="ae"
                               label="AE"
                               compact
@@ -658,7 +652,7 @@ export default function Contacts() {
                               entityId={c.id}
                               currentAssignedId={c.sdr_id}
                               currentAssignedName={c.sdr_name}
-                              onAssigned={() => load()}
+                              onAssigned={() => loadContacts()}
                               role="sdr"
                               label="SDR"
                               compact
@@ -702,7 +696,11 @@ export default function Contacts() {
                                   e.stopPropagation();
                                   if (!window.confirm(`Delete "${c.first_name} ${c.last_name}"?`)) return;
                                   await contactsApi.delete(c.id);
-                                  setContacts((prev) => prev.filter((x) => x.id !== c.id));
+                                  if (contacts.length === 1 && page > 1) {
+                                    setPage((current) => current - 1);
+                                  } else {
+                                    loadContacts();
+                                  }
                                 }}
                                 className="flex items-center justify-center h-12 w-12 rounded-xl text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
                                 title="Delete contact"
@@ -715,6 +713,58 @@ export default function Contacts() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+                <div style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 16px",
+                  borderTop: "1px solid #e8eef5",
+                  background: "#fbfdff",
+                  flexWrap: "wrap",
+                }}>
+                  <span style={{ color: "#71839a", fontSize: 12, fontWeight: 600 }}>
+                    Page {page} of {Math.max(contactsPages, 1)}
+                  </span>
+                  <div style={{ display: "inline-flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                      disabled={page <= 1}
+                      style={{
+                        height: 34,
+                        padding: "0 12px",
+                        borderRadius: 9,
+                        border: "1px solid #dce8f4",
+                        background: page <= 1 ? "#f7f9fc" : "#ffffff",
+                        color: page <= 1 ? "#9eb0c3" : "#4a6580",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: page <= 1 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.min(Math.max(contactsPages, 1), current + 1))}
+                      disabled={page >= contactsPages}
+                      style={{
+                        height: 34,
+                        padding: "0 12px",
+                        borderRadius: 9,
+                        border: "1px solid #dce8f4",
+                        background: page >= contactsPages ? "#f7f9fc" : "#ffffff",
+                        color: page >= contactsPages ? "#9eb0c3" : "#4a6580",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: page >= contactsPages ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

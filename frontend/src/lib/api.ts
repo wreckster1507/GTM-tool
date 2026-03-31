@@ -1,4 +1,5 @@
 import type {
+  AccountSourcingSummary,
   Company,
   Contact,
   Deal,
@@ -106,6 +107,28 @@ export const contactsApi = {
     const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (companyId) params.set("company_id", companyId);
     return requestPaginated<Contact>(`/api/v1/contacts/?${params}`);
+  },
+  searchPaginated: (params: {
+    skip?: number;
+    limit?: number;
+    companyId?: string;
+    q?: string;
+    persona?: string;
+    outreachLane?: string;
+    sequenceStatus?: string;
+    emailState?: string;
+  }) => {
+    const search = new URLSearchParams({
+      skip: String(params.skip ?? 0),
+      limit: String(params.limit ?? 50),
+    });
+    if (params.companyId) search.set("company_id", params.companyId);
+    if (params.q) search.set("q", params.q);
+    if (params.persona) search.set("persona", params.persona);
+    if (params.outreachLane) search.set("outreach_lane", params.outreachLane);
+    if (params.sequenceStatus) search.set("sequence_status", params.sequenceStatus);
+    if (params.emailState) search.set("email_state", params.emailState);
+    return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),
   enrich: (id: string) =>
@@ -565,6 +588,32 @@ export const accountSourcingApi = {
 
   listCompanies: (skip = 0, limit = 200, assignedRepEmail?: string) =>
     requestList<Company>(`/api/v1/account-sourcing/companies?skip=${skip}&limit=${limit}${assignedRepEmail ? `&assigned_rep_email=${encodeURIComponent(assignedRepEmail)}` : ""}`),
+
+  listCompaniesPaginated: (params?: {
+    skip?: number;
+    limit?: number;
+    q?: string;
+    icpTier?: string;
+    disposition?: string;
+    recommendedOutreachLane?: string;
+    assignedRepEmail?: string;
+  }) => {
+    const search = new URLSearchParams({
+      skip: String(params?.skip ?? 0),
+      limit: String(params?.limit ?? 50),
+    });
+    if (params?.q) search.set("q", params.q);
+    if (params?.icpTier) search.set("icp_tier", params.icpTier);
+    if (params?.disposition) search.set("disposition", params.disposition);
+    if (params?.recommendedOutreachLane) search.set("recommended_outreach_lane", params.recommendedOutreachLane);
+    if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
+    return requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
+  },
+
+  summary: (assignedRepEmail?: string) =>
+    request<AccountSourcingSummary>(
+      `/api/v1/account-sourcing/summary${assignedRepEmail ? `?assigned_rep_email=${encodeURIComponent(assignedRepEmail)}` : ""}`
+    ),
 
   getCompany: (companyId: string) =>
     request<Company>(`/api/v1/account-sourcing/companies/${companyId}`),

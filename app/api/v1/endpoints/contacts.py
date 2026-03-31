@@ -19,6 +19,11 @@ async def list_contacts(
     session: DBSession,
     pagination: Pagination,
     company_id: Optional[UUID] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Search by name, email, title, or company"),
+    persona: Optional[str] = Query(default=None),
+    outreach_lane: Optional[str] = Query(default=None),
+    sequence_status: Optional[str] = Query(default=None),
+    email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified"),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
@@ -27,6 +32,11 @@ async def list_contacts(
     repo = ContactRepository(session)
     items, total = await repo.list_with_company_name(
         company_id=company_id,
+        q=q,
+        persona=persona,
+        outreach_lane=outreach_lane,
+        sequence_status=sequence_status,
+        email_state=email_state,
         skip=pagination.skip,
         limit=pagination.limit,
     )

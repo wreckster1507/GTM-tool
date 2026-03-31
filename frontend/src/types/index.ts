@@ -92,6 +92,21 @@ export interface SourcingBatch {
   updated_at: string;
 }
 
+export interface AccountSourcingSummary {
+  total_companies: number;
+  hot_count: number;
+  warm_count: number;
+  high_priority_count: number;
+  engaged_count: number;
+  unresolved_count: number;
+  unenriched_count: number;
+  researched_count: number;
+  target_verdict_count: number;
+  watch_verdict_count: number;
+  enriched_count: number;
+  total_contacts: number;
+}
+
 /** Standard paginated list wrapper returned by all GET list endpoints. */
 export interface Paginated<T> {
   items: T[];

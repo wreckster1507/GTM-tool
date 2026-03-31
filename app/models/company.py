@@ -37,15 +37,15 @@ class Company(CompanyBase, table=True):
     enrichment_cache: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     assigned_rep: Optional[str] = None
-    assigned_rep_email: Optional[str] = None
+    assigned_rep_email: Optional[str] = Field(default=None, index=True)
     assigned_rep_name: Optional[str] = None
     outreach_status: Optional[str] = None
-    disposition: Optional[str] = None
+    disposition: Optional[str] = Field(default=None, index=True)
     rep_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
     account_thesis: Optional[str] = Field(default=None, sa_column=Column(Text))
     why_now: Optional[str] = Field(default=None, sa_column=Column(Text))
     beacon_angle: Optional[str] = Field(default=None, sa_column=Column(Text))
-    recommended_outreach_lane: Optional[str] = None
+    recommended_outreach_lane: Optional[str] = Field(default=None, index=True)
     instantly_campaign_id: Optional[str] = None
     prospecting_profile: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     outreach_plan: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
@@ -55,7 +55,7 @@ class Company(CompanyBase, table=True):
     pe_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     vc_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     strategic_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -96,6 +96,21 @@ class CompanyRead(CompanyBase):
     strategic_investors: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class CompanySourcingSummary(SQLModel):
+    total_companies: int
+    hot_count: int
+    warm_count: int
+    high_priority_count: int
+    engaged_count: int
+    unresolved_count: int
+    unenriched_count: int
+    researched_count: int
+    target_verdict_count: int
+    watch_verdict_count: int
+    enriched_count: int
+    total_contacts: int
 
 
 class CompanyUpdate(SQLModel):

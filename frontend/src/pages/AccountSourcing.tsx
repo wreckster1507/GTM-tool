@@ -20,7 +20,7 @@ import {
 
 import { accountSourcingApi } from "../lib/api";
 import { getAccountPrioritySnapshot } from "../lib/utils";
-import type { Company, SourcingBatch } from "../types";
+import type { AccountSourcingSummary, Company, SourcingBatch } from "../types";
 
 const colors = {
   bg: "#f4f7fb",
@@ -374,15 +374,19 @@ function CompanyCard({ company }: { company: Company }) {
 }
 
 export default function AccountSourcing() {
+  const pageSize = 40;
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [summary, setSummary] = useState<AccountSourcingSummary | null>(null);
   const [batches, setBatches] = useState<SourcingBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [tierFilter, setTierFilter] = useState("");
-  const [priorityFilter, setPriorityFilter] = useState("");
   const [dispositionFilter, setDispositionFilter] = useState("");
   const [laneFilter, setLaneFilter] = useState("");
-  const [ownerFilter, setOwnerFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [companyTotal, setCompanyTotal] = useState(0);
+  const [companyPages, setCompanyPages] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
   const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
@@ -391,17 +395,42 @@ export default function AccountSourcing() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, b] = await Promise.all([accountSourcingApi.listCompanies(), accountSourcingApi.listBatches()]);
-      setCompanies(c);
+      const [companyPage, companySummary, b] = await Promise.all([
+        accountSourcingApi.listCompaniesPaginated({
+          skip: (page - 1) * pageSize,
+          limit: pageSize,
+          q: debouncedSearch || undefined,
+          icpTier: tierFilter || undefined,
+          disposition: dispositionFilter || undefined,
+          recommendedOutreachLane: laneFilter || undefined,
+        }),
+        accountSourcingApi.summary(),
+        accountSourcingApi.listBatches(),
+      ]);
+      setCompanies(companyPage.items);
+      setCompanyTotal(companyPage.total);
+      setCompanyPages(companyPage.pages);
+      setSummary(companySummary);
       setBatches(b);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [debouncedSearch, dispositionFilter, laneFilter, page, tierFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, tierFilter, dispositionFilter, laneFilter]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -422,46 +451,21 @@ export default function AccountSourcing() {
     }
   }, [load]);
 
-  const q = search.trim().toLowerCase();
-  const ownerOptions = Array.from(
-    new Set(
-      companies
-        .map((company) => company.assigned_rep_email || company.assigned_rep_name || company.assigned_rep || "")
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
-  const list = companies
-    .filter((c) => {
-      const priority = getAccountPrioritySnapshot(c);
-      const matchesSearch = !q || (
-        c.name.toLowerCase().includes(q)
-        || c.domain.toLowerCase().includes(q)
-        || (c.industry || "").toLowerCase().includes(q)
-        || (c.assigned_rep || "").toLowerCase().includes(q)
-        || (c.assigned_rep_email || "").toLowerCase().includes(q)
-        || (c.disposition || "").toLowerCase().includes(q)
-        || (c.recommended_outreach_lane || "").toLowerCase().includes(q)
-      );
-      const matchesTier = !tierFilter || (c.icp_tier || "") === tierFilter;
-      const matchesPriority = !priorityFilter || priority.priorityBand === priorityFilter;
-      const matchesDisposition = !dispositionFilter || (c.disposition || "") === dispositionFilter;
-      const matchesLane = !laneFilter || (c.recommended_outreach_lane || "") === laneFilter;
-      const ownerValue = c.assigned_rep_email || c.assigned_rep_name || c.assigned_rep || "";
-      const matchesOwner = !ownerFilter || ownerValue === ownerFilter;
-
-      return matchesSearch && matchesTier && matchesPriority && matchesDisposition && matchesLane && matchesOwner;
-    })
-    .slice()
-    .sort((a, b) => getAccountPrioritySnapshot(b).priorityScore - getAccountPrioritySnapshot(a).priorityScore);
-  const hotCount = companies.filter((c) => c.icp_tier === "hot").length;
-  const warmCount = companies.filter((c) => c.icp_tier === "warm").length;
-  const highPriorityCount = companies.filter((c) => getAccountPrioritySnapshot(c).priorityBand === "high").length;
-  const engagedCount = companies.filter((c) => ["interested", "working"].includes((c.disposition || "").toLowerCase())).length;
-  const unresolvedCount = companies.filter((c) => c.domain.endsWith(".unknown")).length;
-  const unenrichedCount = companies.filter((c) => !c.enriched_at).length;
-  const researchedCount = companies.filter((company) => Boolean(getIcpAnalysis(company))).length;
-  const targetVerdictCount = companies.filter((company) => String(getIcpAnalysis(company)?.classification || "").toLowerCase() === "target").length;
-  const watchVerdictCount = companies.filter((company) => String(getIcpAnalysis(company)?.classification || "").toLowerCase() === "watch").length;
+  const hasFilters = !!(search || tierFilter || dispositionFilter || laneFilter);
+  const totalCompanies = summary?.total_companies ?? 0;
+  const hotCount = summary?.hot_count ?? 0;
+  const warmCount = summary?.warm_count ?? 0;
+  const highPriorityCount = summary?.high_priority_count ?? 0;
+  const engagedCount = summary?.engaged_count ?? 0;
+  const unresolvedCount = summary?.unresolved_count ?? 0;
+  const unenrichedCount = summary?.unenriched_count ?? 0;
+  const researchedCount = summary?.researched_count ?? 0;
+  const targetVerdictCount = summary?.target_verdict_count ?? 0;
+  const watchVerdictCount = summary?.watch_verdict_count ?? 0;
+  const enrichedCount = summary?.enriched_count ?? 0;
+  const totalContacts = summary?.total_contacts ?? 0;
+  const showingStart = companyTotal === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingEnd = companyTotal === 0 ? 0 : Math.min(page * pageSize, companyTotal);
 
   return (
     <div style={pageStyle}>
@@ -616,7 +620,7 @@ export default function AccountSourcing() {
           <SummaryCard
             icon={<Building2 size={18} />}
             label="Sourced Accounts"
-            value={String(companies.length)}
+            value={String(totalCompanies)}
             hint="Total accounts currently available for enrichment and prospecting."
             tone="neutral"
           />
@@ -677,11 +681,10 @@ export default function AccountSourcing() {
         <UploadPanel onUploaded={() => { load(); }} />
 
         {/* Enrichment Progress — always visible when companies exist */}
-        {companies.length > 0 && (() => {
-          const enrichedCt = companies.filter((c) => c.enriched_at).length;
+        {totalCompanies > 0 && (() => {
+          const enrichedCt = enrichedCount;
           const icpDoneCt = researchedCount;
-          const totalCt = companies.length;
-          const totalContacts = companies.reduce((sum, c) => sum + ((c.outreach_plan as Record<string, unknown>)?.contact_count as number || 0), 0);
+          const totalCt = totalCompanies;
           const allDone = enrichedCt === totalCt && icpDoneCt === totalCt;
           const pct = totalCt ? Math.round((icpDoneCt / totalCt) * 100) : 0;
           return (
@@ -765,115 +768,108 @@ export default function AccountSourcing() {
           </div>
         ) : null}
 
-        <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ position: "relative", minWidth: 260 }}>
-            <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: 11 }} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search companies..."
-              style={{
-                width: "100%",
-                border: `1px solid ${colors.border}`,
-                borderRadius: 10,
-                padding: "10px 12px 10px 30px",
-                fontSize: 14,
-                outline: "none",
-              }}
-            />
+        <div
+          style={{
+            ...cardStyle,
+            padding: "14px 16px",
+            display: "grid",
+            gap: 12,
+            position: "sticky",
+            top: 16,
+            zIndex: 5,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ position: "relative", minWidth: 260, flex: 1 }}>
+              <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: 11 }} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search companies..."
+                style={{
+                  width: "100%",
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 10,
+                  padding: "10px 12px 10px 30px",
+                  fontSize: 14,
+                  outline: "none",
+                }}
+              />
+            </div>
+            <div style={{ color: colors.sub, fontSize: 14, display: "flex", gap: 20, flexWrap: "wrap" }}>
+              <span>{totalCompanies} companies sourced</span>
+              <span>{highPriorityCount} high-priority</span>
+              <span>{researchedCount} researched</span>
+              <span>{targetVerdictCount} target verdicts</span>
+            </div>
           </div>
-          <div style={{ color: colors.sub, fontSize: 14, display: "flex", gap: 20, flexWrap: "wrap" }}>
-            <span>{companies.length} companies sourced</span>
-            <span>{hotCount} hot</span>
-            <span>{warmCount} warm</span>
-            <span>{highPriorityCount} high-priority</span>
-            <span>{researchedCount} researched</span>
-            <span>{targetVerdictCount} target verdicts</span>
-          </div>
-        </div>
 
-        <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <select
-              value={tierFilter}
-              onChange={(e) => setTierFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 130 }}
-            >
-              <option value="">All ICP tiers</option>
-              <option value="hot">Hot</option>
-              <option value="warm">Warm</option>
-              <option value="monitor">Monitor</option>
-              <option value="cold">Cold</option>
-            </select>
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 140 }}
-            >
-              <option value="">All priorities</option>
-              <option value="high">High priority</option>
-              <option value="medium">Medium priority</option>
-              <option value="low">Low priority</option>
-            </select>
-            <select
-              value={dispositionFilter}
-              onChange={(e) => setDispositionFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 150 }}
-            >
-              <option value="">All dispositions</option>
-              {DISPOSITION_OPTIONS.filter((option) => option.value).map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <select
-              value={laneFilter}
-              onChange={(e) => setLaneFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 160 }}
-            >
-              <option value="">All lanes</option>
-              {OUTREACH_LANE_OPTIONS.filter((option) => option.value).map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <select
-              value={ownerFilter}
-              onChange={(e) => setOwnerFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 180 }}
-            >
-              <option value="">All owners</option>
-              {ownerOptions.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700 }}>{list.length} shown</span>
-            <button
-              type="button"
-              onClick={() => {
-                setSearch("");
-                setTierFilter("");
-                setPriorityFilter("");
-                setDispositionFilter("");
-                setLaneFilter("");
-                setOwnerFilter("");
-              }}
-              style={{
-                border: `1px solid ${colors.border}`,
-                background: colors.card,
-                color: colors.text,
-                borderRadius: 10,
-                padding: "10px 14px",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >
-              Reset filters
-            </button>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                value={tierFilter}
+                onChange={(e) => setTierFilter(e.target.value)}
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 130 }}
+              >
+                <option value="">All ICP tiers</option>
+                <option value="hot">Hot</option>
+                <option value="warm">Warm</option>
+                <option value="monitor">Monitor</option>
+                <option value="cold">Cold</option>
+              </select>
+              <select
+                value={dispositionFilter}
+                onChange={(e) => setDispositionFilter(e.target.value)}
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 150 }}
+              >
+                <option value="">All dispositions</option>
+                {DISPOSITION_OPTIONS.filter((option) => option.value).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <select
+                value={laneFilter}
+                onChange={(e) => setLaneFilter(e.target.value)}
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 160 }}
+              >
+                <option value="">All lanes</option>
+                {OUTREACH_LANE_OPTIONS.filter((option) => option.value).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700 }}>
+                {companyTotal === 0 ? "0 shown" : `${showingStart}-${showingEnd} of ${companyTotal}`}
+              </span>
+              <span style={{ color: colors.faint, fontSize: 12 }}>Page {page} of {Math.max(companyPages, 1)}</span>
+              {hasFilters ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    setTierFilter("");
+                    setDispositionFilter("");
+                    setLaneFilter("");
+                  }}
+                  style={{
+                    border: `1px solid ${colors.border}`,
+                    background: colors.card,
+                    color: colors.text,
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Reset filters
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -881,16 +877,58 @@ export default function AccountSourcing() {
           <div style={{ ...cardStyle, padding: 36, textAlign: "center" }}>
             <Loader2 className="animate-spin" color={colors.primary} />
           </div>
-        ) : list.length === 0 ? (
+        ) : companies.length === 0 ? (
           <div style={{ ...cardStyle, padding: 34, textAlign: "center", color: colors.faint }}>
             <Building2 size={30} style={{ marginBottom: 8 }} />
-            {q ? "No companies match your search." : "No companies sourced yet."}
+            {hasFilters ? "No companies match these filters." : "No companies sourced yet."}
           </div>
         ) : (
           <div style={{ display: "grid", gap: 14 }}>
-            {list.map((c) => (
+            {companies.map((c) => (
               <CompanyCard key={c.id} company={c} />
             ))}
+            <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ color: colors.sub, fontSize: 13 }}>
+                {companyTotal === 0 ? "0 shown" : `Showing ${showingStart}-${showingEnd} of ${companyTotal} sourced companies`}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  style={{
+                    border: `1px solid ${colors.border}`,
+                    background: page <= 1 ? "#f5f7fb" : colors.card,
+                    color: page <= 1 ? colors.faint : colors.text,
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    fontWeight: 700,
+                    cursor: page <= 1 ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Previous
+                </button>
+                <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700, minWidth: 84, textAlign: "center" }}>
+                  Page {page} / {Math.max(companyPages, 1)}
+                </span>
+                <button
+                  type="button"
+                  disabled={page >= companyPages}
+                  onClick={() => setPage((current) => Math.min(companyPages, current + 1))}
+                  style={{
+                    border: `1px solid ${colors.border}`,
+                    background: page >= companyPages ? "#f5f7fb" : colors.card,
+                    color: page >= companyPages ? colors.faint : colors.text,
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    fontWeight: 700,
+                    cursor: page >= companyPages ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

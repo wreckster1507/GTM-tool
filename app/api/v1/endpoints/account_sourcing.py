@@ -20,15 +20,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, DBSession, Pagination
 from app.models.angel import AngelInvestor, AngelMapping
-from app.models.company import Company, CompanyRead, CompanyUpdate
+from app.models.company import Company, CompanyRead, CompanySourcingSummary, CompanyUpdate
 from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.repositories.company import CompanyRepository
+from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
     account_priority_snapshot,
     merge_company_from_upload,
@@ -171,6 +172,13 @@ def _joined_signal_values(items: object) -> str:
         if value:
             values.append(value)
     return " | ".join(values)
+
+
+def _icp_analysis(company: Company) -> dict:
+    cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+    entry = cache.get("icp_analysis") if isinstance(cache.get("icp_analysis"), dict) else {}
+    data = entry.get("data") if isinstance(entry.get("data"), dict) else None
+    return data if isinstance(data, dict) else entry
 
 
 def _company_export_row(company: Company) -> dict[str, str]:
@@ -592,24 +600,121 @@ async def get_batch_companies(batch_id: UUID, session: DBSession = None, page: P
 
 # ── All Sourced Companies ──────────────────────────────────────────────────────
 
-@router.get("/companies", response_model=list[CompanyRead])
+@router.get("/companies", response_model=PaginatedResponse[CompanyRead])
 async def list_sourced_companies(
     session: DBSession = None,
     page: Pagination = None,
+    q: str | None = Query(default=None),
+    icp_tier: str | None = Query(default=None),
+    disposition: str | None = Query(default=None),
+    recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
 ):
     """List all companies that came through account sourcing (have a batch ID)."""
-    stmt = (
-        select(Company)
-        .where(Company.sourcing_batch_id.isnot(None))
-        .offset(page.skip)
-        .limit(page.limit)
-        .order_by(Company.created_at.desc())
-    )
+    stmt = select(Company).where(Company.sourcing_batch_id.isnot(None))
+    search_term = (q or "").strip()
+    if search_term:
+        like = f"%{search_term}%"
+        stmt = stmt.where(
+            or_(
+                Company.name.ilike(like),
+                Company.domain.ilike(like),
+                Company.industry.ilike(like),
+                Company.assigned_rep.ilike(like),
+                Company.assigned_rep_email.ilike(like),
+                Company.disposition.ilike(like),
+                Company.recommended_outreach_lane.ilike(like),
+            )
+        )
+    if icp_tier:
+        stmt = stmt.where(Company.icp_tier == icp_tier)
+    if disposition:
+        stmt = stmt.where(Company.disposition == disposition)
+    if recommended_outreach_lane:
+        stmt = stmt.where(Company.recommended_outreach_lane == recommended_outreach_lane)
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
-    result = await session.execute(stmt)
-    return result.scalars().all()
+
+    total = (
+        await session.execute(
+            select(func.count()).select_from(stmt.order_by(None).subquery())
+        )
+    ).scalar_one()
+    items = (
+        await session.execute(
+            stmt.order_by(Company.created_at.desc(), Company.id.desc())
+            .offset(page.skip)
+            .limit(page.limit)
+        )
+    ).scalars().all()
+    return PaginatedResponse.build(items=items, total=total, skip=page.skip, limit=page.limit)
+
+
+@router.get("/summary", response_model=CompanySourcingSummary)
+async def get_sourced_company_summary(
+    session: DBSession = None,
+    assigned_rep_email: str | None = Query(default=None),
+):
+    stmt = select(Company).where(Company.sourcing_batch_id.isnot(None))
+    if assigned_rep_email:
+        stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
+
+    companies = (await session.execute(stmt)).scalars().all()
+
+    hot_count = 0
+    warm_count = 0
+    high_priority_count = 0
+    engaged_count = 0
+    unresolved_count = 0
+    unenriched_count = 0
+    researched_count = 0
+    target_verdict_count = 0
+    watch_verdict_count = 0
+    enriched_count = 0
+    total_contacts = 0
+
+    for company in companies:
+        if company.icp_tier == "hot":
+            hot_count += 1
+        if company.icp_tier == "warm":
+            warm_count += 1
+        if account_priority_snapshot(company).get("priority_band") == "high":
+            high_priority_count += 1
+        if (company.disposition or "").lower() in {"interested", "working"}:
+            engaged_count += 1
+        if company.domain.endswith(".unknown"):
+            unresolved_count += 1
+        if company.enriched_at:
+            enriched_count += 1
+        else:
+            unenriched_count += 1
+
+        icp_analysis = _icp_analysis(company)
+        if icp_analysis:
+            researched_count += 1
+        classification = str(icp_analysis.get("classification") or "").lower()
+        if classification == "target":
+            target_verdict_count += 1
+        if classification == "watch":
+            watch_verdict_count += 1
+
+        outreach_plan = company.outreach_plan if isinstance(company.outreach_plan, dict) else {}
+        total_contacts += int(outreach_plan.get("contact_count") or 0)
+
+    return CompanySourcingSummary(
+        total_companies=len(companies),
+        hot_count=hot_count,
+        warm_count=warm_count,
+        high_priority_count=high_priority_count,
+        engaged_count=engaged_count,
+        unresolved_count=unresolved_count,
+        unenriched_count=unenriched_count,
+        researched_count=researched_count,
+        target_verdict_count=target_verdict_count,
+        watch_verdict_count=watch_verdict_count,
+        enriched_count=enriched_count,
+        total_contacts=total_contacts,
+    )
 
 
 # ── Single Company Detail ─────────────────────────────────────────────────────

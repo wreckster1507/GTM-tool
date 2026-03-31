@@ -10,13 +10,13 @@ from sqlmodel import Field, SQLModel
 class ContactBase(SQLModel):
     first_name: str
     last_name: str
-    email: Optional[str] = None
+    email: Optional[str] = Field(default=None, index=True)
     email_verified: bool = False
-    phone: Optional[str] = None
+    phone: Optional[str] = Field(default=None, index=True)
     title: Optional[str] = None
     seniority: Optional[str] = None
     linkedin_url: Optional[str] = None
-    persona: Optional[str] = None
+    persona: Optional[str] = Field(default=None, index=True)
 
 
 class Contact(ContactBase, table=True):
@@ -32,8 +32,8 @@ class Contact(ContactBase, table=True):
     assigned_rep_email: Optional[str] = None
     sdr_id: Optional[UUID] = Field(default=None, index=True)  # SDR
     sdr_name: Optional[str] = None
-    outreach_lane: Optional[str] = None
-    sequence_status: Optional[str] = None
+    outreach_lane: Optional[str] = Field(default=None, index=True)
+    sequence_status: Optional[str] = Field(default=None, index=True)
     instantly_status: Optional[str] = None
     instantly_campaign_id: Optional[str] = None
     warm_intro_strength: Optional[int] = None
@@ -41,7 +41,7 @@ class Contact(ContactBase, table=True):
     conversation_starter: Optional[str] = None
     personalization_notes: Optional[str] = None
     talking_points: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
