@@ -74,6 +74,11 @@ export interface Contact {
   conversation_starter?: string;
   personalization_notes?: string;
   talking_points?: string[];
+  tracking_stage?: string;
+  tracking_summary?: string;
+  tracking_score?: number;
+  tracking_label?: string;
+  tracking_last_activity_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -213,6 +218,61 @@ export interface Activity {
   call_outcome?: string;
   recording_url?: string;
   aircall_user_name?: string;
+  email_message_id?: string;
+  email_subject?: string;
+  email_from?: string;
+  email_to?: string;
+  email_cc?: string;
+}
+
+export interface AssignmentUpdate {
+  id: string;
+  entity_type: "company" | "contact" | "deal";
+  entity_id: string;
+  assignment_role: "owner" | "ae" | "sdr";
+  assignee_id?: string;
+  created_by_id?: string;
+  entity_name_snapshot?: string;
+  company_name_snapshot?: string;
+  assignee_name_snapshot?: string;
+  assignee_email_snapshot?: string;
+  progress_state: "new" | "working" | "waiting_on_buyer" | "meeting_booked" | "qualified" | "deal_created" | "blocked" | "closed";
+  confidence: "low" | "medium" | "high";
+  buyer_signal: "none" | "replied" | "interested" | "champion_identified" | "meeting_requested" | "commercial_discussion" | "verbal_yes";
+  blocker_type: "none" | "no_response" | "wrong_person" | "timing" | "budget" | "competition" | "internal_dependency" | "legal_security" | "other";
+  last_touch_type: "none" | "email" | "call" | "linkedin" | "meeting" | "research" | "internal";
+  summary: string;
+  next_step: string;
+  next_step_due_date?: string;
+  blocker_detail?: string;
+  created_by_name?: string;
+  created_at: string;
+}
+
+export interface ExecutionTrackerItem {
+  entity_type: "company" | "contact" | "deal";
+  entity_id: string;
+  entity_name: string;
+  entity_subtitle?: string;
+  entity_link: string;
+  company_name?: string;
+  assignee_id: string;
+  assignee_name?: string;
+  assignment_role: "owner" | "ae" | "sdr";
+  system_status?: string;
+  entity_updated_at: string;
+  needs_update: boolean;
+  next_step_overdue: boolean;
+  latest_update?: AssignmentUpdate | null;
+}
+
+export interface ExecutionTrackerSummary {
+  total_items: number;
+  no_update_items: number;
+  needs_update_items: number;
+  blocked_items: number;
+  overdue_next_steps: number;
+  positive_momentum_items: number;
 }
 
 export interface Signal {

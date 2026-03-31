@@ -818,14 +818,16 @@ function ActivityPanel({
 function ActivityFeedItem({ activity }: { activity: Activity }) {
   const Icon = ACTIVITY_ICON[activity.type] ?? ActivityIcon;
   const isSystem = activity.type !== "comment";
+  const isEmail = activity.type === "email";
   const actor = activity.user_name || activity.aircall_user_name || activity.source || "System";
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div style={{
       padding: "14px 16px",
       borderRadius: 16,
-      background: isSystem ? "#f7f9fc" : "#fff",
-      border: "1px solid #e8eef5",
+      background: isEmail ? "#fefefe" : isSystem ? "#f7f9fc" : "#fff",
+      border: isEmail ? "1px solid #d4e2f4" : "1px solid #e8eef5",
       boxShadow: "0 1px 3px rgba(17,34,68,0.04)",
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
@@ -836,13 +838,14 @@ function ActivityFeedItem({ activity }: { activity: Activity }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: isSystem ? "#eaf0f7" : "#eef4fb",
-          color: isSystem ? "#60758b" : "#175089",
+          background: isEmail ? "#eef4fb" : isSystem ? "#eaf0f7" : "#eef4fb",
+          color: isEmail ? "#175089" : isSystem ? "#60758b" : "#175089",
           flexShrink: 0,
         }}>
           <Icon size={16} />
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
+          {/* Header row */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#2d4258", textTransform: "capitalize" }}>
@@ -861,7 +864,109 @@ function ActivityFeedItem({ activity }: { activity: Activity }) {
             </div>
             <span style={{ fontSize: 11, color: "#94a3b8" }}>{formatDate(activity.created_at)}</span>
           </div>
-          {activity.content && (
+
+          {/* Email-specific rendering */}
+          {isEmail && activity.email_subject && (
+            <div style={{ marginTop: 8 }}>
+              {/* Subject line */}
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d", marginBottom: 6 }}>
+                {activity.email_subject}
+              </div>
+
+              {/* From / To / CC badges */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 6 }}>
+                {activity.email_from && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#5e738b" }}>
+                    <span style={{ fontWeight: 600, color: "#7a96b0", minWidth: 30 }}>From</span>
+                    <span style={{
+                      padding: "1px 6px", borderRadius: 4,
+                      background: "#f0f6ff", color: "#2d4258", fontSize: 11,
+                    }}>
+                      {activity.email_from}
+                    </span>
+                  </div>
+                )}
+                {activity.email_to && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#5e738b", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 600, color: "#7a96b0", minWidth: 30 }}>To</span>
+                    {activity.email_to.split(", ").map((addr) => (
+                      <span key={addr} style={{
+                        padding: "1px 6px", borderRadius: 4,
+                        background: "#f4f7fa", color: "#48607b", fontSize: 11,
+                      }}>
+                        {addr}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {activity.email_cc && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#5e738b", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 600, color: "#7a96b0", minWidth: 30 }}>CC</span>
+                    {activity.email_cc.split(", ").map((addr) => (
+                      <span key={addr} style={{
+                        padding: "1px 6px", borderRadius: 4,
+                        background: "#f4f7fa", color: "#48607b", fontSize: 11,
+                      }}>
+                        {addr}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* AI Summary (shown first, always visible) */}
+              {activity.ai_summary && (
+                <div style={{
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  background: "#f0f6ff",
+                  border: "1px solid #d4e2f4",
+                  fontSize: 12,
+                  color: "#175089",
+                  fontWeight: 500,
+                  marginBottom: 6,
+                }}>
+                  {activity.ai_summary}
+                </div>
+              )}
+
+              {/* Expandable body */}
+              {activity.content && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(!expanded)}
+                    style={{
+                      fontSize: 11, color: "#5e738b", fontWeight: 600,
+                      background: "none", border: "none", cursor: "pointer",
+                      padding: 0, display: "flex", alignItems: "center", gap: 4,
+                    }}
+                  >
+                    <ChevronDown size={12} style={{
+                      transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+                      transition: "transform 0.15s ease",
+                    }} />
+                    {expanded ? "Hide" : "Show"} email body
+                  </button>
+                  {expanded && (
+                    <div style={{
+                      marginTop: 6, padding: "10px 12px",
+                      borderRadius: 8, background: "#f8fafc",
+                      border: "1px solid #e8eef5",
+                      fontSize: 12, color: "#33485f",
+                      lineHeight: 1.6, whiteSpace: "pre-wrap",
+                      maxHeight: 300, overflowY: "auto",
+                    }}>
+                      {activity.content}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Non-email content */}
+          {!isEmail && activity.content && (
             <div style={{
               fontSize: 14,
               color: "#33485f",
@@ -872,7 +977,9 @@ function ActivityFeedItem({ activity }: { activity: Activity }) {
               {activity.content}
             </div>
           )}
-          {activity.ai_summary && (
+
+          {/* Non-email AI summary */}
+          {!isEmail && activity.ai_summary && (
             <div style={{
               marginTop: 10,
               padding: "10px 12px",

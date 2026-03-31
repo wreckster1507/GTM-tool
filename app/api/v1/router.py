@@ -11,6 +11,7 @@ from app.api.v1.endpoints import (
     account_sourcing,
     activities,
     aircall,
+    email_sync,
     angel_mapping,
     assignments,
     auth,
@@ -19,6 +20,7 @@ from app.api.v1.endpoints import (
     contacts,
     custom_demo,
     deals,
+    execution_tracker,
     enrichment,
     intelligence,
     meetings,
@@ -38,6 +40,7 @@ router.include_router(assignments.router)
 router.include_router(companies.router)
 router.include_router(contacts.router)
 router.include_router(deals.router)
+router.include_router(execution_tracker.router)
 router.include_router(activities.router)
 router.include_router(enrichment.router)
 router.include_router(prospecting.router)
@@ -54,3 +57,4 @@ router.include_router(account_sourcing.router)
 router.include_router(angel_mapping.router)
 router.include_router(settings.router)
 router.include_router(aircall.router)
+router.include_router(email_sync.router)

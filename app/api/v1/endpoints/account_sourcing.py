@@ -44,6 +44,7 @@ from app.services.data_reset import (
     reset_prospecting_data,
     reset_workspace_data,
 )
+from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
@@ -145,7 +146,7 @@ async def _auto_create_angel_records(
 
 
 @router.post("/reset/{scope}")
-async def reset_sourcing_data(scope: str, admin: AdminUser = None, session: DBSession = None):
+async def reset_sourcing_data(scope: str, _admin: AdminUser, session: DBSession = None):
     # These reset scopes intentionally target different slices of the GTM app so
     # admins can clear one workflow without wiping unrelated work.
     normalized = (scope or "").strip().lower()
@@ -914,7 +915,11 @@ async def get_company_contacts(company_id: UUID, session: DBSession = None):
         .where(Contact.company_id == company_id)
         .order_by(Contact.created_at.desc())
     )
-    return result.scalars().all()
+    reads = [ContactRead.model_validate(contact) for contact in result.scalars().all()]
+    for read in reads:
+        read.company_name = company.name
+    await apply_contact_tracking(session, reads)
+    return reads
 
 
 @router.get("/contacts/{contact_id}", response_model=ContactRead)
@@ -922,11 +927,12 @@ async def get_company_contact(contact_id: UUID, session: DBSession = None):
     contact = await session.get(Contact, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
+    company_name = None
     if contact.company_id:
         company = await session.get(Company, contact.company_id)
         if company:
-            contact.company_name = company.name
-    return contact
+            company_name = company.name
+    return await to_contact_read(session, contact, company_name=company_name)
 
 
 @router.put("/contacts/{contact_id}", response_model=ContactRead)
@@ -959,7 +965,8 @@ async def update_company_contact(contact_id: UUID, payload: ContactUpdate, sessi
             company.updated_at = datetime.utcnow()
             session.add(company)
             await session.commit()
-    return contact
+            return await to_contact_read(session, contact, company_name=company.name)
+    return await to_contact_read(session, contact)
 
 
 # ── Contact Re-enrich ─────────────────────────────────────────────────────────

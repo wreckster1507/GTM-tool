@@ -15,6 +15,7 @@ from app.models.company import Company
 from app.models.contact import Contact, ContactRead
 from app.models.outreach import OutreachSequence
 from app.repositories.base import BaseRepository
+from app.services.contact_tracking import apply_contact_tracking
 
 
 class ContactRepository(BaseRepository[Contact]):
@@ -111,6 +112,7 @@ class ContactRepository(BaseRepository[Contact]):
             read.company_name = company_name
             result.append(read)
 
+        await apply_contact_tracking(self.session, result)
         return result, total
 
     async def delete_with_cascade(self, contact_id: UUID) -> None:

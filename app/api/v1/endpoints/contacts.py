@@ -9,6 +9,7 @@ from app.core.exceptions import NotFoundError
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.repositories.contact import ContactRepository
 from app.schemas.common import PaginatedResponse
+from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.persona_classifier import classify_persona
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
@@ -48,12 +49,14 @@ async def create_contact(payload: ContactCreate, session: DBSession):
     contact = Contact(**payload.model_dump())
     if not contact.persona:
         contact.persona = classify_persona(contact)
-    return await ContactRepository(session).save(contact)
+    saved = await ContactRepository(session).save(contact)
+    return await to_contact_read(session, saved)
 
 
 @router.get("/{contact_id}", response_model=ContactRead)
 async def get_contact(contact_id: UUID, session: DBSession):
-    return await ContactRepository(session).get_or_raise(contact_id)
+    contact = await ContactRepository(session).get_or_raise(contact_id)
+    return await to_contact_read(session, contact)
 
 
 @router.put("/{contact_id}", response_model=ContactRead)
@@ -66,7 +69,8 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     if "title" in update_data or "seniority" in update_data:
         contact.persona = classify_persona(contact)
     contact.updated_at = datetime.utcnow()
-    return await repo.save(contact)
+    saved = await repo.save(contact)
+    return await to_contact_read(session, saved)
 
 
 @router.delete("/{contact_id}", status_code=204)
@@ -103,11 +107,12 @@ async def enrich_contact(contact_id: UUID, session: DBSession):
 
     contact.updated_at = datetime.utcnow()
     await repo.save(contact)
+    contact_read = await to_contact_read(session, contact)
     return {
         "contact_id": str(contact_id),
         "status": "enriched",
         "fields_updated": enriched_fields,
-        "contact": ContactRead.model_validate(contact),
+        "contact": contact_read,
     }
 
 
@@ -169,7 +174,9 @@ async def discover_contacts(company_id: UUID, session: DBSession):
     for c in created:
         await session.refresh(c)
 
-    return [ContactRead.model_validate(c) for c in created]
+    reads = [ContactRead.model_validate(c) for c in created]
+    await apply_contact_tracking(session, reads)
+    return reads
 
 
 @router.get("/{contact_id}/brief")

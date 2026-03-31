@@ -10,6 +10,7 @@ celery_app = Celery(
     include=[
         "app.tasks.enrichment",
         "app.tasks.health",
+        "app.tasks.email_sync",
     ],
 )
 
@@ -24,6 +25,10 @@ celery_app.conf.update(
         "recalculate-deal-health-daily": {
             "task": "app.tasks.health.recalculate_all_deal_health",
             "schedule": crontab(hour=2, minute=0),
+        },
+        "sync-gmail-inbox": {
+            "task": "app.tasks.email_sync.sync_gmail_inbox",
+            "schedule": settings.EMAIL_SYNC_INTERVAL_SECONDS,  # every 3 min
         },
     },
 )

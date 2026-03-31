@@ -23,6 +23,7 @@ import AccountSourcingCompanyDetail from "./pages/AccountSourcingCompanyDetail";
 import AccountSourcingContactDetail from "./pages/AccountSourcingContactDetail";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import TeamManagement from "./pages/TeamManagement";
+import ExecutionTracker from "./pages/ExecutionTracker";
 
 function RouteScopedAircallPhone() {
   const location = useLocation();
@@ -81,6 +82,7 @@ export default function App() {
             <Route path="crm-insights-alerts" element={<Dashboard />} />
             <Route path="knowledge-base" element={<KnowledgeBase />} />
             <Route path="angel-mapping" element={<Contacts />} />
+            <Route path="execution-tracker" element={<ExecutionTracker />} />
             <Route path="team" element={<TeamManagement />} />
           </Route>
         </Routes>

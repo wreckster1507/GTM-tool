@@ -19,6 +19,7 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   "/battlecards": { title: "Live-Meeting Assistance", subtitle: "Battlecards and talk-track support during calls" },
   "/crm-insights-alerts": { title: "CRM- Insights and Alerts", subtitle: "Pipeline trends, risks, and momentum signals" },
   "/dashboard": { title: "CRM- Insights and Alerts", subtitle: "Pipeline and win trends" },
+  "/execution-tracker": { title: "Execution Tracker", subtitle: "Assigned work, rep updates, blockers, and next-step accountability" },
   "/angel-mapping": { title: "Prospecting", subtitle: "Activate contacts, personas, and outreach readiness" },
   "/team": { title: "Team Management", subtitle: "Manage team members, roles, and permissions" },
 };

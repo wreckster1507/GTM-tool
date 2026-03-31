@@ -2,12 +2,19 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { accountSourcingApi, angelMappingApi, contactsApi } from "../lib/api";
 import type { Contact, AngelInvestor, AngelMapping } from "../types";
+import { useAuth } from "../lib/AuthContext";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
+import {
+  getProspectTrackingScore,
+  getProspectTrackingStage,
+  getProspectTrackingSummary,
+  getProspectTrackingTone,
+} from "../lib/prospectTracking";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
@@ -91,6 +98,7 @@ const ANGEL_TEXT = {
 export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isAdmin } = useAuth();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
   const pageSize = 50;
 
@@ -397,33 +405,35 @@ export default function Contacts() {
                 </button>
 
                 {/* Clear — danger, right side */}
-                <button
-                  type="button"
-                  disabled={resetting}
-                  onClick={async () => {
-                    if (!window.confirm("Clear all Prospecting contacts, outreach sequences, and contact activities while keeping companies?")) return;
-                    setResetting(true);
-                    try {
-                      const result = await accountSourcingApi.resetData("prospecting");
-                      setPage(1);
-                      loadContacts();
-                      window.alert(`Prospecting cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
-                    } finally {
-                      setResetting(false);
-                    }
-                  }}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
-                    border: "1px solid #fad2d6", background: "#fff8f8",
-                    color: "#b42336", fontSize: 13, fontWeight: 600,
-                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                    opacity: resetting ? 0.6 : 1,
-                  }}
-                >
-                  {resetting ? <Loader2 size={13} className="animate-spin" /> : <AlertCircle size={13} />}
-                  Clear
-                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    disabled={resetting}
+                    onClick={async () => {
+                      if (!window.confirm("Clear all Prospecting contacts, outreach sequences, and contact activities while keeping companies?")) return;
+                      setResetting(true);
+                      try {
+                        const result = await accountSourcingApi.resetData("prospecting");
+                        setPage(1);
+                        loadContacts();
+                        window.alert(`Prospecting cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
+                      } finally {
+                        setResetting(false);
+                      }
+                    }}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      height: 38, padding: "0 14px", borderRadius: 10,
+                      border: "1px solid #fad2d6", background: "#fff8f8",
+                      color: "#b42336", fontSize: 13, fontWeight: 600,
+                      cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                      opacity: resetting ? 0.6 : 1,
+                    }}
+                  >
+                    {resetting ? <Loader2 size={13} className="animate-spin" /> : <AlertCircle size={13} />}
+                    Clear
+                  </button>
+                )}
               </>
             )}
 
@@ -580,13 +590,15 @@ export default function Contacts() {
             ) : (
               <div className="crm-panel overflow-hidden contacts-table-panel">
                 <div className="overflow-x-auto">
-                  <table className="crm-table" style={{ minWidth: 1080 }}>
+                  <table className="crm-table" style={{ minWidth: 1360 }}>
                     <thead>
                       <tr>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Name</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Company</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Title</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Stage</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Progress</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Persona</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>AE</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>SDR</th>
@@ -622,6 +634,67 @@ export default function Contacts() {
                           </td>
                           <td>{c.title ?? <span className="text-[#96a7ba]">-</span>}</td>
                           <td>{c.email ?? <span className="text-[#96a7ba]">-</span>}</td>
+                          <td>
+                            {(() => {
+                              const tone = getProspectTrackingTone(c);
+                              return (
+                                <div
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    padding: "6px 10px",
+                                    borderRadius: 999,
+                                    background: tone.background,
+                                    border: `1px solid ${tone.border}`,
+                                    color: tone.color,
+                                    fontSize: 11,
+                                    fontWeight: 800,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {getProspectTrackingStage(c)}
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td>
+                            {(() => {
+                              const tone = getProspectTrackingTone(c);
+                              return (
+                                <div
+                                  style={{
+                                    minWidth: 250,
+                                    padding: "10px 12px",
+                                    borderRadius: 14,
+                                    background: tone.soft,
+                                    border: `1px solid ${tone.border}`,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "space-between",
+                                      gap: 10,
+                                      marginBottom: 6,
+                                    }}
+                                  >
+                                    <span style={{ color: tone.color, fontWeight: 800, fontSize: 12 }}>
+                                      {getProspectTrackingScore(c)}
+                                    </span>
+                                    {c.tracking_last_activity_at ? (
+                                      <span style={{ color: "#7a8ea4", fontSize: 11, fontWeight: 600 }}>
+                                        {new Date(c.tracking_last_activity_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div style={{ color: "#4d6178", fontSize: 12.5, lineHeight: 1.5 }}>
+                                    {getProspectTrackingSummary(c)}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td>
                             {c.persona ? (
                               <span

@@ -35,12 +35,24 @@ class Activity(ActivityBase, table=True):
     aircall_user_name: Optional[str] = None    # agent name from Aircall
     created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
 
+    # Email-specific fields (populated by Gmail inbox sync)
+    email_message_id: Optional[str] = Field(default=None, index=True)  # RFC Message-ID (dedup key)
+    email_subject: Optional[str] = None
+    email_from: Optional[str] = None           # sender address
+    email_to: Optional[str] = Field(default=None, sa_column=Column("email_to", Text))  # comma-separated
+    email_cc: Optional[str] = Field(default=None, sa_column=Column("email_cc", Text))  # comma-separated
+
 
 class ActivityCreate(ActivityBase):
     deal_id: Optional[UUID] = None
     contact_id: Optional[UUID] = None
     event_metadata: Optional[Any] = None
     created_by_id: Optional[UUID] = None
+    email_message_id: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_from: Optional[str] = None
+    email_to: Optional[str] = None
+    email_cc: Optional[str] = None
 
 
 class ActivityRead(ActivityBase):
@@ -56,6 +68,11 @@ class ActivityRead(ActivityBase):
     aircall_user_name: Optional[str] = None
     created_by_id: Optional[UUID] = None
     user_name: Optional[str] = None  # joined from users table
+    email_message_id: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_from: Optional[str] = None
+    email_to: Optional[str] = None
+    email_cc: Optional[str] = None
 
 
 class ActivityUpdate(SQLModel):

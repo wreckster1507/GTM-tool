@@ -107,9 +107,13 @@ const ALERT_TYPE_LABEL: Record<string, string> = {
   stale_deal: "Stale Deal",
   at_risk: "At Risk",
   missing_close_date: "Missing Close Date",
+  deal_no_next_step: "Next Step Missing",
   no_contacts: "No Contacts",
   no_pre_brief: "No Pre-Brief",
   no_next_steps: "No Next Steps",
+  hot_prospect: "Hot Prospect",
+  cooling_sequence: "Cooling Sequence",
+  research_blocker: "Research Blocker",
 };
 
 const styles: Record<string, CSSProperties> = {

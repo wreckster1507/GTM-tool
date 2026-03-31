@@ -24,6 +24,12 @@ import {
   Users,
   X,
 } from "lucide-react";
+import {
+  getProspectTrackingScore,
+  getProspectTrackingStage,
+  getProspectTrackingSummary,
+  getProspectTrackingTone,
+} from "../lib/prospectTracking";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 
@@ -451,6 +457,7 @@ export default function CompanyDetail() {
                 <div className="grid gap-4">
                   {contacts.map((c) => {
                     const persona = canonicalPersona(c.persona, c.persona_type);
+                    const trackingTone = getProspectTrackingTone(c);
                     return (
                       <div key={c.id} className="rounded-2xl border border-[#e0e8f1] bg-white p-5">
                         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -473,6 +480,12 @@ export default function CompanyDetail() {
                           </div>
 
                           <div className="flex flex-wrap items-center justify-end gap-2">
+                            <span
+                              className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold"
+                              style={{ background: trackingTone.background, color: trackingTone.color, border: `1px solid ${trackingTone.border}` }}
+                            >
+                              {getProspectTrackingStage(c)}
+                            </span>
                             <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold" style={PERSONA_STYLE[persona]}>
                               {PERSONA_SHORT[persona]}
                             </span>
@@ -496,6 +509,21 @@ export default function CompanyDetail() {
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>
+                        </div>
+
+                        <div
+                          className="mt-4 rounded-xl px-4 py-3"
+                          style={{ background: trackingTone.soft, border: `1px solid ${trackingTone.border}` }}
+                        >
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <span style={{ color: trackingTone.color }} className="text-[12px] font-bold">
+                              Automated progress
+                            </span>
+                            <span style={{ color: trackingTone.color }} className="text-[12px] font-extrabold">
+                              {getProspectTrackingScore(c)}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 text-[13px] leading-6 text-[#2d4258]">{getProspectTrackingSummary(c)}</p>
                         </div>
 
                         {contactBriefs[c.id] && (

@@ -756,6 +756,26 @@ textarea:focus {
   gap: 20px;
 }
 
+.execution-tracker-page {
+  gap: 20px;
+}
+
+.execution-tracker-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  gap: 20px;
+  min-height: 0;
+}
+
+.execution-tracker-list,
+.execution-tracker-detail {
+  min-height: 0;
+}
+
+.execution-tracker-detail {
+  overflow: auto;
+}
+
 .deal-detail-top-actions {
   margin-bottom: 2px;
 }
@@ -878,6 +898,10 @@ textarea:focus {
 
   .company-detail-page {
     gap: 16px;
+  }
+
+  .execution-tracker-grid {
+    grid-template-columns: 1fr;
   }
 
   .company-detail-hero-header {

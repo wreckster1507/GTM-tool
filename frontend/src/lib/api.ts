@@ -4,6 +4,7 @@ import type {
   Contact,
   Deal,
   Activity,
+  AssignmentUpdate,
   OutreachSequence,
   OutreachStep,
   Signal,
@@ -15,6 +16,8 @@ import type {
   User,
   AngelInvestor,
   AngelMapping,
+  ExecutionTrackerItem,
+  ExecutionTrackerSummary,
 } from "../types";
 
 /**
@@ -720,6 +723,45 @@ export type WorkspaceAlert = {
   created_at: string;
 };
 
+export type WorkspaceInsightTone = "blue" | "green" | "amber" | "red";
+
+export type WorkspaceInsightMetric = {
+  key: string;
+  label: string;
+  value: string;
+  hint: string;
+  tone: WorkspaceInsightTone;
+  link?: string;
+};
+
+export type WorkspaceInsightBucket = {
+  key: string;
+  label: string;
+  count: number;
+  amount?: number | null;
+  tone: WorkspaceInsightTone;
+};
+
+export type WorkspaceInsightQueue = {
+  key: string;
+  label: string;
+  count: number;
+  hint: string;
+  tone: WorkspaceInsightTone;
+  link: string;
+};
+
+export type WorkspaceInsights = {
+  generated_at: string;
+  metrics: WorkspaceInsightMetric[];
+  deal_stage_mix: WorkspaceInsightBucket[];
+  deal_health_mix: WorkspaceInsightBucket[];
+  prospect_stage_mix: WorkspaceInsightBucket[];
+  meeting_readiness_mix: WorkspaceInsightBucket[];
+  focus_queues: WorkspaceInsightQueue[];
+  alerts: WorkspaceAlert[];
+};
+
 export type StageStatus = {
   stage: string;
   status: "ready" | "needs_action" | "blocked";
@@ -733,6 +775,8 @@ export const workspaceApi = {
     request<WorkspaceSummary>("/api/v1/workspace/summary"),
   alerts: () =>
     request<WorkspaceAlert[]>("/api/v1/workspace/alerts"),
+  insights: () =>
+    request<WorkspaceInsights>("/api/v1/workspace/insights"),
   stageStatus: (stage: string) =>
     request<StageStatus>(`/api/v1/workspace/stages/${stage}`),
 };
@@ -905,6 +949,66 @@ export const assignmentsApi = {
     request<{ updated: number; user_id: string | null }>("/api/v1/assignments/bulk-contacts", {
       method: "PATCH",
       body: JSON.stringify({ ids, user_id: userId }),
+    }),
+};
+
+export const executionTrackerApi = {
+  listItems: (params?: {
+    skip?: number;
+    limit?: number;
+    assigneeId?: string;
+    entityType?: "company" | "contact" | "deal";
+    progressState?: string;
+    needsUpdateOnly?: boolean;
+    q?: string;
+  }) => {
+    const search = new URLSearchParams({
+      skip: String(params?.skip ?? 0),
+      limit: String(params?.limit ?? 25),
+    });
+    if (params?.assigneeId) search.set("assignee_id", params.assigneeId);
+    if (params?.entityType) search.set("entity_type", params.entityType);
+    if (params?.progressState) search.set("progress_state", params.progressState);
+    if (params?.needsUpdateOnly) search.set("needs_update_only", "true");
+    if (params?.q) search.set("q", params.q);
+    return requestPaginated<ExecutionTrackerItem>(`/api/v1/execution-tracker/items?${search}`);
+  },
+  summary: (params?: {
+    assigneeId?: string;
+    entityType?: "company" | "contact" | "deal";
+    progressState?: string;
+    needsUpdateOnly?: boolean;
+    q?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.assigneeId) search.set("assignee_id", params.assigneeId);
+    if (params?.entityType) search.set("entity_type", params.entityType);
+    if (params?.progressState) search.set("progress_state", params.progressState);
+    if (params?.needsUpdateOnly) search.set("needs_update_only", "true");
+    if (params?.q) search.set("q", params.q);
+    return request<ExecutionTrackerSummary>(`/api/v1/execution-tracker/summary${search.toString() ? `?${search}` : ""}`);
+  },
+  getUpdates: (entityType: string, entityId: string, assignmentRole: string) =>
+    request<AssignmentUpdate[]>(
+      `/api/v1/execution-tracker/items/${entityType}/${entityId}/updates?assignment_role=${encodeURIComponent(assignmentRole)}`
+    ),
+  createUpdate: (data: {
+    entity_type: "company" | "contact" | "deal";
+    entity_id: string;
+    assignment_role: "owner" | "ae" | "sdr";
+    progress_state: string;
+    confidence: string;
+    buyer_signal: string;
+    blocker_type: string;
+    last_touch_type: string;
+    summary: string;
+    next_step: string;
+    next_step_due_date?: string;
+    blocker_detail?: string;
+  }) =>
+    request<AssignmentUpdate>("/api/v1/execution-tracker/updates", {
+      method: "POST",
+      body: JSON.stringify(data),
     }),
 };
 

@@ -2,6 +2,13 @@ from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdat
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.models.deal import Deal, DealCreate, DealRead, DealUpdate
 from app.models.activity import Activity, ActivityCreate, ActivityRead, ActivityUpdate
+from app.models.assignment_update import (
+    AssignmentUpdate,
+    AssignmentUpdateCreate,
+    AssignmentUpdateRead,
+    ExecutionTrackerItemRead,
+    ExecutionTrackerSummary,
+)
 from app.models.outreach import OutreachSequence, OutreachSequenceRead
 from app.models.signal import Signal, SignalCreate, SignalRead
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
@@ -20,6 +27,7 @@ __all__ = [
     "Contact", "ContactCreate", "ContactRead", "ContactUpdate",
     "Deal", "DealCreate", "DealRead", "DealUpdate",
     "Activity", "ActivityCreate", "ActivityRead", "ActivityUpdate",
+    "AssignmentUpdate", "AssignmentUpdateCreate", "AssignmentUpdateRead", "ExecutionTrackerItemRead", "ExecutionTrackerSummary",
     "OutreachSequence", "OutreachSequenceRead",
     "Signal", "SignalCreate", "SignalRead",
     "Meeting", "MeetingCreate", "MeetingRead", "MeetingUpdate",

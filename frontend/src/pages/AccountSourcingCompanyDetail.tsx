@@ -24,6 +24,12 @@ import {
 } from "lucide-react";
 
 import { accountSourcingApi } from "../lib/api";
+import {
+  getProspectTrackingScore,
+  getProspectTrackingStage,
+  getProspectTrackingSummary,
+  getProspectTrackingTone,
+} from "../lib/prospectTracking";
 import type { Company, Contact } from "../types";
 import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
@@ -321,6 +327,7 @@ function ContactItem({ contact }: { contact: Contact }) {
   const warmPath = (contact.warm_intro_path || {}) as Record<string, unknown>;
   const enrichData = (contact.enrichment_data || {}) as Record<string, unknown>;
   const emailConfidence = typeof enrichData.confidence === "number" ? enrichData.confidence : null;
+  const trackingTone = getProspectTrackingTone(contact);
 
   return (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
@@ -349,6 +356,19 @@ function ContactItem({ contact }: { contact: Contact }) {
             )}
           </div>
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <span
+              style={{
+                background: trackingTone.background,
+                color: trackingTone.color,
+                borderRadius: 999,
+                border: `1px solid ${trackingTone.border}`,
+                fontSize: 11,
+                padding: "4px 8px",
+                fontWeight: 800,
+              }}
+            >
+              {getProspectTrackingStage(contact)}
+            </span>
             {contact.outreach_lane ? (
               <span style={{ background: "#eef5ff", color: colors.primary, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
                 {contact.outreach_lane.replace(/_/g, " ")}
@@ -364,6 +384,23 @@ function ContactItem({ contact }: { contact: Contact }) {
                 {contact.assigned_rep_email}
               </span>
             ) : null}
+          </div>
+          <div
+            style={{
+              marginTop: 10,
+              borderRadius: 12,
+              border: `1px solid ${trackingTone.border}`,
+              background: trackingTone.soft,
+              padding: "10px 12px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ color: trackingTone.color, fontSize: 12, fontWeight: 800 }}>Automated progress</span>
+              <span style={{ color: trackingTone.color, fontSize: 12, fontWeight: 900 }}>{getProspectTrackingScore(contact)}</span>
+            </div>
+            <div style={{ marginTop: 5, color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
+              {getProspectTrackingSummary(contact)}
+            </div>
           </div>
           {contact.conversation_starter ? (
             <div style={{ marginTop: 10, color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
@@ -661,6 +698,24 @@ export default function AccountSourcingCompanyDetail() {
   const hookSources = sourceList(researchSources.conversation_starter);
   const hiringSources = sourceList(researchSources.ps_impl_hiring);
   const leadershipSources = sourceList(researchSources.leadership_org_moves);
+  const contactMomentum = useMemo(() => {
+    if (!contacts.length) return null;
+    const ranked = [...contacts].sort((a, b) => (b.tracking_score || 0) - (a.tracking_score || 0));
+    const best = ranked[0];
+    const goodCount = contacts.filter((contact) => contact.tracking_label === "good").length;
+    const blockedCount = contacts.filter((contact) => contact.tracking_label === "blocked").length;
+    return {
+      best,
+      goodCount,
+      blockedCount,
+      hint:
+        goodCount > 0
+          ? `${goodCount} stakeholder${goodCount === 1 ? "" : "s"} showing positive momentum.`
+          : blockedCount === contacts.length
+            ? "All visible stakeholders are currently blocked."
+            : "No stakeholder has a strong signal yet.",
+    };
+  }, [contacts]);
   const fundingSources = sourceList(researchSources.pr_funding_expansion);
   const eventsSources = sourceList(researchSources.events_thought_leadership);
   const reviewsSources = sourceList(researchSources.reviews_case_studies);
@@ -920,6 +975,22 @@ export default function AccountSourcingCompanyDetail() {
             value={String(contacts.length)}
             hint="Discovered stakeholders available for prospecting and meeting prep."
             tone="neutral"
+          />
+          <MetricCard
+            label="Prospect Momentum"
+            value={contactMomentum?.best ? getProspectTrackingStage(contactMomentum.best) : "No signals"}
+            hint={
+              contactMomentum?.best
+                ? `${getProspectTrackingScore(contactMomentum.best)} · ${contactMomentum.hint}`
+                : "Prospect momentum will appear once stakeholders start showing outreach or deal signals."
+            }
+            tone={
+              contactMomentum?.best?.tracking_label === "good"
+                ? "green"
+                : contactMomentum?.best?.tracking_label === "blocked"
+                  ? "warm"
+                  : "primary"
+            }
           />
         </div>
 

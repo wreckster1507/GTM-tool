@@ -57,21 +57,34 @@ class ApolloClient:
         # Real Apollo call (when APOLLO_API_KEY is set)
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                "https://api.apollo.io/v1/organizations/enrich",
-                headers={"X-Api-Key": self.api_key, "Content-Type": "application/json"},
-                json={"domain": domain},
-            )
-            resp.raise_for_status()
-            org = resp.json().get("organization", {})
-            return {
-                "name": org.get("name"),
-                "industry": org.get("industry"),
-                "employee_count": org.get("estimated_num_employees"),
-                "funding_stage": org.get("latest_funding_stage"),
-                "has_dap": False,
-                "dap_tool": None,
-            }
+            try:
+                resp = await client.post(
+                    "https://api.apollo.io/v1/organizations/enrich",
+                    headers={"X-Api-Key": self.api_key, "Content-Type": "application/json"},
+                    json={"api_key": self.api_key, "domain": domain},
+                )
+                if resp.status_code == 422:
+                    logger.warning("Apollo organizations/enrich 422 for %s: %s", domain, resp.text[:300])
+                    return None
+                resp.raise_for_status()
+                org = resp.json().get("organization", {})
+                if not org:
+                    logger.info("Apollo returned empty organization for %s", domain)
+                    return None
+                return {
+                    "name": org.get("name"),
+                    "industry": org.get("industry"),
+                    "employee_count": org.get("estimated_num_employees"),
+                    "funding_stage": org.get("latest_funding_stage"),
+                    "has_dap": False,
+                    "dap_tool": None,
+                }
+            except httpx.HTTPStatusError as exc:
+                logger.warning("Apollo organizations/enrich %s for %s: %s", exc.response.status_code, domain, exc.response.text[:300])
+                return None
+            except httpx.TimeoutException:
+                logger.warning("Apollo organizations/enrich timed out for %s", domain)
+                return None
 
     async def find_contacts(self, domain: str, limit: int = 5) -> list:
         """Return a list of contacts at the domain."""
@@ -108,6 +121,7 @@ class ApolloClient:
 
         # ── Attempt 1: mixed_people/search ──────────────────────────────────
         body: dict = {
+            "api_key": self.api_key,
             "q_organization_domains": domain,
             "page": 1,
             "per_page": min(limit, 25),
@@ -150,6 +164,7 @@ class ApolloClient:
             # ── Attempt 3: contacts/search (saved CRM contacts) ─────────────
             try:
                 contacts_body: dict = {
+                    "api_key": self.api_key,
                     "q_organization_domains": domain,
                     "page": 1,
                     "per_page": min(limit, 25),
@@ -197,7 +212,7 @@ class ApolloClient:
 
         import httpx
 
-        body: dict = {}
+        body: dict = {"api_key": self.api_key}
         if email:
             body["email"] = email
         if first_name:

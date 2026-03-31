@@ -70,6 +70,11 @@ class ContactRead(ContactBase):
     conversation_starter: Optional[str] = None
     personalization_notes: Optional[str] = None
     talking_points: Optional[Any] = None
+    tracking_stage: Optional[str] = None
+    tracking_summary: Optional[str] = None
+    tracking_score: Optional[int] = None
+    tracking_label: Optional[str] = None
+    tracking_last_activity_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

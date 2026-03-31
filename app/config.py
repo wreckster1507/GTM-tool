@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
 
+    # Gmail shared inbox (email-to-activity sync)
+    GMAIL_SHARED_INBOX: str = ""  # e.g. sales@beacon.li
+    GMAIL_CREDENTIALS_JSON: str = ""  # Path to OAuth credentials.json
+    GMAIL_TOKEN_JSON: str = ""  # Path to stored token.json (auto-refreshed)
+    EMAIL_SYNC_INTERVAL_SECONDS: int = 180  # 3 minutes
+    EMAIL_SUMMARY_MIN_CHARS: int = 100  # Skip AI summary for short emails
+
     # Aircall
     AIRCALL_API_ID: str = ""
     AIRCALL_API_TOKEN: str = ""

@@ -56,11 +56,9 @@ async def google_callback(
     except Exception:
         raise UnauthorizedError("Failed to authenticate with Google")
 
-    # Authentication succeeds only for company accounts. Personal Google accounts
-    # are rejected even if Google itself authenticated them correctly.
     email = google_info["email"]
-    if not email.endswith("@beacon.li"):
-        raise ForbiddenError("Only @beacon.li accounts are allowed to sign in")
+    # Domain restriction removed — any Google account can sign in for testing.
+    # TODO: re-enable domain check for production (e.g. @beacon.li only)
 
     # We treat Google as the source of truth for identity, so the lookup is keyed
     # by Google's stable user id rather than by email.

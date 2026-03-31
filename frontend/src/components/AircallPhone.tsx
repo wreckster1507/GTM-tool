@@ -4,7 +4,7 @@
  * Mount once at the app root. Exposes window.__aircallDial(phoneNumber) so any
  * component can trigger a call without prop drilling.
  *
- * The panel slides in from the top-right when a call is triggered or when
+ * The panel slides in from the bottom-right when a call is triggered or when
  * the rep manually opens it. It can be minimised to a small tab.
  */
 import { useEffect, useRef, useState } from "react";
@@ -28,7 +28,7 @@ interface CallState {
 }
 
 export default function AircallPhonePanel() {
-  const panelTop = 118;
+  const panelBottom = 24;
   const [open, setOpen] = useState(false);
   const [minimised, setMinimised] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
@@ -199,7 +199,7 @@ export default function AircallPhonePanel() {
         <button
           onClick={() => { setOpen(true); setMinimised(false); }}
           style={{
-            position: "fixed", top: panelTop, right: 24, zIndex: 900,
+            position: "fixed", bottom: panelBottom, right: 24, zIndex: 900,
             width: 194,
             borderRadius: 20,
             border: "1px solid #d9e6f2",
@@ -260,7 +260,7 @@ export default function AircallPhonePanel() {
       {/* ── Phone panel ── */}
       {open && (
         <div style={{
-          position: "fixed", top: panelTop, right: 24, zIndex: 950,
+          position: "fixed", bottom: panelBottom, right: 24, zIndex: 950,
           width: minimised ? 244 : 392,
           maxWidth: "calc(100vw - 36px)",
           borderRadius: 24,

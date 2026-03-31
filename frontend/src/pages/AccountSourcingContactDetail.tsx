@@ -8,7 +8,6 @@ import {
   Globe,
   Loader2,
   Mail,
-  MessageSquare,
   Phone,
   RefreshCw,
   Send,
@@ -18,6 +17,12 @@ import {
 } from "lucide-react";
 
 import { accountSourcingApi, companiesApi, contactsApi } from "../lib/api";
+import {
+  getProspectTrackingScore,
+  getProspectTrackingStage,
+  getProspectTrackingSummary,
+  getProspectTrackingTone,
+} from "../lib/prospectTracking";
 import { avatarColor, formatDate, getAccountPrioritySnapshot, getInitials } from "../lib/utils";
 import type { Company, Contact } from "../types";
 
@@ -74,25 +79,6 @@ const OUTREACH_LANE_OPTIONS = [
   { value: "cold_strategic", label: "Cold Strategic" },
 ];
 
-const SEQUENCE_STATUS_OPTIONS = [
-  { value: "", label: "Unset" },
-  { value: "research_needed", label: "Research Needed" },
-  { value: "ready", label: "Ready" },
-  { value: "queued_instantly", label: "Queued in Instantly" },
-  { value: "sent", label: "Sent" },
-  { value: "replied", label: "Replied" },
-  { value: "meeting_booked", label: "Meeting Booked" },
-  { value: "closed", label: "Closed" },
-];
-
-const INSTANTLY_STATUS_OPTIONS = [
-  { value: "", label: "Unset" },
-  { value: "missing_email", label: "Missing Email" },
-  { value: "ready", label: "Ready" },
-  { value: "pushed", label: "Pushed" },
-  { value: "paused", label: "Paused" },
-];
-
 function asText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -111,13 +97,6 @@ function toneForLane(value?: string | null): "primary" | "warm" | "violet" | "gr
   if (value === "warm_intro") return "warm";
   if (value === "event_follow_up") return "violet";
   if (value === "cold_strategic") return "green";
-  return "primary";
-}
-
-function toneForStatus(value?: string | null): "primary" | "warm" | "violet" | "green" {
-  if (value === "meeting_booked" || value === "replied" || value === "pushed") return "green";
-  if (value === "research_needed" || value === "missing_email") return "warm";
-  if (value === "queued_instantly" || value === "sent") return "violet";
   return "primary";
 }
 
@@ -153,13 +132,14 @@ function MetricCard({ label, value, hint, tone = "primary" }: {
   label: string;
   value: string;
   hint: string;
-  tone?: "primary" | "green" | "warm" | "violet";
+  tone?: "primary" | "green" | "warm" | "violet" | "danger";
 }) {
   const toneStyle = {
     primary: { bg: colors.primarySoft, border: "#cfe0fb", accent: colors.primary },
     green: { bg: colors.greenSoft, border: "#cdeedc", accent: colors.green },
     warm: { bg: colors.amberSoft, border: "#ffe0b2", accent: colors.amber },
     violet: { bg: colors.violetSoft, border: "#e2d2fb", accent: colors.violet },
+    danger: { bg: "#fff1f3", border: "#f6d0d7", accent: "#b42336" },
   }[tone];
 
   return (
@@ -305,9 +285,6 @@ export default function AccountSourcingContactDetail() {
   const [workflow, setWorkflow] = useState({
     assigned_rep_email: "",
     outreach_lane: "",
-    sequence_status: "",
-    instantly_status: "",
-    instantly_campaign_id: "",
     conversation_starter: "",
     personalization_notes: "",
     talking_points: "",
@@ -350,9 +327,6 @@ export default function AccountSourcingContactDetail() {
     setWorkflow({
       assigned_rep_email: contact?.assigned_rep_email || "",
       outreach_lane: contact?.outreach_lane || "",
-      sequence_status: contact?.sequence_status || "",
-      instantly_status: contact?.instantly_status || "",
-      instantly_campaign_id: contact?.instantly_campaign_id || "",
       conversation_starter: contact?.conversation_starter || "",
       personalization_notes: contact?.personalization_notes || "",
       talking_points: Array.isArray(contact?.talking_points) ? contact!.talking_points.join("\n") : "",
@@ -360,9 +334,6 @@ export default function AccountSourcingContactDetail() {
   }, [
     contact?.assigned_rep_email,
     contact?.outreach_lane,
-    contact?.sequence_status,
-    contact?.instantly_status,
-    contact?.instantly_campaign_id,
     contact?.conversation_starter,
     contact?.personalization_notes,
     contact?.talking_points,
@@ -396,6 +367,7 @@ export default function AccountSourcingContactDetail() {
     ? ((companyCache.ai_summary as Record<string, unknown>).data ?? companyCache.ai_summary)
     : {};
   const aiSummary = aiEntry && typeof aiEntry === "object" ? (aiEntry as Record<string, unknown>) : {};
+  const trackingTone = getProspectTrackingTone(contact);
 
   if (loading) {
     return (
@@ -423,9 +395,6 @@ export default function AccountSourcingContactDetail() {
       await accountSourcingApi.updateContact(contact.id, {
         assigned_rep_email: workflow.assigned_rep_email.trim() || null,
         outreach_lane: workflow.outreach_lane || null,
-        sequence_status: workflow.sequence_status || null,
-        instantly_status: workflow.instantly_status || null,
-        instantly_campaign_id: workflow.instantly_campaign_id.trim() || null,
         conversation_starter: workflow.conversation_starter.trim() || null,
         personalization_notes: workflow.personalization_notes.trim() || null,
         talking_points: workflow.talking_points
@@ -469,9 +438,46 @@ export default function AccountSourcingContactDetail() {
                   </div>
                   <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Chip label={prettify(contact.outreach_lane || company?.recommended_outreach_lane)} tone={toneForLane(contact.outreach_lane || company?.recommended_outreach_lane)} />
-                    <Chip label={prettify(contact.sequence_status)} tone={toneForStatus(contact.sequence_status)} />
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        borderRadius: 999,
+                        padding: "6px 10px",
+                        background: trackingTone.background,
+                        color: trackingTone.color,
+                        border: `1px solid ${trackingTone.border}`,
+                        fontSize: 12,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {getProspectTrackingStage(contact)}
+                    </span>
                     <Chip label={contact.email ? "Email ready" : "Missing email"} tone={contact.email ? "green" : "warm"} />
                     <Chip label={contact.warm_intro_strength ? `Warm path ${contact.warm_intro_strength}/5` : Object.keys(displayWarmPath).length > 0 ? "Account warm path" : "Direct motion"} tone={Object.keys(displayWarmPath).length > 0 ? "warm" : "neutral"} />
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 14,
+                      maxWidth: 840,
+                      padding: "14px 16px",
+                      borderRadius: 16,
+                      background: trackingTone.soft,
+                      border: `1px solid ${trackingTone.border}`,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ color: trackingTone.color, fontWeight: 800, fontSize: 13 }}>
+                        Automated progress
+                      </span>
+                      <span style={{ color: trackingTone.color, fontWeight: 900, fontSize: 13 }}>
+                        {getProspectTrackingScore(contact)}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 6, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
+                      {getProspectTrackingSummary(contact)}
+                    </div>
                   </div>
                   <div style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
                     {company ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
@@ -523,7 +529,7 @@ export default function AccountSourcingContactDetail() {
               style={{ border: `1px solid ${colors.border}`, background: colors.primary, color: "#fff", borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-              Save prospect workflow
+              Save rep inputs
             </button>
           </div>
           </div>
@@ -531,16 +537,38 @@ export default function AccountSourcingContactDetail() {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
           <MetricCard
+            label="Auto Stage"
+            value={getProspectTrackingStage(contact)}
+            hint="Derived from Instantly, Aircall, activity history, and linked deals."
+            tone={
+              contact.tracking_label === "good"
+                ? "green"
+                : contact.tracking_label === "blocked"
+                  ? "danger"
+                  : contact.tracking_label === "watch"
+                    ? "warm"
+                    : "primary"
+            }
+          />
+          <MetricCard
+            label="Momentum"
+            value={getProspectTrackingScore(contact)}
+            hint={getProspectTrackingSummary(contact)}
+            tone={
+              contact.tracking_label === "good"
+                ? "green"
+                : contact.tracking_label === "blocked"
+                  ? "danger"
+                  : contact.tracking_label === "watch"
+                    ? "warm"
+                    : "primary"
+            }
+          />
+          <MetricCard
             label="Outreach Lane"
             value={prettify(contact.outreach_lane || company?.recommended_outreach_lane)}
             hint="The lane drives the sequence family and how warm or direct the motion should be."
             tone={toneForLane(contact.outreach_lane || company?.recommended_outreach_lane)}
-          />
-          <MetricCard
-            label="Sequence"
-            value={prettify(contact.sequence_status)}
-            hint={asText(plan.sequence_family) || "Prospect-level sequence plan is stored with this contact."}
-            tone={toneForStatus(contact.sequence_status)}
           />
           <MetricCard
             label="Warm Path"
@@ -558,7 +586,20 @@ export default function AccountSourcingContactDetail() {
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.55fr) minmax(320px, 1fr)", gap: 16, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 14 }}>
-            <Section title="Prospect Workflow" icon={<UserRound size={15} color={colors.primary} />}>
+            <Section title="Rep Inputs" icon={<UserRound size={15} color={colors.primary} />}>
+              <div
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${trackingTone.border}`,
+                  background: trackingTone.soft,
+                  padding: "12px 14px",
+                  color: colors.sub,
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                Beacon updates stage and progress automatically from outreach and activity signals. Reps only maintain the human inputs that help personalize or route the motion.
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
                 <input
                   value={workflow.assigned_rep_email}
@@ -575,31 +616,7 @@ export default function AccountSourcingContactDetail() {
                     <option key={option.label} value={option.value}>{option.label}</option>
                   ))}
                 </select>
-                <select
-                  value={workflow.sequence_status}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, sequence_status: e.target.value }))}
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-                >
-                  {SEQUENCE_STATUS_OPTIONS.map((option) => (
-                    <option key={option.label} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-                <select
-                  value={workflow.instantly_status}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, instantly_status: e.target.value }))}
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-                >
-                  {INSTANTLY_STATUS_OPTIONS.map((option) => (
-                    <option key={option.label} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
               </div>
-              <input
-                value={workflow.instantly_campaign_id}
-                onChange={(e) => setWorkflow((current) => ({ ...current, instantly_campaign_id: e.target.value }))}
-                placeholder="Instantly campaign ID"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
-              />
               <textarea
                 value={workflow.conversation_starter}
                 onChange={(e) => setWorkflow((current) => ({ ...current, conversation_starter: e.target.value }))}
@@ -673,6 +690,8 @@ export default function AccountSourcingContactDetail() {
 
           <div style={{ display: "grid", gap: 14 }}>
             <Section title="Prospect Snapshot" icon={<UserRound size={15} color={colors.primary} />}>
+              <KV label="Auto Stage" value={getProspectTrackingStage(contact)} />
+              <KV label="Momentum" value={`${getProspectTrackingScore(contact)} · ${getProspectTrackingSummary(contact)}`} />
               <KV label="Name" value={fullName} />
               <KV label="Title" value={contact.title} />
               <KV label="Email" value={contact.email ? <a href={`mailto:${contact.email}`} style={{ color: colors.primary }}>{contact.email}</a> : undefined} />
@@ -691,6 +710,8 @@ export default function AccountSourcingContactDetail() {
               />
               <KV label="LinkedIn" value={contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: colors.primary, display: "inline-flex", alignItems: "center", gap: 6 }}>Profile <ExternalLink size={12} /></a> : undefined} />
               <KV label="Assigned Rep" value={contact.assigned_rep_email || company?.assigned_rep_email} />
+              <KV label="Sequence Status" value={prettify(contact.sequence_status)} />
+              <KV label="Instantly Status" value={prettify(contact.instantly_status)} />
               <KV label="Persona" value={contact.persona_type || contact.persona} />
               <KV label="Enriched" value={formatDate(contact.enriched_at)} />
               <KV label="Updated" value={formatDate(contact.updated_at)} />
