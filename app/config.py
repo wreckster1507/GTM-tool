@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
     FRONTEND_URL: str = "http://localhost:5173"
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: str = ""
+    GMAIL_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/settings/email-sync/google/callback"
 
     # JWT
     JWT_SECRET: str = "jwt_dev_secret_change_me"
@@ -71,6 +74,14 @@ class Settings(BaseSettings):
         # Some environments use the old variable name and others use the newer one,
         # so callers can depend on a single property instead of branching.
         return self.ANTHROPIC_API_KEY or self.CLAUDE_API_KEY
+
+    @property
+    def gmail_client_id(self) -> str:
+        return self.GMAIL_CLIENT_ID or self.GOOGLE_CLIENT_ID
+
+    @property
+    def gmail_client_secret(self) -> str:
+        return self.GMAIL_CLIENT_SECRET or self.GOOGLE_CLIENT_SECRET
 
     @property
     def cors_origins(self) -> List[str]:

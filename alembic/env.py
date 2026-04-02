@@ -14,6 +14,7 @@ from app.models.contact import Contact  # noqa: F401
 from app.models.deal import Deal  # noqa: F401
 from app.models.activity import Activity  # noqa: F401
 from app.models.assignment_update import AssignmentUpdate  # noqa: F401
+from app.models.sourcing_batch import SourcingBatch  # noqa: F401
 from app.models.user import User  # noqa: F401
 
 config = context.config

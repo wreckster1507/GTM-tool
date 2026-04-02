@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from sqlalchemy import select
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.activity import Activity, ActivityRead
 from app.models.contact import Contact
@@ -73,7 +73,7 @@ async def create_deal(payload: DealCreate, session: DBSession):
 
     # Default stage based on pipeline type
     if not data.get("stage"):
-        data["stage"] = "open" if data.get("pipeline_type", "deal") == "deal" else "todo"
+        data["stage"] = "open" if data.get("pipeline_type", "deal") == "deal" else "cold_account"
 
     valid = _valid_stages(data.get("pipeline_type", "deal"))
     if data["stage"] not in valid:
@@ -195,7 +195,7 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession):
 # ── Delete ───────────────────────────────────────────────────────────────────
 
 @router.delete("/{deal_id}", status_code=204)
-async def delete_deal(deal_id: UUID, session: DBSession):
+async def delete_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
     repo = DealRepository(session)
     await repo.get_or_raise(deal_id)
     await repo.delete_with_cascade(deal_id)
@@ -272,7 +272,7 @@ async def list_deal_activities(deal_id: UUID, session: DBSession):
 
 
 @router.post("/{deal_id}/activities", response_model=ActivityRead, status_code=201)
-async def add_deal_comment(deal_id: UUID, body: dict, session: DBSession):
+async def add_deal_comment(deal_id: UUID, body: dict, session: DBSession, user: CurrentUser):
     repo = DealRepository(session)
     await repo.get_or_raise(deal_id)
 
@@ -285,9 +285,11 @@ async def add_deal_comment(deal_id: UUID, body: dict, session: DBSession):
         type="comment",
         source="manual",
         content=content,
-        created_by_id=body.get("created_by_id"),
+        created_by_id=user.id,
     )
     session.add(activity)
     await session.commit()
     await session.refresh(activity)
-    return ActivityRead.model_validate(activity)
+    read = ActivityRead.model_validate(activity)
+    read.user_name = user.name
+    return read

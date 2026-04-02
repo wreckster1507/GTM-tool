@@ -4,13 +4,14 @@ import type { Contact, OutreachSequence, OutreachStep } from "../../types";
 import {
   X, Sparkles, Copy, CheckCheck, Linkedin, Mail, RefreshCw,
   Send, Rocket, CheckCircle, Clock, MessageSquare, ExternalLink, ChevronDown, ChevronUp,
-  Pencil, Check, Plus, Trash2, Phone,
+  Pencil, Check, Plus, Trash2, Phone, Settings2,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../../lib/utils";
 
 interface Props {
   contact: Contact | null;
   onClose: () => void;
+  mode?: "drawer" | "inline";
 }
 
 type TabKey = `step_${number}` | "linkedin";
@@ -63,8 +64,9 @@ const palette = {
 
 const DEFAULT_SENDING_ACCOUNT = "mahesh@beacon.li";
 
-export default function OutreachDrawer({ contact, onClose }: Props) {
+export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
   const isOpen = !!contact;
+  const isInline = mode === "inline";
 
   const [seq, setSeq] = useState<OutreachSequence | null>(null);
   const [steps, setSteps] = useState<OutreachStep[]>([]);
@@ -88,6 +90,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
   const [savingTiming, setSavingTiming] = useState(false);
   const [timingError, setTimingError] = useState("");
   const [timingOk, setTimingOk] = useState(false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   // Replies state
   const [replies, setReplies] = useState<Array<{ subject?: string; body?: string; from_email?: string; timestamp?: string; created_at?: string }>>([]);
@@ -101,11 +104,13 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
       setError("");
       setLaunchError("");
       setReplies([]);
+      setShowAdvancedSettings(false);
       return;
     }
 
     setLoading(true);
     setTab(stepTabKey(1));
+    setShowAdvancedSettings(false);
 
     outreachApi
       .getSequence(contact.id)
@@ -371,6 +376,36 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
   const isLaunched = !!(seq?.instantly_campaign_id || seq?.launched_at);
   const canEditTiming = !!seq && !isLaunched;
 
+  const getStepTabStyle = (kind: "email1" | "followup" | "final" | "other" | "linkedin", active: boolean): CSSProperties => {
+    const tone = kind === "email1"
+      ? { bg: "#eaf4ff", border: "#c9e0f8", text: palette.blue }
+      : kind === "followup"
+        ? { bg: "#fff4df", border: "#ffe0b2", text: "#b56d00" }
+        : kind === "final"
+          ? { bg: "#e8f8f0", border: palette.greenBorder, text: palette.green }
+          : kind === "linkedin"
+            ? { bg: "#eef1ff", border: "#d7ddff", text: "#4f46e5" }
+            : { bg: "#f4f8fc", border: palette.line, text: palette.sub };
+
+    return {
+      border: `1px solid ${active ? tone.border : palette.line}`,
+      borderRadius: 12,
+      padding: "12px 10px",
+      cursor: "pointer",
+      fontWeight: 700,
+      fontSize: 13,
+      color: active ? tone.text : palette.sub,
+      background: active ? tone.bg : `linear-gradient(180deg, ${tone.bg} 0%, #ffffff 100%)`,
+      boxShadow: active ? "0 8px 18px rgba(17,34,68,0.08)" : "none",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      flexDirection: "column",
+      minHeight: 72,
+    };
+  };
+
   const handleAddTimingStep = async () => {
     if (!seq || !canEditTiming || visibleTimingSteps.length >= MAX_SEQUENCE_STEPS) return;
     const last = visibleTimingSteps[visibleTimingSteps.length - 1];
@@ -418,33 +453,8 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
     }
   };
 
-  return (
+  const content = (
     <>
-      <div
-        onClick={onClose}
-        style={{
-          position: "fixed", inset: 0, zIndex: 40,
-          background: "rgba(16, 24, 40, 0.24)",
-          backdropFilter: "blur(2px)",
-          opacity: isOpen ? 1 : 0,
-          pointerEvents: isOpen ? "auto" : "none",
-          transition: "opacity 220ms ease",
-        }}
-      />
-
-      <aside
-        style={{
-          position: "fixed", top: 0, right: 0, zIndex: 50,
-          height: "100%", width: "min(800px, 100%)",
-          background: palette.panelBg,
-          borderLeft: `1px solid ${palette.line}`,
-          boxShadow: "-16px 0 40px rgba(10, 21, 42, 0.18)",
-          transform: isOpen ? "translateX(0)" : "translateX(100%)",
-          transition: "transform 260ms ease",
-          display: "grid",
-          gridTemplateRows: "auto 1fr",
-        }}
-      >
         {/* Header */}
         <header style={{
           padding: "18px 22px",
@@ -540,9 +550,11 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
               </div>
             </div>
           </div>
-          <button onClick={onClose} style={{ border: 0, background: "transparent", color: palette.muted, cursor: "pointer", padding: 2 }}>
-            <X size={18} />
-          </button>
+          {!isInline ? (
+            <button onClick={onClose} style={{ border: 0, background: "transparent", color: palette.muted, cursor: "pointer", padding: 2 }}>
+              <X size={18} />
+            </button>
+          ) : null}
         </header>
 
         {/* Body */}
@@ -589,7 +601,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
               <StepTimeline seq={seq} steps={steps} />
 
               {/* ── Email tabs ──────────────────────────────────────────────── */}
-              <div style={{ ...panel, padding: 8, display: "grid", gridTemplateColumns: `repeat(${Math.max(visibleTimingSteps.length + 1, 2)}, minmax(0, 1fr))`, gap: 6 }}>
+              <div style={{ ...panel, padding: 8, display: "grid", gridTemplateColumns: `repeat(${Math.max(visibleTimingSteps.length + 1, 2)}, minmax(0, 1fr))`, gap: 8 }}>
                 {visibleTimingSteps.map((step, index) => {
                   const stepKey = stepTabKey(step.step_number);
                   const label =
@@ -597,19 +609,16 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
                     index === 1 ? "Follow-up" :
                     index === 2 ? "Final" :
                     `Step ${step.step_number}`;
+                  const kind =
+                    index === 0 ? "email1" :
+                    index === 1 ? "followup" :
+                    index === 2 ? "final" :
+                    "other";
                   return (
                   <button
                     key={step.id}
                     onClick={() => handleTabChange(stepKey)}
-                    style={{
-                      border: 0, borderRadius: 10, padding: "10px 8px",
-                      cursor: "pointer", fontWeight: 700, fontSize: 13,
-                      color: tab === stepKey ? palette.text : palette.sub,
-                      background: tab === stepKey ? "#ffffff" : "transparent",
-                      boxShadow: tab === stepKey ? "0 1px 5px rgba(30,50,80,0.15)" : "none",
-                      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-                      flexDirection: "column",
-                    }}
+                    style={getStepTabStyle(kind, tab === stepKey)}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                       <Mail size={13} />
@@ -623,15 +632,7 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
                 <button
                   key={LINKEDIN_TAB}
                   onClick={() => handleTabChange(LINKEDIN_TAB)}
-                  style={{
-                    border: 0, borderRadius: 10, padding: "10px 8px",
-                    cursor: "pointer", fontWeight: 700, fontSize: 13,
-                    color: tab === LINKEDIN_TAB ? palette.text : palette.sub,
-                    background: tab === LINKEDIN_TAB ? "#ffffff" : "transparent",
-                    boxShadow: tab === LINKEDIN_TAB ? "0 1px 5px rgba(30,50,80,0.15)" : "none",
-                    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-                    flexDirection: "column",
-                  }}
+                  style={getStepTabStyle("linkedin", tab === LINKEDIN_TAB)}
                 >
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                     <Linkedin size={13} />
@@ -640,7 +641,35 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
                 </button>
               </div>
 
-              {tab !== LINKEDIN_TAB && (
+              <div style={{ ...panel, padding: "12px 14px" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedSettings((current) => !current)}
+                  style={{
+                    width: "100%",
+                    border: 0,
+                    background: "transparent",
+                    padding: 0,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    color: palette.text,
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 14 }}>
+                    <Settings2 size={14} color={palette.blue} />
+                    Advanced settings
+                  </span>
+                  {showAdvancedSettings ? <ChevronUp size={14} color={palette.muted} /> : <ChevronDown size={14} color={palette.muted} />}
+                </button>
+                <div style={{ marginTop: 6, color: palette.muted, fontSize: 12, lineHeight: 1.5 }}>
+                  Configure prospect-only timing overrides and extra touches before launch.
+                </div>
+              </div>
+
+              {showAdvancedSettings && (
                 <div style={{ ...panel, padding: "14px 16px" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                     <div>
@@ -940,6 +969,53 @@ export default function OutreachDrawer({ contact, onClose }: Props) {
             </div>
           )}
         </div>
+    </>
+  );
+
+  if (isInline) {
+    if (!contact) return null;
+    return (
+      <div
+        style={{
+          ...panel,
+          overflow: "hidden",
+          background: palette.panelBg,
+          boxShadow: "0 12px 26px rgba(17,34,68,0.07)",
+        }}
+      >
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0, zIndex: 40,
+          background: "rgba(16, 24, 40, 0.24)",
+          backdropFilter: "blur(2px)",
+          opacity: isOpen ? 1 : 0,
+          pointerEvents: isOpen ? "auto" : "none",
+          transition: "opacity 220ms ease",
+        }}
+      />
+
+      <aside
+        style={{
+          position: "fixed", top: 0, right: 0, zIndex: 50,
+          height: "100%", width: "min(800px, 100%)",
+          background: palette.panelBg,
+          borderLeft: `1px solid ${palette.line}`,
+          boxShadow: "-16px 0 40px rgba(10, 21, 42, 0.18)",
+          transform: isOpen ? "translateX(0)" : "translateX(100%)",
+          transition: "transform 260ms ease",
+          display: "grid",
+          gridTemplateRows: "auto 1fr",
+        }}
+      >
+        {content}
       </aside>
     </>
   );

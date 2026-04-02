@@ -4,6 +4,31 @@ import { authApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { User as UserType } from "../types";
 
+function roleMeta(role: UserType["role"]) {
+  if (role === "admin") {
+    return {
+      label: "Admin",
+      icon: Shield,
+      bg: "rgba(99, 132, 255, 0.1)",
+      color: "#6384ff",
+    };
+  }
+  if (role === "ae") {
+    return {
+      label: "AE",
+      icon: UserPlus,
+      bg: "rgba(14, 165, 233, 0.1)",
+      color: "#0284c7",
+    };
+  }
+  return {
+    label: "SDR",
+    icon: User,
+    bg: "rgba(31, 143, 95, 0.1)",
+    color: "#1f8f5f",
+  };
+}
+
 export default function TeamManagement() {
   const { user: currentUser, isAdmin } = useAuth();
   const [users, setUsers] = useState<UserType[]>([]);
@@ -43,7 +68,8 @@ export default function TeamManagement() {
   };
 
   const admins = users.filter((u) => u.role === "admin");
-  const reps = users.filter((u) => u.role === "sales_rep");
+  const aes = users.filter((u) => u.role === "ae");
+  const sdrs = users.filter((u) => u.role === "sdr");
 
   return (
     <div style={{ background: "#f4f7fb", minHeight: "100%", padding: "32px 28px 40px" }}>
@@ -53,13 +79,13 @@ export default function TeamManagement() {
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "#1d2b3c", margin: 0 }}>Team Management</h2>
           <p style={{ fontSize: 14, color: "#55657a", marginTop: 4 }}>
             {isAdmin
-              ? "Manage your team members. Promote reps to admin or deactivate accounts."
+              ? "Manage your team members. Only admins can change someone else's role or access."
               : "View your team members."}
           </p>
         </div>
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#fff", border: "1px solid #d9e1ec", borderRadius: 12, padding: "18px 20px" }}>
             <div style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Total Members</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#1d2b3c", marginTop: 4 }}>{users.length}</div>
@@ -69,8 +95,12 @@ export default function TeamManagement() {
             <div style={{ fontSize: 28, fontWeight: 700, color: "#6384ff", marginTop: 4 }}>{admins.length}</div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #d9e1ec", borderRadius: 12, padding: "18px 20px" }}>
-            <div style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Sales Reps</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "#1f8f5f", marginTop: 4 }}>{reps.length}</div>
+            <div style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>AEs</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "#0284c7", marginTop: 4 }}>{aes.length}</div>
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #d9e1ec", borderRadius: 12, padding: "18px 20px" }}>
+            <div style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>SDRs</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "#1f8f5f", marginTop: 4 }}>{sdrs.length}</div>
           </div>
         </div>
 
@@ -96,6 +126,8 @@ export default function TeamManagement() {
               <tbody>
                 {users.map((u) => {
                   const isMe = u.id === currentUser?.id;
+                  const meta = roleMeta(u.role);
+                  const RoleIcon = meta.icon;
                   return (
                     <tr key={u.id} style={{ borderBottom: "1px solid #f4f6f9" }}>
                       <td style={{ padding: "14px 20px" }}>
@@ -127,11 +159,11 @@ export default function TeamManagement() {
                         <span style={{
                           display: "inline-flex", alignItems: "center", gap: 4,
                           padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                          background: u.role === "admin" ? "rgba(99, 132, 255, 0.1)" : "rgba(31, 143, 95, 0.1)",
-                          color: u.role === "admin" ? "#6384ff" : "#1f8f5f",
+                          background: meta.bg,
+                          color: meta.color,
                         }}>
-                          {u.role === "admin" ? <Shield size={12} /> : <User size={12} />}
-                          {u.role === "admin" ? "Admin" : "Sales Rep"}
+                          <RoleIcon size={12} />
+                          {meta.label}
                         </span>
                       </td>
                       <td style={{ padding: "14px 16px" }}>
@@ -154,8 +186,8 @@ export default function TeamManagement() {
                           ) : isMe ? (
                             <span style={{ fontSize: 12, color: "#7f8fa5" }}>-</span>
                           ) : (
-                            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                              {u.role === "sales_rep" ? (
+                            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                              {u.role !== "admin" && (
                                 <button
                                   onClick={() => handleRoleChange(u.id, "admin")}
                                   style={{
@@ -168,9 +200,24 @@ export default function TeamManagement() {
                                   <Shield size={12} />
                                   Make Admin
                                 </button>
-                              ) : (
+                              )}
+                              {u.role !== "ae" && (
                                 <button
-                                  onClick={() => handleRoleChange(u.id, "sales_rep")}
+                                  onClick={() => handleRoleChange(u.id, "ae")}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: 4,
+                                    padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                    background: "rgba(14, 165, 233, 0.08)", color: "#0284c7",
+                                    border: "1px solid rgba(14, 165, 233, 0.2)", cursor: "pointer",
+                                  }}
+                                >
+                                  <UserPlus size={12} />
+                                  Make AE
+                                </button>
+                              )}
+                              {u.role !== "sdr" && (
+                                <button
+                                  onClick={() => handleRoleChange(u.id, "sdr")}
                                   style={{
                                     display: "flex", alignItems: "center", gap: 4,
                                     padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
@@ -179,7 +226,7 @@ export default function TeamManagement() {
                                   }}
                                 >
                                   <User size={12} />
-                                  Make Rep
+                                  Make SDR
                                 </button>
                               )}
                               <button

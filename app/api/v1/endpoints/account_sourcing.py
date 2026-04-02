@@ -19,19 +19,23 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlmodel import select
 
-from app.core.dependencies import AdminUser, DBSession, Pagination
+from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.models.angel import AngelInvestor, AngelMapping
 from app.models.company import Company, CompanyRead, CompanySourcingSummary, CompanyUpdate
 from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
+from app.models.user import User
 from app.repositories.company import CompanyRepository
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
     account_priority_snapshot,
+    append_company_activity_log,
+    is_priority_stakeholder_candidate,
     merge_company_from_upload,
     parse_tabular_file,
     refresh_contact_sequence_plan,
@@ -48,6 +52,15 @@ from app.services.contact_tracking import apply_contact_tracking, to_contact_rea
 from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
+
+
+class ManualCompanyCreate(BaseModel):
+    name: str
+    domain: str | None = None
+
+
+class BatchConfirmPayload(BaseModel):
+    force: bool = False
 
 
 async def _auto_create_angel_records(
@@ -391,8 +404,229 @@ def _is_minimal_upload(rows: list[dict]) -> bool:
     return rich_count < (sample_size / 2)
 
 
+def _normalized_verdict(value: object) -> str:
+    return str(value or "").strip().lower().replace("_", "-")
+
+
+def _build_upload_verdict_summary(rows: list[dict]) -> dict[str, object]:
+    counts = {
+        "target": 0,
+        "watch": 0,
+        "non_target": 0,
+        "unknown": 0,
+    }
+    for row in rows:
+        fields = row_to_company_fields(row)
+        import_block = fields.get("enrichment_sources") if isinstance(fields.get("enrichment_sources"), dict) else {}
+        analyst = import_block.get("import", {}).get("analyst") if isinstance(import_block.get("import"), dict) else {}
+        verdict = _normalized_verdict((analyst or {}).get("classification"))
+        if verdict == "target":
+            counts["target"] += 1
+        elif verdict == "watch":
+            counts["watch"] += 1
+        elif verdict in {"non-target", "bad-fit", "do-not-target"}:
+            counts["non_target"] += 1
+        else:
+            counts["unknown"] += 1
+
+    has_uploaded_verdicts = (counts["target"] + counts["watch"] + counts["non_target"]) > 0
+    pass_auto = _is_minimal_upload(rows) or (
+        has_uploaded_verdicts and counts["target"] > 0 and counts["non_target"] == 0
+    ) or (not has_uploaded_verdicts)
+    requires_confirmation = not pass_auto and has_uploaded_verdicts
+    message = (
+        "TAL verdicts look safe to enrich."
+        if pass_auto
+        else "Some uploaded accounts are marked as non-target or missing a clear target verdict."
+    )
+    return {
+        **counts,
+        "has_uploaded_verdicts": has_uploaded_verdicts,
+        "pass_auto": pass_auto,
+        "requires_confirmation": requires_confirmation,
+        "message": message,
+    }
+
+
+def _estimate_batch_eta_seconds(batch: SourcingBatch) -> int | None:
+    total = int(batch.total_rows or 0)
+    processed = int(batch.processed_rows or 0)
+    if total <= 0 or processed <= 0 or processed >= total:
+        return 0 if processed >= total and total > 0 else None
+    elapsed = max((datetime.utcnow() - batch.created_at).total_seconds(), 1)
+    per_row = elapsed / processed
+    remaining = max(total - processed, 0)
+    return int(per_row * remaining)
+
+
+async def _batch_contacts_found(session, batch_id: UUID) -> int:
+    return int(
+        (
+            await session.execute(
+                select(func.count(Contact.id))
+                .join(Company, Contact.company_id == Company.id)
+                .where(Company.sourcing_batch_id == batch_id)
+            )
+        ).scalar_one()
+        or 0
+    )
+
+
+async def _batch_current_stage(session, batch_id: UUID, batch: SourcingBatch) -> tuple[str | None, str | None]:
+    meta = batch.meta if isinstance(batch.meta, dict) else {}
+    if batch.status == "awaiting_confirmation":
+        return "tal_review", "Waiting for approval before running enrichment"
+    if batch.status == "cancelled":
+        return "cancelled", "Import saved without enrichment"
+    if batch.status == "completed":
+        return "completed", "Research complete"
+
+    latest_company = (
+        await session.execute(
+            select(Company)
+            .where(Company.sourcing_batch_id == batch_id)
+            .order_by(Company.updated_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    if not latest_company:
+        return meta.get("current_stage"), meta.get("progress_message")
+
+    cache = latest_company.enrichment_cache if isinstance(latest_company.enrichment_cache, dict) else {}
+    pipeline = cache.get("pipeline") if isinstance(cache.get("pipeline"), dict) else {}
+    stage = pipeline.get("current_stage")
+    status = pipeline.get("status")
+    detail = None
+    events = pipeline.get("events") if isinstance(pipeline.get("events"), list) else []
+    if events:
+        latest_event = events[-1] if isinstance(events[-1], dict) else {}
+        detail = latest_event.get("detail")
+
+    if isinstance(stage, str):
+        return stage, detail or status or f"{stage.replace('_', ' ').title()} in progress"
+    return meta.get("current_stage"), meta.get("progress_message")
+
+
+async def _build_batch_read(session, batch: SourcingBatch) -> SourcingBatchRead:
+    meta = batch.meta if isinstance(batch.meta, dict) else {}
+    current_stage, progress_message = await _batch_current_stage(session, batch.id, batch)
+    read = SourcingBatchRead.model_validate(batch)
+    read.current_stage = current_stage
+    read.progress_message = progress_message or meta.get("progress_message")
+    read.eta_seconds = _estimate_batch_eta_seconds(batch)
+    read.contacts_found = await _batch_contacts_found(session, batch.id)
+    read.verdict_summary = meta.get("verdict_summary")
+    read.requires_confirmation = bool(meta.get("requires_confirmation"))
+    read.auto_started = bool(meta.get("auto_started"))
+    return read
+
+
+async def _queue_batch_enrichment(session, batch: SourcingBatch) -> None:
+    batch.status = "processing"
+    meta = dict(batch.meta or {})
+    meta["auto_started"] = True
+    meta["requires_confirmation"] = False
+    meta["current_stage"] = "queued"
+    meta["progress_message"] = "Queued for enrichment"
+    batch.meta = meta
+    batch.updated_at = datetime.utcnow()
+    session.add(batch)
+    await session.commit()
+    try:
+        from app.tasks.enrichment import icp_research_batch_task
+
+        icp_research_batch_task.delay(str(batch.id))
+    except Exception as exc:
+        batch.status = "failed"
+        batch.error_log = [*(batch.error_log or []), {"batch": str(batch.id), "error": str(exc)}]
+        batch.updated_at = datetime.utcnow()
+        session.add(batch)
+        await session.commit()
+        raise HTTPException(status_code=500, detail="Failed to queue batch enrichment") from exc
+
+
+async def _build_competitive_landscape(session, company: Company) -> list[dict[str, str]]:
+    cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+    ai_entry = cache.get("ai_summary") if isinstance(cache.get("ai_summary"), dict) else {}
+    ai_data = ai_entry.get("data") if isinstance(ai_entry.get("data"), dict) else {}
+    seed_names = []
+    for item in ai_data.get("competitive_landscape") if isinstance(ai_data.get("competitive_landscape"), list) else []:
+        label = str(item or "").strip()
+        if label:
+            seed_names.append(label)
+
+    stmt = select(Company).where(Company.id != company.id)
+    if company.industry:
+        stmt = stmt.where(Company.industry == company.industry)
+    elif company.vertical:
+        stmt = stmt.where(Company.vertical == company.vertical)
+    candidates = (
+        await session.execute(stmt.order_by(Company.enriched_at.desc().nullslast(), Company.updated_at.desc()).limit(8))
+    ).scalars().all()
+
+    results: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _pitch_angle_from_text(text: str) -> str:
+        normalized = text.lower()
+        if "implementation" in normalized or "professional services" in normalized:
+            return "Competitors are investing in implementation motion -> pitch zero-friction implementation acceleration."
+        if "automation" in normalized or "orchestration" in normalized:
+            return "Automation is clearly strategic here -> pitch Beacon as the faster path without adding headcount."
+        if "integration" in normalized:
+            return "Integration complexity is visible -> pitch faster rollout and less coordination drag."
+        return "Use Beacon to shorten time-to-value and reduce manual implementation work."
+
+    for candidate in candidates:
+        key = candidate.name.strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        context = " ".join(
+            value
+            for value in [
+                candidate.description or "",
+                candidate.account_thesis or "",
+                candidate.why_now or "",
+                candidate.beacon_angle or "",
+            ]
+            if value
+        ).strip()
+        results.append(
+            {
+                "name": candidate.name,
+                "website": "" if candidate.domain.endswith(".unknown") else f"https://{candidate.domain}",
+                "summary": (candidate.description or candidate.account_thesis or candidate.why_now or "Comparable operating motion in the same market.")[:220],
+                "pitch_angle": _pitch_angle_from_text(context or candidate.name),
+                "source": "db",
+            }
+        )
+        if len(results) >= 4:
+            return results
+
+    for label in seed_names:
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append(
+            {
+                "name": label,
+                "website": "",
+                "summary": "Mentioned in Beacon's lightweight competitive scan.",
+                "pitch_angle": "Use Beacon to reduce implementation drag versus incumbent-heavy approaches.",
+                "source": "research",
+            }
+        )
+        if len(results) >= 4:
+            break
+
+    return results[:4]
+
+
 @router.post("/upload", response_model=SourcingBatchRead, status_code=202)
 async def upload_csv(
+    admin: AdminUser,
     file: UploadFile = File(...),
     session: DBSession = None,
 ):
@@ -413,12 +647,24 @@ async def upload_csv(
             status_code=400,
             detail="No valid rows found. The file needs at least a company name or domain column.",
         )
+    verdict_summary = _build_upload_verdict_summary(rows)
 
     # Create batch record
     batch = SourcingBatch(
         filename=file.filename or "upload.csv",
         total_rows=len(rows),
-        status="pending",
+        status="awaiting_confirmation" if verdict_summary["requires_confirmation"] else "pending",
+        created_by_id=admin.id,
+        created_by_name=admin.name,
+        created_by_email=admin.email,
+        meta={
+            "upload_mode": "file",
+            "verdict_summary": verdict_summary,
+            "requires_confirmation": verdict_summary["requires_confirmation"],
+            "auto_started": False,
+            "progress_message": "Upload received and parsed",
+            "current_stage": "upload_received",
+        },
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -430,10 +676,34 @@ async def upload_csv(
     created, attached_existing, skipped, failed = 0, 0, 0, 0
     errors = []
 
+    # Pre-load all users for owner resolution: email → User, lowercase name → User
+    all_users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()  # noqa: E712
+    _user_by_email: dict[str, User] = {u.email.lower(): u for u in all_users}
+    _user_by_name: dict[str, User] = {u.name.strip().lower(): u for u in all_users}
+
+    def _resolve_user(rep_email: str | None, rep_name: str | None) -> User | None:
+        """Resolve an owner string from CSV to a User record."""
+        if rep_email:
+            found = _user_by_email.get(rep_email.strip().lower())
+            if found:
+                return found
+        if rep_name:
+            found = _user_by_name.get(rep_name.strip().lower())
+            if found:
+                return found
+        return None
+
     for row in rows:
         fields = row_to_company_fields(row)
         domain = fields["domain"]
         name = fields["name"]
+
+        # Resolve owner from CSV sdr/ae to actual User records
+        ae_user = _resolve_user(fields.get("assigned_rep_email"), fields.get("assigned_rep_name") or fields.get("assigned_rep"))
+        if ae_user:
+            fields["assigned_to_id"] = ae_user.id
+            fields["assigned_rep_email"] = ae_user.email
+            fields["assigned_rep_name"] = ae_user.name
 
         try:
             company = None
@@ -446,6 +716,14 @@ async def upload_csv(
                 already_in_batch = company.sourcing_batch_id == batch.id
                 company = merge_company_from_upload(company, fields)
                 company.sourcing_batch_id = batch.id
+                append_company_activity_log(
+                    company,
+                    action="company_import_updated",
+                    actor_name=admin.name,
+                    actor_email=admin.email,
+                    message=f"Updated from upload {batch.filename}",
+                    metadata={"source": "upload", "batch_id": str(batch.id)},
+                )
                 company.updated_at = datetime.utcnow()
                 company = refresh_company_prospecting_fields(company)
                 company.icp_score, company.icp_tier = score_company(company)
@@ -458,6 +736,14 @@ async def upload_csv(
                     attached_existing += 1
             else:
                 company = Company(**fields, sourcing_batch_id=batch.id)
+                append_company_activity_log(
+                    company,
+                    action="company_created",
+                    actor_name=admin.name,
+                    actor_email=admin.email,
+                    message=f"Created from upload {batch.filename}",
+                    metadata={"source": "upload", "batch_id": str(batch.id)},
+                )
                 company = refresh_company_prospecting_fields(company)
                 company.icp_score, company.icp_tier = score_company(company)
                 session.add(company)
@@ -487,6 +773,10 @@ async def upload_csv(
 
             contact_fields = row_to_contact_fields(row, fields)
             if contact_fields:
+                # Propagate resolved owner to contacts
+                if ae_user:
+                    contact_fields["assigned_to_id"] = ae_user.id
+                    contact_fields["assigned_rep_email"] = ae_user.email
                 # Contact rows are optional. When present, we merge them now so the
                 # background enrichment can build on the imported humans instead of
                 # discovering everything from scratch.
@@ -548,27 +838,15 @@ async def upload_csv(
     batch.skipped_rows = skipped
     batch.failed_rows = failed
     batch.error_log = errors if errors else None
-    batch.status = "processing"
+    batch.status = "awaiting_confirmation" if verdict_summary["requires_confirmation"] else "pending"
     batch.updated_at = datetime.utcnow()
     session.add(batch)
     await session.commit()
-    batch_id = batch.id
-
-    try:
-        from app.tasks.enrichment import icp_research_batch_task
-        # Queue only after the batch and companies are committed so the worker sees
-        # durable records and a valid batch id.
-        icp_research_batch_task.delay(str(batch_id))
-    except Exception as exc:
-        batch.status = "failed"
-        batch.error_log = [*(batch.error_log or []), {"batch": str(batch_id), "error": str(exc)}]
-        batch.updated_at = datetime.utcnow()
-        session.add(batch)
-        await session.commit()
-        raise HTTPException(status_code=500, detail="Failed to queue batch enrichment") from exc
-
     await session.refresh(batch)
-    return batch
+    if not verdict_summary["requires_confirmation"]:
+        await _queue_batch_enrichment(session, batch)
+        await session.refresh(batch)
+    return await _build_batch_read(session, batch)
 
 
 # ── Batch Status ───────────────────────────────────────────────────────────────
@@ -579,7 +857,44 @@ async def get_batch_status(batch_id: UUID, session: DBSession = None):
     batch = await session.get(SourcingBatch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
-    return batch
+    return await _build_batch_read(session, batch)
+
+
+@router.post("/batches/{batch_id}/confirm", response_model=SourcingBatchRead)
+async def confirm_batch_enrichment(
+    batch_id: UUID,
+    payload: BatchConfirmPayload,
+    _admin: AdminUser,
+    session: DBSession = None,
+):
+    batch = await session.get(SourcingBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if batch.status == "cancelled":
+        raise HTTPException(status_code=400, detail="This batch was cancelled")
+    if batch.status == "completed":
+        return await _build_batch_read(session, batch)
+    if batch.status == "awaiting_confirmation" and payload.force:
+        await _queue_batch_enrichment(session, batch)
+        await session.refresh(batch)
+    return await _build_batch_read(session, batch)
+
+
+@router.post("/batches/{batch_id}/cancel", response_model=SourcingBatchRead)
+async def cancel_batch_enrichment(batch_id: UUID, _admin: AdminUser, session: DBSession = None):
+    batch = await session.get(SourcingBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    batch.status = "cancelled"
+    meta = dict(batch.meta or {})
+    meta["progress_message"] = "Import kept without enrichment"
+    meta["current_stage"] = "cancelled"
+    batch.meta = meta
+    batch.updated_at = datetime.utcnow()
+    session.add(batch)
+    await session.commit()
+    await session.refresh(batch)
+    return await _build_batch_read(session, batch)
 
 
 @router.get("/batches/{batch_id}/companies", response_model=list[CompanyRead])
@@ -718,6 +1033,99 @@ async def get_sourced_company_summary(
     )
 
 
+@router.post("/companies/manual", response_model=SourcingBatchRead, status_code=202)
+async def create_manual_company(
+    payload: ManualCompanyCreate,
+    admin: AdminUser,
+    session: DBSession = None,
+):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Company name is required")
+
+    filename = f"Manual entry - {name}"
+    domain = (payload.domain or "").strip()
+    normalized_domain = domain.lower().replace("https://", "").replace("http://", "").lstrip("www.").split("/")[0] if domain else ""
+    fake_row = {"company name": name}
+    if normalized_domain:
+        fake_row["domain"] = normalized_domain
+
+    batch = SourcingBatch(
+        filename=filename,
+        total_rows=1,
+        status="pending",
+        created_by_id=admin.id,
+        created_by_name=admin.name,
+        created_by_email=admin.email,
+        meta={
+            "upload_mode": "manual_entry",
+            "verdict_summary": {
+                "target": 0,
+                "watch": 0,
+                "non_target": 0,
+                "unknown": 1,
+                "has_uploaded_verdicts": False,
+                "pass_auto": True,
+                "requires_confirmation": False,
+                "message": "Manual account added and queued for enrichment.",
+            },
+            "requires_confirmation": False,
+            "auto_started": False,
+            "current_stage": "manual_created",
+            "progress_message": "Manual account created",
+        },
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add(batch)
+    await session.commit()
+    await session.refresh(batch)
+
+    fields = row_to_company_fields(fake_row)
+    repo = CompanyRepository(session)
+    existing = None
+    if normalized_domain:
+        existing = await repo.get_by_domain(fields["domain"])
+    if not existing:
+        existing = await repo.get_by_name(fields["name"])
+
+    if existing:
+        company = merge_company_from_upload(existing, fields)
+        company.sourcing_batch_id = batch.id
+        append_company_activity_log(
+            company,
+            action="manual_company_requeued",
+            actor_name=admin.name,
+            actor_email=admin.email,
+            message=f"Added back into sourcing by {admin.name}",
+            metadata={"batch_id": str(batch.id)},
+        )
+    else:
+        company = Company(**fields, sourcing_batch_id=batch.id)
+        append_company_activity_log(
+            company,
+            action="manual_company_created",
+            actor_name=admin.name,
+            actor_email=admin.email,
+            message=f"Manually created by {admin.name}",
+            metadata={"batch_id": str(batch.id)},
+        )
+    company = refresh_company_prospecting_fields(company)
+    company.icp_score, company.icp_tier = score_company(company)
+    session.add(company)
+    await session.commit()
+    await session.refresh(company)
+
+    batch.created_companies = 1
+    batch.updated_at = datetime.utcnow()
+    session.add(batch)
+    await session.commit()
+    await session.refresh(batch)
+    await _queue_batch_enrichment(session, batch)
+    await session.refresh(batch)
+    return await _build_batch_read(session, batch)
+
+
 # ── Single Company Detail ─────────────────────────────────────────────────────
 
 @router.get("/companies/{company_id}", response_model=CompanyRead)
@@ -726,16 +1134,25 @@ async def get_sourced_company(company_id: UUID, session: DBSession = None):
     company = await session.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-    return company
+    read = CompanyRead.model_validate(company)
+    cache = dict(read.enrichment_cache or {})
+    cache["competitive_landscape_v2"] = await _build_competitive_landscape(session, company)
+    read.enrichment_cache = cache
+    return read
 
 
 @router.put("/companies/{company_id}", response_model=CompanyRead)
-async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, session: DBSession = None):
+async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, current_user: CurrentUser, session: DBSession = None):
     """Update sourced company workflow fields like owner, disposition, and rep feedback."""
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
 
     update_data = payload.model_dump(exclude_unset=True)
+    changed_fields = {
+        key: {"before": getattr(company, key, None), "after": value}
+        for key, value in update_data.items()
+        if getattr(company, key, None) != value
+    }
     for key, value in update_data.items():
         setattr(company, key, value)
 
@@ -769,6 +1186,19 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, sessi
         session.add(contact)
 
     refresh_company_prospecting_fields(company, contacts)
+    if changed_fields:
+        summary = ", ".join(
+            f"{field.replace('_', ' ')} -> {str(change['after'])[:60]}"
+            for field, change in list(changed_fields.items())[:3]
+        )
+        append_company_activity_log(
+            company,
+            action="company_updated",
+            actor_name=current_user.name,
+            actor_email=current_user.email,
+            message=f"Updated {summary}",
+            metadata={"changes": changed_fields},
+        )
     company.updated_at = datetime.utcnow()
     company.icp_score, company.icp_tier = score_company(company)
     return await repo.save(company)
@@ -780,6 +1210,7 @@ async def export_sourced_companies(
     assigned_rep: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
     disposition: str | None = Query(default=None),
+    batch_id: UUID | None = Query(default=None),
 ):
     """Export sourced companies and preserved source columns as CSV."""
     stmt = select(Company).where(Company.sourcing_batch_id.isnot(None)).order_by(Company.created_at.desc())
@@ -789,6 +1220,8 @@ async def export_sourced_companies(
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if disposition:
         stmt = stmt.where(Company.disposition == disposition)
+    if batch_id:
+        stmt = stmt.where(Company.sourcing_batch_id == batch_id)
 
     companies = (await session.execute(stmt)).scalars().all()
     rows = [_company_export_row(company) for company in companies]
@@ -818,6 +1251,7 @@ async def export_sourced_companies(
 async def export_sourced_contacts(
     session: DBSession = None,
     assigned_rep_email: str | None = Query(default=None),
+    batch_id: UUID | None = Query(default=None),
 ):
     stmt = (
         select(Contact, Company)
@@ -829,6 +1263,8 @@ async def export_sourced_contacts(
         stmt = stmt.where(
             (Contact.assigned_rep_email == assigned_rep_email) | (Company.assigned_rep_email == assigned_rep_email)
         )
+    if batch_id:
+        stmt = stmt.where(Company.sourcing_batch_id == batch_id)
 
     rows = []
     for contact, company in (await session.execute(stmt)).all():
@@ -915,7 +1351,10 @@ async def get_company_contacts(company_id: UUID, session: DBSession = None):
         .where(Contact.company_id == company_id)
         .order_by(Contact.created_at.desc())
     )
-    reads = [ContactRead.model_validate(contact) for contact in result.scalars().all()]
+    all_contacts = result.scalars().all()
+    filtered_contacts = [contact for contact in all_contacts if is_priority_stakeholder_candidate(contact)]
+    contacts = filtered_contacts or all_contacts
+    reads = [ContactRead.model_validate(contact) for contact in contacts]
     for read in reads:
         read.company_name = company.name
     await apply_contact_tracking(session, reads)
@@ -1050,10 +1489,12 @@ async def push_to_instantly(
 @router.get("/batches", response_model=list[SourcingBatchRead])
 async def list_batches(session: DBSession = None, page: Pagination = None):
     """List all sourcing batches."""
-    result = await session.execute(
+    result = (
+        await session.execute(
         select(SourcingBatch)
         .offset(page.skip)
         .limit(page.limit)
         .order_by(SourcingBatch.created_at.desc())
-    )
-    return result.scalars().all()
+        )
+    ).scalars().all()
+    return [await _build_batch_read(session, batch) for batch in result]

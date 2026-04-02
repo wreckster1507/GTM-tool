@@ -16,7 +16,8 @@ import {
   Users,
 } from "lucide-react";
 
-import { accountSourcingApi, companiesApi, contactsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, companiesApi, contactsApi, dealsApi } from "../lib/api";
+import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
@@ -24,7 +25,8 @@ import {
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
 import { avatarColor, formatDate, getAccountPrioritySnapshot, getInitials } from "../lib/utils";
-import type { Company, Contact } from "../types";
+import type { Activity, Company, Contact, Deal } from "../types";
+import { MessageSquare } from "lucide-react";
 
 const colors = {
   bg: "#f4f7fb",
@@ -70,14 +72,6 @@ const heroCardStyle: CSSProperties = {
   borderColor: "#d7e3f3",
   boxShadow: "0 16px 40px rgba(31, 69, 120, 0.10)",
 };
-
-const OUTREACH_LANE_OPTIONS = [
-  { value: "", label: "Auto / Unset" },
-  { value: "warm_intro", label: "Warm Intro" },
-  { value: "event_follow_up", label: "Event Follow-up" },
-  { value: "cold_operator", label: "Cold Operator" },
-  { value: "cold_strategic", label: "Cold Strategic" },
-];
 
 function asText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -230,6 +224,58 @@ function ListCard({ title, items, empty }: { title: string; items: string[]; emp
   );
 }
 
+function ContactActionButton({
+  icon,
+  label,
+  href,
+  onClick,
+  tone = "neutral",
+}: {
+  icon: ReactNode;
+  label: string;
+  href?: string;
+  onClick?: () => void;
+  tone?: "neutral" | "primary" | "green";
+}) {
+  const style = tone === "green"
+    ? { color: colors.green, background: colors.greenSoft, border: "#bfe8d1" }
+    : tone === "primary"
+      ? { color: colors.primary, background: colors.primarySoft, border: "#cfe0fb" }
+      : { color: colors.sub, background: "#ffffff", border: colors.border };
+
+  const commonStyle: CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 12,
+    border: `1px solid ${style.border}`,
+    background: style.background,
+    color: style.color,
+    padding: "9px 12px",
+    fontSize: 13,
+    fontWeight: 700,
+    textDecoration: "none",
+    cursor: "pointer",
+    boxShadow: "0 4px 10px rgba(17,34,68,0.04)",
+  };
+
+  if (href) {
+    return (
+      <a href={href} target={href.startsWith("http") ? "_blank" : undefined} rel={href.startsWith("http") ? "noreferrer" : undefined} style={commonStyle}>
+        {icon}
+        {label}
+      </a>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onClick} style={commonStyle}>
+      {icon}
+      {label}
+    </button>
+  );
+}
+
 function SequenceStepCard({
   index,
   step,
@@ -280,15 +326,9 @@ export default function AccountSourcingContactDetail() {
   const [contact, setContact] = useState<Contact | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [reEnriching, setReEnriching] = useState(false);
-  const [workflow, setWorkflow] = useState({
-    assigned_rep_email: "",
-    outreach_lane: "",
-    conversation_starter: "",
-    personalization_notes: "",
-    talking_points: "",
-  });
+  const [convertingDeal, setConvertingDeal] = useState(false);
+  const [commsLog, setCommsLog] = useState<Activity[]>([]);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -314,6 +354,8 @@ export default function AccountSourcingContactDetail() {
       } else {
         setCompany(null);
       }
+      // Load engagement events captured from connected tools.
+      activitiesApi.list(undefined, id).then(setCommsLog).catch(() => {});
     } finally {
       setLoading(false);
     }
@@ -322,22 +364,6 @@ export default function AccountSourcingContactDetail() {
   useEffect(() => {
     load();
   }, [load]);
-
-  useEffect(() => {
-    setWorkflow({
-      assigned_rep_email: contact?.assigned_rep_email || "",
-      outreach_lane: contact?.outreach_lane || "",
-      conversation_starter: contact?.conversation_starter || "",
-      personalization_notes: contact?.personalization_notes || "",
-      talking_points: Array.isArray(contact?.talking_points) ? contact!.talking_points.join("\n") : "",
-    });
-  }, [
-    contact?.assigned_rep_email,
-    contact?.outreach_lane,
-    contact?.conversation_starter,
-    contact?.personalization_notes,
-    contact?.talking_points,
-  ]);
 
   const plan = useMemo(() => sequencePlan(contact), [contact]);
   const rawRow = useMemo(() => uploadedRow(contact), [contact]);
@@ -389,26 +415,44 @@ export default function AccountSourcingContactDetail() {
     );
   }
 
-  const save = async () => {
-    setSaving(true);
+  const fullName = `${contact.first_name} ${contact.last_name}`.trim();
+  const canConvertToDeal = [contact.sequence_status, contact.instantly_status, contact.tracking_stage, contact.tracking_summary]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes("meeting_booked")
+    || [contact.sequence_status, contact.instantly_status, contact.tracking_stage, contact.tracking_summary]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes("meeting booked");
+
+  const handleConvertToDeal = async () => {
+    if (!company) return;
+    setConvertingDeal(true);
     try {
-      await accountSourcingApi.updateContact(contact.id, {
-        assigned_rep_email: workflow.assigned_rep_email.trim() || null,
-        outreach_lane: workflow.outreach_lane || null,
-        conversation_starter: workflow.conversation_starter.trim() || null,
-        personalization_notes: workflow.personalization_notes.trim() || null,
-        talking_points: workflow.talking_points
-          .split(/\n+/)
-          .map((item) => item.trim())
-          .filter(Boolean),
-      });
-      await load();
+      const deal = await dealsApi.create({
+        name: `${company.name} - ${fullName || "Prospect Deal"}`,
+        pipeline_type: "deal",
+        stage: "demo_done",
+        company_id: company.id,
+        assigned_to_id: contact.assigned_to_id || undefined,
+        geography: company.region
+          ? (company.region.toLowerCase().includes("united states") || company.region.toLowerCase() === "us"
+              ? "US"
+              : company.region.toLowerCase().includes("america")
+                ? "Americas"
+                : "Rest of World")
+          : undefined,
+        tags: ["converted_from_prospect"],
+        next_step: "Review meeting notes and define the next demo follow-up",
+      } as Partial<Deal>);
+      await dealsApi.addContact(deal.id, contact.id, "champion");
+      navigate(`/deals/${deal.id}`);
     } finally {
-      setSaving(false);
+      setConvertingDeal(false);
     }
   };
-
-  const fullName = `${contact.first_name} ${contact.last_name}`.trim();
 
   return (
     <div style={pageStyle}>
@@ -481,34 +525,32 @@ export default function AccountSourcingContactDetail() {
                   </div>
                   <div style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
                     {company ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
-                    {contact.email ? <a href={`mailto:${contact.email}`} style={{ color: colors.sub, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}><Mail size={14} />{contact.email}</a> : null}
+                    {contact.email ? <ContactActionButton icon={<Mail size={14} />} href={`mailto:${contact.email}`} label={`Email ${contact.email}`} tone="primary" /> : null}
                     {contact.phone ? (
-                      <button
-                        type="button"
+                      <ContactActionButton
+                        icon={<Phone size={14} />}
                         onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          padding: 0,
-                          color: colors.sub,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                          cursor: "pointer",
-                          font: "inherit",
-                        }}
-                        title={`Call ${contact.phone} in Aircall`}
-                      >
-                        <Phone size={14} />{contact.phone}
-                      </button>
+                        label={`Call ${contact.phone}`}
+                        tone="green"
+                      />
                     ) : null}
-                    {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: colors.sub, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}><Globe size={14} />LinkedIn</a> : null}
+                    {contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="Open LinkedIn" tone="primary" /> : null}
                   </div>
                 </div>
               </div>
             </div>
 
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+            {canConvertToDeal && company ? (
+              <button
+                onClick={handleConvertToDeal}
+                disabled={convertingDeal}
+                style={{ border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: convertingDeal ? "wait" : "pointer", opacity: convertingDeal ? 0.8 : 1 }}
+              >
+                {convertingDeal ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {convertingDeal ? "Converting..." : "Convert to Deal"}
+              </button>
+            ) : null}
             <button
               onClick={async () => {
                 setReEnriching(true);
@@ -522,14 +564,6 @@ export default function AccountSourcingContactDetail() {
             >
               {reEnriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               Re-enrich
-            </button>
-            <button
-              onClick={save}
-              disabled={saving}
-              style={{ border: `1px solid ${colors.border}`, background: colors.primary, color: "#fff", borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
-            >
-              {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-              Save rep inputs
             </button>
           </div>
           </div>
@@ -586,55 +620,131 @@ export default function AccountSourcingContactDetail() {
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.55fr) minmax(320px, 1fr)", gap: 16, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 14 }}>
-            <Section title="Rep Inputs" icon={<UserRound size={15} color={colors.primary} />}>
+            <Section title="Prospect Outreach" icon={<Send size={15} color={colors.primary} />}>
               <div
                 style={{
                   borderRadius: 14,
-                  border: `1px solid ${trackingTone.border}`,
-                  background: trackingTone.soft,
+                  border: `1px solid ${colors.border}`,
+                  background: "#fbfdff",
                   padding: "12px 14px",
                   color: colors.sub,
                   fontSize: 13,
                   lineHeight: 1.6,
                 }}
               >
-                Beacon updates stage and progress automatically from outreach and activity signals. Reps only maintain the human inputs that help personalize or route the motion.
+                Launch, edit, and configure prospect-specific outreach directly here. Advanced settings lets you override timing for this prospect only before the sequence starts.
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-                <input
-                  value={workflow.assigned_rep_email}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_email: e.target.value }))}
-                  placeholder="Assigned rep email"
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
-                />
-                <select
-                  value={workflow.outreach_lane}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, outreach_lane: e.target.value }))}
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-                >
-                  {OUTREACH_LANE_OPTIONS.map((option) => (
-                    <option key={option.label} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
+              <OutreachDrawer contact={contact} onClose={() => {}} mode="inline" />
+            </Section>
+
+            <Section title="Automation Signals" icon={<UserRound size={15} color={colors.primary} />}>
+              <div
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${colors.border}`,
+                  background: "#fbfdff",
+                  padding: "12px 14px",
+                  color: colors.sub,
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                Beacon keeps this prospect current automatically. Instantly updates email stages and replies, Aircall logs call outcomes, and Beacon turns those signals into the stage and momentum you see on this page.
               </div>
-              <textarea
-                value={workflow.conversation_starter}
-                onChange={(e) => setWorkflow((current) => ({ ...current, conversation_starter: e.target.value }))}
-                placeholder="Conversation starter"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 76, resize: "vertical" }}
-              />
-              <textarea
-                value={workflow.personalization_notes}
-                onChange={(e) => setWorkflow((current) => ({ ...current, personalization_notes: e.target.value }))}
-                placeholder="Personalization notes and why-now context"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 88, resize: "vertical" }}
-              />
-              <textarea
-                value={workflow.talking_points}
-                onChange={(e) => setWorkflow((current) => ({ ...current, talking_points: e.target.value }))}
-                placeholder="Talking points, one per line"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 96, resize: "vertical" }}
-              />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, background: "#ffffff", padding: "12px 14px" }}>
+                  <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.35 }}>EMAIL SIGNALS</div>
+                  <div style={{ marginTop: 6, color: colors.text, fontWeight: 700 }}>{prettify(contact.sequence_status || contact.instantly_status)}</div>
+                  <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
+                    Synced automatically from Instantly email sends, opens, replies, and meeting-booked events.
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, background: "#ffffff", padding: "12px 14px" }}>
+                  <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.35 }}>CALL SIGNALS</div>
+                  <div style={{ marginTop: 6, color: colors.text, fontWeight: 700 }}>{contact.phone ? "Aircall ready" : "Phone missing"}</div>
+                  <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
+                    Answered, missed, voicemail, and recording events flow in automatically from Aircall.
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, background: "#ffffff", padding: "12px 14px" }}>
+                  <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.35 }}>LAST SIGNAL</div>
+                  <div style={{ marginTop: 6, color: colors.text, fontWeight: 700 }}>{formatDate(contact.tracking_last_activity_at || contact.updated_at)}</div>
+                  <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
+                    Beacon recalculates stage and momentum whenever a new synced engagement signal arrives.
+                  </div>
+                </div>
+              </div>
+            </Section>
+
+            <Section title={`Engagement Timeline (${commsLog.length})`} icon={<MessageSquare size={15} color={colors.primary} />}>
+              <div
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${colors.border}`,
+                  background: "#fbfdff",
+                  padding: "12px 14px",
+                  color: colors.sub,
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  marginBottom: 12,
+                }}
+              >
+                This feed is automatic. Instantly contributes email activity, Aircall contributes call activity, and Beacon uses both to keep the prospect current without manual logging.
+              </div>
+              {commsLog.length === 0 ? (
+                <div style={{ color: colors.faint, fontSize: 13 }}>No synced activity yet. Once outreach starts or a call happens, the latest events will appear here automatically.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {commsLog.slice(0, 15).map((act) => {
+                    const mediumLabel = act.medium ? act.medium.replace(/_/g, " ") : act.type;
+                    const sourceTone =
+                      act.source === "instantly"
+                        ? { bg: colors.primarySoft, color: colors.primary, border: "#cfe0fb", label: "Instantly" }
+                        : act.source === "aircall"
+                          ? { bg: colors.greenSoft, color: colors.green, border: "#cdeedc", label: "Aircall" }
+                          : { bg: "#f1f5f9", color: colors.sub, border: colors.border, label: act.source || "Beacon" };
+                    return (
+                      <div key={act.id} style={{
+                        padding: "10px 14px", borderRadius: 10,
+                        border: `1px solid ${colors.border}`, background: "#fbfdff",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{
+                              fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6,
+                              background: sourceTone.bg, color: sourceTone.color, textTransform: "capitalize", border: `1px solid ${sourceTone.border}`,
+                            }}>
+                              {sourceTone.label}
+                            </span>
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#f1f5f9", color: colors.faint, textTransform: "capitalize" }}>
+                              {mediumLabel}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: 11, color: colors.faint }}>{formatDate(act.created_at)}</span>
+                        </div>
+                        {act.email_subject && (
+                          <div style={{ fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 2 }}>{act.email_subject}</div>
+                        )}
+                        {act.content && (
+                          <div style={{ fontSize: 12, color: colors.sub, lineHeight: 1.5 }}>
+                            {act.content.length > 200 ? act.content.slice(0, 200) + "..." : act.content}
+                          </div>
+                        )}
+                        {act.ai_summary && (
+                          <div style={{ fontSize: 11, color: colors.primary, marginTop: 4, fontStyle: "italic" }}>
+                            {act.ai_summary}
+                          </div>
+                        )}
+                        {act.call_outcome && (
+                          <div style={{ fontSize: 11, color: colors.sub, marginTop: 4 }}>
+                            Outcome: {act.call_outcome.replace(/_/g, " ")}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Section>
 
             <Section title="Sales Playbook" icon={<Send size={15} color={colors.primary} />}>
@@ -694,41 +804,25 @@ export default function AccountSourcingContactDetail() {
               <KV label="Momentum" value={`${getProspectTrackingScore(contact)} · ${getProspectTrackingSummary(contact)}`} />
               <KV label="Name" value={fullName} />
               <KV label="Title" value={contact.title} />
-              <KV label="Email" value={contact.email ? <a href={`mailto:${contact.email}`} style={{ color: colors.primary }}>{contact.email}</a> : undefined} />
+              <KV label="Email" value={contact.email ? <ContactActionButton icon={<Mail size={14} />} href={`mailto:${contact.email}`} label={contact.email} tone="primary" /> : undefined} />
               <KV
                 label="Phone"
                 value={contact.phone ? (
-                  <button
-                    type="button"
+                  <ContactActionButton
+                    icon={<Phone size={14} />}
                     onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
-                    style={{ background: "none", border: "none", padding: 0, color: colors.primary, cursor: "pointer", font: "inherit" }}
-                    title={`Call ${contact.phone} in Aircall`}
-                  >
-                    {contact.phone}
-                  </button>
+                    label={contact.phone}
+                    tone="green"
+                  />
                 ) : undefined}
               />
-              <KV label="LinkedIn" value={contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: colors.primary, display: "inline-flex", alignItems: "center", gap: 6 }}>Profile <ExternalLink size={12} /></a> : undefined} />
+              <KV label="LinkedIn" value={contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" /> : undefined} />
               <KV label="Assigned Rep" value={contact.assigned_rep_email || company?.assigned_rep_email} />
               <KV label="Sequence Status" value={prettify(contact.sequence_status)} />
               <KV label="Instantly Status" value={prettify(contact.instantly_status)} />
               <KV label="Persona" value={contact.persona_type || contact.persona} />
               <KV label="Enriched" value={formatDate(contact.enriched_at)} />
               <KV label="Updated" value={formatDate(contact.updated_at)} />
-              <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
-                {contact.email ? <a href={`mailto:${contact.email}`} style={{ color: colors.primary }}><Mail size={15} /></a> : null}
-                {contact.phone ? (
-                  <button
-                    type="button"
-                    onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
-                    style={{ background: "none", border: "none", padding: 0, color: colors.primary, cursor: "pointer" }}
-                    title={`Call ${contact.phone} in Aircall`}
-                  >
-                    <Phone size={15} />
-                  </button>
-                ) : null}
-                {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: colors.primary }}><Globe size={15} /></a> : null}
-              </div>
             </Section>
 
             <Section title="Warm Intro Path" icon={<Users size={15} color={colors.primary} />}>
@@ -765,6 +859,7 @@ export default function AccountSourcingContactDetail() {
           </div>
         </div>
       </div>
+
     </div>
   );
 }

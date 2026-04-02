@@ -86,13 +86,24 @@ export interface Contact {
 export interface SourcingBatch {
   id: string;
   filename: string;
-  status: string; // pending | processing | completed | failed
+  status: string; // pending | awaiting_confirmation | processing | completed | failed | cancelled
   total_rows: number;
   processed_rows: number;
   created_companies: number;
   skipped_rows: number;
   failed_rows: number;
+  created_by_id?: string;
+  created_by_name?: string;
+  created_by_email?: string;
+  meta?: Record<string, unknown>;
   error_log?: Array<{ name?: string; error?: string }>;
+  current_stage?: string;
+  progress_message?: string;
+  eta_seconds?: number | null;
+  contacts_found?: number | null;
+  verdict_summary?: Record<string, unknown>;
+  requires_confirmation?: boolean;
+  auto_started?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -151,6 +162,7 @@ export interface Deal {
   company_name?: string;
   assigned_rep_name?: string;
   contact_count?: number;
+  meddpicc_score?: number;
 }
 
 export interface DealContact {
@@ -207,6 +219,7 @@ export interface Activity {
   contact_id?: string;
   type: string;
   source?: string;
+  medium?: string; // email, call, linkedin, whatsapp, in_person, sms, other
   content?: string;
   ai_summary?: string;
   event_metadata?: Record<string, unknown>;
@@ -223,6 +236,22 @@ export interface Activity {
   email_from?: string;
   email_to?: string;
   email_cc?: string;
+}
+
+export interface Reminder {
+  id: string;
+  contact_id: string;
+  company_id?: string;
+  created_by_id?: string;
+  assigned_to_id?: string;
+  note: string;
+  due_at: string;
+  status: "pending" | "completed" | "dismissed";
+  created_at: string;
+  completed_at?: string;
+  contact_name?: string;
+  company_name?: string;
+  assigned_to_name?: string;
 }
 
 export interface AssignmentUpdate {
@@ -331,10 +360,20 @@ export interface User {
   email: string;
   name: string;
   avatar_url?: string;
-  role: "admin" | "sales_rep";
+  role: "admin" | "ae" | "sdr";
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface GmailSyncSettings {
+  configured: boolean;
+  inbox?: string;
+  connected_email?: string;
+  connected_at?: string;
+  interval_seconds: number;
+  last_sync_epoch?: number | null;
+  last_error?: string | null;
 }
 
 export interface AngelInvestor {

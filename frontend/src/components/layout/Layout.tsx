@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { Search, Bell, Plus, ChevronDown, Zap, LogOut, Shield, User, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Search, ChevronDown, LogOut, Shield, User } from "lucide-react";
 import Sidebar from "./Sidebar";
 import { useAuth } from "../../lib/AuthContext";
 
@@ -22,6 +22,7 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   "/execution-tracker": { title: "Execution Tracker", subtitle: "Assigned work, rep updates, blockers, and next-step accountability" },
   "/angel-mapping": { title: "Prospecting", subtitle: "Activate contacts, personas, and outreach readiness" },
   "/team": { title: "Team Management", subtitle: "Manage team members, roles, and permissions" },
+  "/settings": { title: "Settings", subtitle: "Configure shared workflows, inboxes, and workspace defaults" },
 };
 
 export default function Layout() {
@@ -50,24 +51,10 @@ export default function Layout() {
       <main className="crm-main">
         <header className="crm-topbar">
           <div className="crm-topbar-left">
-            <button
-              type="button"
-              className="crm-button soft crm-sidebar-toggle"
-              onClick={() => setSidebarCollapsed((value) => !value)}
-              aria-label={sidebarCollapsed ? "Open sidebar" : "Close sidebar"}
-            >
-              {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-            </button>
             <button className="crm-workspace-select" type="button">
               <span className="crm-workspace-select-label">Beacon Workspace</span>
               <ChevronDown size={15} />
             </button>
-            <div className="crm-live-pill">
-              <span className="crm-live-pill-mark">
-                <Zap size={11} />
-              </span>
-              Live
-            </div>
             <div className="min-w-0">
               <h1 className="crm-title">{meta.title}</h1>
               <p className="crm-subtitle">{meta.subtitle}</p>
@@ -81,9 +68,6 @@ export default function Layout() {
               </div>
               <span className="crm-search-kbd">Ctrl + K</span>
             </div>
-            <button className="crm-button soft" aria-label="Notifications">
-              <Bell size={16} />
-            </button>
             <div style={{ position: "relative" }}>
               <button
                 type="button"
@@ -181,10 +165,6 @@ export default function Layout() {
                 </div>
               )}
             </div>
-            <button className="crm-button primary">
-              <Plus size={16} />
-              Create
-            </button>
           </div>
         </header>
         <section className="crm-content">

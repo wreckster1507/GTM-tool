@@ -291,7 +291,14 @@ export default function DealDetail() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3 flex-wrap">
-                          <p className="text-[13px] font-bold capitalize text-[#31485f]">{a.type}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-[13px] font-bold capitalize text-[#31485f]">{a.type}</p>
+                            {a.type === "comment" && (
+                              <span className="rounded-full bg-[#eef4fb] px-2 py-0.5 text-[11px] font-semibold text-[#60758b]">
+                                {a.user_name || "Team member"}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[12px] text-[#7a8ea4]">{formatDate(a.created_at)}</p>
                         </div>
                         {a.content && <p className="text-[13px] text-[#4d6178] mt-1.5 leading-relaxed">{a.content}</p>}

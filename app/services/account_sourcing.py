@@ -110,8 +110,9 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "build_vs_buy_impl_auto": ["build vs buy for impl. auto", "build vs buy for impl auto"],
     "ai_acquisition_impl": ["ai acquisition for impl.", "ai acquisition for impl"],
     "final_qual":     ["final qual"],
-    "sdr":            ["sdr"],
-    "ae":             ["ae"],
+    "sdr":            ["sdr", "sdr name", "sdr rep"],
+    "ae":             ["ae", "ae name", "account executive",
+                       "owner", "account owner", "assigned to", "rep", "sales rep"],
     "contact_name":   ["contact", "prospect name", "full name", "name"],
     "contact_first_name": ["first", "first name"],
     "contact_last_name": ["last", "last name"],
@@ -1399,6 +1400,50 @@ def account_priority_snapshot(company: Company) -> dict[str, Any]:
 _PAID_CACHE_TTL_HOURS = 24 * 14
 _BATCH_PARALLELISM = 3
 
+_PRIORITY_TITLE_HINTS = (
+    "director of engineering",
+    "engineering director",
+    "vp engineering",
+    "vice president of engineering",
+    "head of engineering",
+    "director of professional services",
+    "vp professional services",
+    "head of professional services",
+    "professional services",
+    "implementation consulting",
+    "implementation consultant",
+    "implementation director",
+    "implementation lead",
+    "implementation manager",
+    "implementation",
+    "solutions consulting",
+    "solutions consultant",
+    "customer implementation",
+    "product management",
+    "product manager",
+    "director of product",
+    "vp product",
+    "head of product",
+    "technical program",
+    "data science",
+    "director of data",
+    "head of data",
+    "director of technology",
+    "head of technology",
+    "cto",
+    "chief technology officer",
+    "platform engineering",
+    "enterprise applications",
+)
+
+_PRIORITY_PERSONA_HINTS = {
+    "buyer",
+    "champion",
+    "evaluator",
+    "technical_evaluator",
+    "implementation_owner",
+}
+
 
 def _cache_entry_is_fresh(cache: dict[str, Any], key: str, ttl_hours: int) -> bool:
     entry = cache.get(key)
@@ -1414,6 +1459,78 @@ def _cache_entry_is_fresh(cache: dict[str, Any], key: str, ttl_hours: int) -> bo
     if fetched.tzinfo is not None:
         fetched = fetched.replace(tzinfo=None)
     return datetime.utcnow() - fetched <= timedelta(hours=ttl_hours)
+
+
+def is_priority_stakeholder_candidate(candidate: Contact | dict[str, Any]) -> bool:
+    """
+    Keep sourced contacts focused on the small set of implementation / product /
+    engineering personas Beacon cares about most.
+    """
+    if isinstance(candidate, Contact):
+        title = candidate.title or ""
+        persona = candidate.persona or ""
+        persona_type = candidate.persona_type or ""
+    else:
+        title = str(candidate.get("title") or "")
+        persona = str(candidate.get("persona") or "")
+        persona_type = str(candidate.get("persona_type") or "")
+
+    normalized_title = title.strip().lower()
+    normalized_persona = (persona_type or persona).strip().lower()
+
+    if normalized_persona in _PRIORITY_PERSONA_HINTS:
+        return True
+
+    if not normalized_title:
+        return False
+
+    if any(hint in normalized_title for hint in _PRIORITY_TITLE_HINTS):
+        return True
+
+    fallback_keywords = (
+        "engineering",
+        "implementation",
+        "professional services",
+        "product",
+        "technology",
+        "technical",
+        "data",
+    )
+    senior_keywords = ("director", "head", "vp", "vice president", "chief", "lead")
+    return any(keyword in normalized_title for keyword in fallback_keywords) and any(
+        keyword in normalized_title for keyword in senior_keywords
+    )
+
+
+def append_company_activity_log(
+    company: Company,
+    *,
+    action: str,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Company:
+    """
+    Store lightweight account-sourcing audit entries directly on the company so
+    the company detail page can explain what changed without another table.
+    """
+    cache = copy.deepcopy(company.enrichment_cache or {})
+    existing = cache.get("activity_log")
+    entries = list(existing) if isinstance(existing, list) else []
+    entries.append(
+        {
+            "action": action,
+            "message": message or action.replace("_", " ").title(),
+            "actor_name": actor_name,
+            "actor_email": actor_email,
+            "at": datetime.utcnow().isoformat(),
+            "metadata": metadata or {},
+        }
+    )
+    cache["activity_log"] = entries[-40:]
+    company.enrichment_cache = cache
+    return company
 
 
 def _should_run_paid_enrichment(company: Company, cache: dict[str, Any], force_paid_refresh: bool) -> tuple[bool, str]:
@@ -2380,6 +2497,8 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
     created = 0
     for c in contacts_data:
         try:
+            if not is_priority_stakeholder_candidate(c):
+                continue
             company_warm_paths = (
                 company.prospecting_profile.get("warm_paths")
                 if isinstance(company.prospecting_profile, dict)

@@ -1,4 +1,4 @@
-import { CSSProperties, ReactNode, useCallback, useEffect, useState } from "react";
+import { CSSProperties, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import {
@@ -9,6 +9,7 @@ import {
   Download,
   Flame,
   Loader2,
+  Plus,
   RefreshCw,
   Search,
   Sparkles,
@@ -16,6 +17,7 @@ import {
   TrendingUp,
   Upload,
   Users,
+  X,
 } from "lucide-react";
 
 import { accountSourcingApi } from "../lib/api";
@@ -134,18 +136,39 @@ function asText(value: unknown): string | undefined {
   return cleaned || undefined;
 }
 
+function parseManualCompanyLines(input: string): Array<{ name: string; domain?: string }> {
+  return input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line
+        .split(/[|,]/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const [name, domain] = parts;
+      return {
+        name: name || "",
+        domain: domain || undefined,
+      };
+    })
+    .filter((entry) => entry.name);
+}
+
 function SummaryCard({
   icon,
   label,
   value,
   hint,
   tone = "neutral",
+  onClick,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   hint: string;
   tone?: "neutral" | "primary" | "warm" | "green";
+  onClick?: () => void;
 }) {
   const toneStyle = {
     neutral: { bg: "#f8fbff", border: colors.border, accent: colors.sub },
@@ -161,7 +184,9 @@ function SummaryCard({
         padding: "18px 18px 16px",
         background: toneStyle.bg,
         borderColor: toneStyle.border,
+        cursor: onClick ? "pointer" : "default",
       }}
+      onClick={onClick}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div style={{ color: toneStyle.accent }}>{icon}</div>
@@ -173,7 +198,13 @@ function SummaryCard({
   );
 }
 
-function UploadPanel({ onUploaded }: { onUploaded: (batch: SourcingBatch) => void }) {
+function UploadPanel({
+  onUploaded,
+  onDownloadTemplate,
+}: {
+  onUploaded: (batch: SourcingBatch) => void;
+  onDownloadTemplate: () => void;
+}) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -243,6 +274,27 @@ function UploadPanel({ onUploaded }: { onUploaded: (batch: SourcingBatch) => voi
           <div style={{ fontWeight: 800, color: colors.text, fontSize: 32 }}>Import Target Accounts</div>
           <div style={{ color: colors.sub, marginTop: 10, lineHeight: 1.6, fontSize: 15, maxWidth: 760, marginInline: "auto" }}>
             Start with company names or a lightweight workbook, then let Beacon build presentable research briefs with fit, timing, proof points, risks, and outreach guidance.
+          </div>
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={onDownloadTemplate}
+              style={{
+                border: `1px solid ${colors.border}`,
+                background: "#fff",
+                color: colors.text,
+                borderRadius: 10,
+                padding: "9px 14px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Download Example Template
+            </button>
+            <span style={{ color: colors.faint, fontSize: 12, alignSelf: "center" }}>
+              Recommended columns: `Company Name`, `Domain`, `Industry`, `AE`, `SDR`, `Classification`, `Contact`, `Title`, `Email`
+            </span>
           </div>
           <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
             {["CSV/XLSX upload", "TAL verdicts", "Why now signals", "Outreach guidance"].map((item) => (
@@ -390,7 +442,31 @@ export default function AccountSourcing() {
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
   const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
+  const [activeTab, setActiveTab] = useState<"accounts" | "imports">("accounts");
+  const [dismissedBatchIds, setDismissedBatchIds] = useState<string[]>(() => {
+    try {
+      const raw = window.localStorage.getItem("account-sourcing-dismissed-batches");
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [successModal, setSuccessModal] = useState<{ title: string; message: string } | null>(null);
+  const [pendingBatchApproval, setPendingBatchApproval] = useState<SourcingBatch | null>(null);
+  const [confirmingBatchId, setConfirmingBatchId] = useState("");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createForm, setCreateForm] = useState({ companiesText: "" });
+  const [creatingCompany, setCreatingCompany] = useState(false);
+  const [createError, setCreateError] = useState("");
   const { isAdmin } = useAuth();
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("account-sourcing-dismissed-batches", JSON.stringify(dismissedBatchIds));
+    } catch {
+      // ignore local storage issues
+    }
+  }, [dismissedBatchIds]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -420,6 +496,16 @@ export default function AccountSourcing() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const latestVisibleBatch = useMemo(
+    () =>
+      batches.find(
+        (batch) =>
+          !dismissedBatchIds.includes(batch.id) &&
+          ["awaiting_confirmation", "pending", "processing", "completed"].includes(batch.status)
+      ) ?? null,
+    [batches, dismissedBatchIds]
+  );
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -466,6 +552,82 @@ export default function AccountSourcing() {
   const totalContacts = summary?.total_contacts ?? 0;
   const showingStart = companyTotal === 0 ? 0 : (page - 1) * pageSize + 1;
   const showingEnd = companyTotal === 0 ? 0 : Math.min(page * pageSize, companyTotal);
+  const latestVerdictSummary = (latestVisibleBatch?.verdict_summary || {}) as Record<string, unknown>;
+  const etaText =
+    latestVisibleBatch?.eta_seconds && latestVisibleBatch.eta_seconds > 0
+      ? `${Math.ceil(latestVisibleBatch.eta_seconds / 60)} min remaining`
+      : latestVisibleBatch?.status === "completed"
+        ? "Finished"
+        : "Estimating...";
+
+  const downloadTemplate = useCallback(() => {
+    const template = [
+      ["Company Name", "Domain", "Industry", "AE", "SDR", "Classification", "Contact", "Title", "Email", "LinkedIn URL"],
+      ["BlackLine", "blackline.com", "Finance automation", "rakesh@beacon.li", "mahesh@beacon.li", "target", "Jane Smith", "Director of Professional Services", "jane@blackline.com", "https://linkedin.com/in/janesmith"],
+    ]
+      .map((row) => row.join(","))
+      .join("\n");
+    const blob = new Blob([template], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "beacon-account-sourcing-template.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleBatchUploaded = useCallback((batch: SourcingBatch) => {
+    setSuccessModal({
+      title: "Upload received",
+      message:
+        batch.requires_confirmation
+          ? "The file was uploaded. Beacon found TAL verdicts that need review before enrichment starts."
+          : "The file was uploaded successfully and enrichment has started.",
+    });
+    if (batch.requires_confirmation) {
+      setPendingBatchApproval(batch);
+    }
+    setDismissedBatchIds((current) => current.filter((id) => id !== batch.id));
+    void load();
+  }, [load]);
+
+  const handleCreateCompany = useCallback(async () => {
+    const entries = parseManualCompanyLines(createForm.companiesText);
+    if (!entries.length) {
+      setCreateError("Add at least one company name.");
+      return;
+    }
+    setCreatingCompany(true);
+    setCreateError("");
+    try {
+      const createdBatches: SourcingBatch[] = [];
+      for (const entry of entries) {
+        const batch = await accountSourcingApi.createManualCompany({
+          name: entry.name,
+          domain: entry.domain,
+        });
+        createdBatches.push(batch);
+      }
+      setShowCreateModal(false);
+      setCreateForm({ companiesText: "" });
+      setSuccessModal({
+        title: entries.length === 1 ? "Account added" : "Accounts added",
+        message:
+          entries.length === 1
+            ? "The account was created and enrichment has started."
+            : `${entries.length} accounts were created and enrichment has started for each of them.`,
+      });
+      setDismissedBatchIds((current) =>
+        current.filter((id) => !createdBatches.some((batch) => batch.id === id))
+      );
+      setActiveTab("imports");
+      await load();
+    } catch (error: unknown) {
+      setCreateError(error instanceof Error ? error.message : "Failed to create company");
+    } finally {
+      setCreatingCompany(false);
+    }
+  }, [createForm.companiesText, load]);
 
   return (
     <div style={pageStyle}>
@@ -487,8 +649,51 @@ export default function AccountSourcing() {
               <p style={{ margin: "10px 0 0", color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 780 }}>
                 Start with company names and turn them into presentable account briefs with verdicts, timing, outreach angles, and the right people to contact first.
               </p>
+              <div style={{ marginTop: 18, display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#f7faff", border: `1px solid ${colors.border}`, borderRadius: 14, padding: "8px" }}>
+                {[
+                  { id: "accounts", label: "Accounts" },
+                  { id: "imports", label: `Recent Imports${batches.length ? ` (${batches.length})` : ""}` },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id as "accounts" | "imports")}
+                    style={{
+                      border: 0,
+                      background: activeTab === tab.id ? "#eef5ff" : "transparent",
+                      color: activeTab === tab.id ? colors.primary : colors.sub,
+                      borderRadius: 10,
+                      padding: "10px 14px",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+              {isAdmin ? (
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  style={{
+                    border: 0,
+                    background: "#4f46e5",
+                    color: "#fff",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Plus size={15} />
+                  Add Accounts
+                </button>
+              ) : null}
               {isAdmin && (
                 <>
                   <button
@@ -623,6 +828,7 @@ export default function AccountSourcing() {
             value={String(totalCompanies)}
             hint="Total accounts currently available for enrichment and prospecting."
             tone="neutral"
+            onClick={() => setActiveTab("accounts")}
           />
           <SummaryCard
             icon={<Flame size={18} />}
@@ -630,6 +836,10 @@ export default function AccountSourcing() {
             value={String(hotCount)}
             hint="Accounts with the strongest ICP fit and highest near-term potential."
             tone="warm"
+            onClick={() => {
+              setActiveTab("accounts");
+              setTierFilter("hot");
+            }}
           />
           <SummaryCard
             icon={<TrendingUp size={18} />}
@@ -637,6 +847,10 @@ export default function AccountSourcing() {
             value={String(warmCount)}
             hint="Good-fit accounts that still need stronger proof, timing, or persona clarity."
             tone="primary"
+            onClick={() => {
+              setActiveTab("accounts");
+              setTierFilter("warm");
+            }}
           />
           <SummaryCard
             icon={<Target size={18} />}
@@ -644,6 +858,10 @@ export default function AccountSourcing() {
             value={String(highPriorityCount)}
             hint="Accounts worth the fastest follow-up based on fit, intent, and sales feedback."
             tone="green"
+            onClick={() => {
+              setActiveTab("accounts");
+              setDispositionFilter("working");
+            }}
           />
         </div>
 
@@ -654,6 +872,10 @@ export default function AccountSourcing() {
             value={String(engagedCount)}
             hint="Accounts where reps have logged active motion or positive interest."
             tone="primary"
+            onClick={() => {
+              setActiveTab("accounts");
+              setDispositionFilter("interested");
+            }}
           />
           <SummaryCard
             icon={<Target size={18} />}
@@ -661,6 +883,7 @@ export default function AccountSourcing() {
             value={String(researchedCount)}
             hint="Accounts with a generated Beacon research brief already available."
             tone="green"
+            onClick={() => setActiveTab("imports")}
           />
           <SummaryCard
             icon={<Sparkles size={18} />}
@@ -668,6 +891,7 @@ export default function AccountSourcing() {
             value={String(targetVerdictCount)}
             hint={`${watchVerdictCount} more accounts are currently in Watch.`}
             tone="warm"
+            onClick={() => setActiveTab("imports")}
           />
           <SummaryCard
             icon={<AlertCircle size={18} />}
@@ -675,110 +899,190 @@ export default function AccountSourcing() {
             value={String(unresolvedCount + unenrichedCount)}
             hint={`${unresolvedCount} unresolved domains, ${unenrichedCount} accounts without completed enrichment.`}
             tone="warm"
+            onClick={() => setActiveTab("imports")}
           />
         </div>
 
-        <UploadPanel onUploaded={() => { load(); }} />
+        {isAdmin && activeTab === "accounts" ? (
+          <UploadPanel onUploaded={handleBatchUploaded} onDownloadTemplate={downloadTemplate} />
+        ) : null}
 
-        {/* Enrichment Progress — always visible when companies exist */}
-        {totalCompanies > 0 && (() => {
-          const enrichedCt = enrichedCount;
-          const icpDoneCt = researchedCount;
-          const totalCt = totalCompanies;
-          const allDone = enrichedCt === totalCt && icpDoneCt === totalCt;
-          const pct = totalCt ? Math.round((icpDoneCt / totalCt) * 100) : 0;
-          return (
-            <div style={{
+        {latestVisibleBatch ? (
+          <div
+            style={{
               ...cardStyle,
-              padding: "14px 18px",
-              display: "flex",
-              alignItems: "center",
-              gap: 16,
-              flexWrap: "wrap",
-              background: allDone ? "#f0faf4" : "#fffbf0",
-              border: `1px solid ${allDone ? "#c8e8d8" : "#ffe4b0"}`,
-            }}>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  {allDone
-                    ? <CheckCircle2 size={16} color={colors.green} />
-                    : <Loader2 size={16} className="animate-spin" color={colors.amber} />
-                  }
-                  <span style={{ fontWeight: 700, fontSize: 13, color: allDone ? colors.green : colors.amber }}>
-                    {allDone ? "All Research Complete" : "Research In Progress"}
-                  </span>
+              padding: "16px 18px",
+              display: "grid",
+              gap: 12,
+              background:
+                latestVisibleBatch.status === "completed"
+                  ? "#f0faf4"
+                  : latestVisibleBatch.status === "awaiting_confirmation"
+                    ? "#fff8ef"
+                    : "#fbfdff",
+              border:
+                latestVisibleBatch.status === "completed"
+                  ? "1px solid #c8e8d8"
+                  : latestVisibleBatch.status === "awaiting_confirmation"
+                    ? "1px solid #ffd8a8"
+                    : `1px solid ${colors.border}`,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start" }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {latestVisibleBatch.status === "completed" ? (
+                    <CheckCircle2 size={16} color={colors.green} />
+                  ) : latestVisibleBatch.status === "awaiting_confirmation" ? (
+                    <AlertCircle size={16} color={colors.amber} />
+                  ) : (
+                    <Loader2 size={16} className="animate-spin" color={colors.primary} />
+                  )}
+                  <span style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>{latestVisibleBatch.filename}</span>
                 </div>
-                <div style={{ display: "flex", gap: 16, fontSize: 12, color: colors.sub }}>
-                  <span>Enriched: <b>{enrichedCt}/{totalCt}</b></span>
-                  <span>ICP Analyzed: <b>{icpDoneCt}/{totalCt}</b></span>
-                  <span>Contacts: <b>{totalContacts}</b></span>
-                  <span>Pending: <b>{totalCt - icpDoneCt}</b></span>
-                </div>
-                <div style={{ marginTop: 8, height: 6, borderRadius: 3, background: "#e5e7eb", overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%",
-                    borderRadius: 3,
-                    width: `${pct}%`,
-                    background: allDone ? colors.green : colors.primary,
-                    transition: "width 0.4s ease",
-                  }} />
+                <div style={{ color: colors.sub, fontSize: 13 }}>
+                  {latestVisibleBatch.progress_message || "Tracking enrichment progress"}
+                  {latestVisibleBatch.created_by_name ? ` • Uploaded by ${latestVisibleBatch.created_by_name}` : ""}
+                  {` • ${ts(latestVisibleBatch.created_at)}`}
                 </div>
               </div>
-              <button
-                onClick={load}
-                disabled={loading}
-                style={{
-                  border: `1px solid ${colors.border}`,
-                  background: colors.card,
-                  color: colors.text,
-                  borderRadius: 10,
-                  padding: "8px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: loading ? "not-allowed" : "pointer",
-                  opacity: loading ? 0.7 : 1,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                Check Status
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {latestVisibleBatch.status === "awaiting_confirmation" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPendingBatchApproval(latestVisibleBatch)}
+                      style={{
+                        border: "1px solid #ffd29a",
+                        background: "#fff2db",
+                        color: colors.amber,
+                        borderRadius: 10,
+                        padding: "8px 12px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Review TAL verdicts
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingBatchApproval(latestVisibleBatch)}
+                      style={{
+                        border: 0,
+                        background: colors.primary,
+                        color: "#fff",
+                        borderRadius: 10,
+                        padding: "8px 12px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Continue enrichment
+                    </button>
+                  </>
+                ) : null}
+                {latestVisibleBatch.status === "completed" ? (
+                  <button
+                    type="button"
+                    onClick={() => setDismissedBatchIds((current) => [...current, latestVisibleBatch.id])}
+                    style={{
+                      border: `1px solid ${colors.border}`,
+                      background: "#fff",
+                      color: colors.text,
+                      borderRadius: 10,
+                      padding: "8px 12px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Close card
+                  </button>
+                ) : (
+                  <button
+                    onClick={load}
+                    disabled={loading}
+                    style={{
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 10,
+                      padding: "8px 12px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: loading ? "not-allowed" : "pointer",
+                      opacity: loading ? 0.7 : 1,
+                    }}
+                  >
+                    {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                    Refresh progress
+                  </button>
+                )}
+              </div>
             </div>
-          );
-        })()}
 
-        {batches.length > 0 ? (
-          <div>
-            <div style={{ color: colors.faint, fontWeight: 800, letterSpacing: 0.4, marginBottom: 8, fontSize: 13 }}>
-              RECENT IMPORTS
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {batches.slice(0, 5).map((b) => (
-                <div key={b.id} style={{ ...cardStyle, padding: "8px 12px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-                  {b.status === "completed" ? <CheckCircle2 size={13} color={colors.green} /> : <Loader2 size={13} className="animate-spin" color={colors.primary} />}
-                  <span style={{ fontWeight: 700, color: colors.text }}>{b.filename}</span>
-                  <span style={{ color: colors.faint }}>{b.created_companies} companies</span>
-                  <span style={{ color: colors.faint }}>{ts(b.created_at)}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>PROGRESS</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>
+                  {latestVisibleBatch.processed_rows}/{latestVisibleBatch.total_rows}
                 </div>
-              ))}
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Accounts processed</div>
+              </div>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CONTACTS FOUND</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>
+                  {latestVisibleBatch.contacts_found ?? 0}
+                </div>
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Relevant stakeholders saved</div>
+              </div>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CURRENT STEP</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 16 }}>
+                  {(latestVisibleBatch.current_stage || latestVisibleBatch.status).replace(/_/g, " ")}
+                </div>
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>{etaText}</div>
+              </div>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>TAL VERDICTS</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 18 }}>
+                  {String(latestVerdictSummary.target || 0)} target / {String(latestVerdictSummary.watch || 0)} watch
+                </div>
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>
+                  {latestVerdictSummary.message ? String(latestVerdictSummary.message) : "No uploaded verdicts"}
+                </div>
+              </div>
+            </div>
+            <div style={{ height: 8, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
+              <div
+                style={{
+                  width: `${latestVisibleBatch.total_rows ? Math.round((latestVisibleBatch.processed_rows / latestVisibleBatch.total_rows) * 100) : 0}%`,
+                  height: "100%",
+                  background: latestVisibleBatch.status === "completed" ? colors.green : colors.primary,
+                }}
+              />
             </div>
           </div>
         ) : null}
 
-        <div
-          style={{
-            ...cardStyle,
-            padding: "14px 16px",
-            display: "grid",
-            gap: 12,
-            position: "sticky",
-            top: 16,
-            zIndex: 5,
-          }}
-        >
+        {activeTab === "accounts" ? (
+          <>
+            <div
+              style={{
+                ...cardStyle,
+                padding: "14px 16px",
+                display: "grid",
+                gap: 12,
+                position: "sticky",
+                top: 16,
+                zIndex: 5,
+              }}
+            >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ position: "relative", minWidth: 260, flex: 1 }}>
               <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: 11 }} />
@@ -871,9 +1175,9 @@ export default function AccountSourcing() {
               ) : null}
             </div>
           </div>
-        </div>
+            </div>
 
-        {loading ? (
+            {loading ? (
           <div style={{ ...cardStyle, padding: 36, textAlign: "center" }}>
             <Loader2 className="animate-spin" color={colors.primary} />
           </div>
@@ -931,6 +1235,291 @@ export default function AccountSourcing() {
             </div>
           </div>
         )}
+          </>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {batches.length === 0 ? (
+              <div style={{ ...cardStyle, padding: 28, textAlign: "center", color: colors.faint }}>
+                No imports yet.
+              </div>
+            ) : (
+              batches.map((batch) => (
+                <div key={batch.id} style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {batch.status === "completed" ? <CheckCircle2 size={15} color={colors.green} /> : <Upload size={15} color={colors.primary} />}
+                        <span style={{ fontWeight: 800, color: colors.text, fontSize: 16 }}>{batch.filename}</span>
+                      </div>
+                      <div style={{ color: colors.sub, fontSize: 13 }}>
+                        {batch.created_by_name ? `Created by ${batch.created_by_name}` : "Created by Beacon"} • {ts(batch.created_at)}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const blob = await accountSourcingApi.exportCsv({ batchId: batch.id });
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = `${batch.filename.replace(/\s+/g, "-").toLowerCase()}-companies.csv`;
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Download companies
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const blob = await accountSourcingApi.exportContactsCsv({ batchId: batch.id });
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = `${batch.filename.replace(/\s+/g, "-").toLowerCase()}-contacts.csv`;
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Download contacts
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+                    {[
+                      { label: "Status", value: batch.status.replace(/_/g, " "), hint: batch.progress_message || "Activity tracked automatically" },
+                      { label: "Accounts", value: `${batch.created_companies}`, hint: `${batch.processed_rows}/${batch.total_rows} processed` },
+                      { label: "Contacts", value: `${batch.contacts_found ?? 0}`, hint: "Relevant stakeholders saved" },
+                      { label: "Verdicts", value: `${String((batch.verdict_summary || {}).target || 0)} target`, hint: String((batch.verdict_summary || {}).message || "No uploaded verdicts") },
+                    ].map((item) => (
+                      <div key={`${batch.id}-${item.label}`} style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
+                        <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>{item.label.toUpperCase()}</div>
+                        <div style={{ marginTop: 6, color: colors.text, fontSize: 18, fontWeight: 800 }}>{item.value}</div>
+                        <div style={{ marginTop: 4, color: colors.sub, fontSize: 12, lineHeight: 1.45 }}>{item.hint}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {successModal ? (
+          <>
+            <div
+              onClick={() => setSuccessModal(null)}
+              style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.24)", zIndex: 50 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: 460,
+                maxWidth: "92vw",
+                background: "#fff",
+                borderRadius: 18,
+                boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+                padding: "24px 24px 20px",
+                zIndex: 51,
+                display: "grid",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <CheckCircle2 size={18} color={colors.green} />
+                  <div style={{ color: colors.text, fontWeight: 800, fontSize: 18 }}>{successModal.title}</div>
+                </div>
+                <button type="button" onClick={() => setSuccessModal(null)} style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.faint }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div style={{ color: colors.sub, fontSize: 14, lineHeight: 1.6 }}>{successModal.message}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button type="button" onClick={() => setSuccessModal(null)} style={{ border: 0, background: colors.primary, color: "#fff", borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer" }}>
+                  Continue
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {pendingBatchApproval ? (
+          <>
+            <div
+              onClick={() => setPendingBatchApproval(null)}
+              style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.24)", zIndex: 50 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: 520,
+                maxWidth: "94vw",
+                background: "#fff",
+                borderRadius: 18,
+                boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+                padding: "24px",
+                zIndex: 51,
+                display: "grid",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div>
+                  <div style={{ color: colors.text, fontSize: 18, fontWeight: 800 }}>Review TAL verdicts</div>
+                  <div style={{ color: colors.sub, fontSize: 13, marginTop: 4 }}>{pendingBatchApproval.filename}</div>
+                </div>
+                <button type="button" onClick={() => setPendingBatchApproval(null)} style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.faint }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                {[
+                  { label: "Target", value: String((pendingBatchApproval.verdict_summary || {}).target || 0) },
+                  { label: "Watch", value: String((pendingBatchApproval.verdict_summary || {}).watch || 0) },
+                  { label: "Non-target", value: String((pendingBatchApproval.verdict_summary || {}).non_target || 0) },
+                  { label: "Unknown", value: String((pendingBatchApproval.verdict_summary || {}).unknown || 0) },
+                ].map((item) => (
+                  <div key={item.label} style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 10px", background: "#fbfdff", textAlign: "center" }}>
+                    <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>{item.label.toUpperCase()}</div>
+                    <div style={{ marginTop: 6, color: colors.text, fontSize: 18, fontWeight: 800 }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ color: colors.sub, fontSize: 14, lineHeight: 1.6 }}>
+                {String((pendingBatchApproval.verdict_summary || {}).message || "Some imported rows need approval before enrichment starts.")}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={confirmingBatchId === pendingBatchApproval.id}
+                  onClick={async () => {
+                    setConfirmingBatchId(pendingBatchApproval.id);
+                    try {
+                      await accountSourcingApi.cancelBatch(pendingBatchApproval.id);
+                      setPendingBatchApproval(null);
+                      await load();
+                    } finally {
+                      setConfirmingBatchId("");
+                    }
+                  }}
+                  style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer" }}
+                >
+                  Cancel enrichment
+                </button>
+                <button
+                  type="button"
+                  disabled={confirmingBatchId === pendingBatchApproval.id}
+                  onClick={async () => {
+                    setConfirmingBatchId(pendingBatchApproval.id);
+                    try {
+                      await accountSourcingApi.confirmBatch(pendingBatchApproval.id, true);
+                      setPendingBatchApproval(null);
+                      setSuccessModal({
+                        title: "Enrichment started",
+                        message: "Beacon has started enriching the approved import.",
+                      });
+                      await load();
+                    } finally {
+                      setConfirmingBatchId("");
+                    }
+                  }}
+                  style={{ border: 0, background: colors.primary, color: "#fff", borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer", minWidth: 160 }}
+                >
+                  {confirmingBatchId === pendingBatchApproval.id ? "Starting..." : "Continue enrichment"}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {showCreateModal ? (
+          <>
+            <div onClick={() => setShowCreateModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.24)", zIndex: 50 }} />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: 500,
+                maxWidth: "94vw",
+                background: "#fff",
+                borderRadius: 18,
+                boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+                padding: "24px",
+                zIndex: 51,
+                display: "grid",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div style={{ color: colors.text, fontSize: 18, fontWeight: 800 }}>Add accounts manually</div>
+                <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.faint }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div style={{ color: colors.sub, fontSize: 14, lineHeight: 1.6 }}>
+                Paste one company per line. You can optionally add a website or domain after a comma or pipe. Beacon will log who created each one and when.
+              </div>
+              <div
+                style={{
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 12,
+                  padding: "12px 14px",
+                  background: "#fbfdff",
+                  display: "grid",
+                  gap: 6,
+                }}
+              >
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>FORMAT</div>
+                <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>
+                  One per line.
+                  <br />
+                  `BlackLine`
+                  <br />
+                  `Serrala, serrala.com`
+                  <br />
+                  `Netcore Cloud | netcorecloud.com`
+                </div>
+              </div>
+              <textarea
+                value={createForm.companiesText}
+                onChange={(e) => setCreateForm({ companiesText: e.target.value })}
+                placeholder={"BlackLine\nSerrala, serrala.com\nNetcore Cloud | netcorecloud.com"}
+                rows={8}
+                style={{
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 10,
+                  padding: "12px",
+                  fontSize: 14,
+                  color: colors.text,
+                  resize: "vertical",
+                  minHeight: 180,
+                  lineHeight: 1.6,
+                }}
+              />
+              {createError ? <div style={{ color: colors.red, fontSize: 13, fontWeight: 700 }}>{createError}</div> : null}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer" }}>
+                  Close
+                </button>
+                <button type="button" disabled={creatingCompany} onClick={() => void handleCreateCompany()} style={{ border: 0, background: colors.primary, color: "#fff", borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer", minWidth: 140 }}>
+                  {creatingCompany ? "Creating..." : "Create & enrich"}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );

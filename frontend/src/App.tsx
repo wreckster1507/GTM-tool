@@ -24,6 +24,7 @@ import AccountSourcingContactDetail from "./pages/AccountSourcingContactDetail";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import TeamManagement from "./pages/TeamManagement";
 import ExecutionTracker from "./pages/ExecutionTracker";
+import SettingsPage from "./pages/Settings";
 
 function RouteScopedAircallPhone() {
   const location = useLocation();
@@ -84,6 +85,7 @@ export default function App() {
             <Route path="angel-mapping" element={<Contacts />} />
             <Route path="execution-tracker" element={<ExecutionTracker />} />
             <Route path="team" element={<TeamManagement />} />
+            <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>
       </AuthProvider>

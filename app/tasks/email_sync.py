@@ -16,8 +16,6 @@ Flow:
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
-from uuid import UUID
 
 from app.celery_app import celery_app
 from app.config import settings
@@ -35,9 +33,6 @@ REDIS_KEY_LAST_SYNC = "email_sync:last_epoch"
 )
 def sync_gmail_inbox(self) -> dict:
     """Poll shared Gmail inbox and log emails as deal activities."""
-    if not settings.GMAIL_SHARED_INBOX:
-        return {"status": "skipped", "reason": "no inbox configured"}
-
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -61,6 +56,7 @@ async def _async_sync() -> dict:
     from app.models.activity import Activity
     from app.models.contact import Contact
     from app.models.deal import DealContact
+    from app.models.settings import WorkspaceSettings
 
     # Fresh engine per task
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
@@ -70,6 +66,18 @@ async def _async_sync() -> dict:
     r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
     try:
+        async with SessionLocal() as session:
+            settings_row = await session.get(WorkspaceSettings, 1)
+            inbox = (
+                (settings_row.gmail_shared_inbox if settings_row and settings_row.gmail_shared_inbox else settings.GMAIL_SHARED_INBOX).strip()
+                if (settings_row and settings_row.gmail_shared_inbox) or settings.GMAIL_SHARED_INBOX
+                else ""
+            )
+            token_payload = settings_row.gmail_token_data if settings_row and settings_row.gmail_token_data else None
+
+        if not inbox or not (token_payload or settings.GMAIL_TOKEN_JSON):
+            return {"status": "skipped", "reason": "gmail not connected"}
+
         # Get last sync timestamp (default: 1 hour ago)
         last_epoch_str = r.get(REDIS_KEY_LAST_SYNC)
         if last_epoch_str:
@@ -80,10 +88,18 @@ async def _async_sync() -> dict:
         current_epoch = int(time.time())
 
         # Fetch new emails
-        gmail = GmailInboxClient()
+        gmail = GmailInboxClient(inbox=inbox, token_payload=token_payload)
         messages = gmail.fetch_new_messages(after_epoch=last_epoch, max_results=50)
 
         if not messages:
+            if gmail.updated_token_payload:
+                async with SessionLocal() as session:
+                    settings_row = await session.get(WorkspaceSettings, 1)
+                    if settings_row:
+                        settings_row.gmail_token_data = gmail.updated_token_payload
+                        settings_row.gmail_last_error = None
+                        session.add(settings_row)
+                        await session.commit()
             r.set(REDIS_KEY_LAST_SYNC, str(current_epoch))
             return {"status": "completed", "emails_found": 0, "activities_created": 0}
 
@@ -97,7 +113,7 @@ async def _async_sync() -> dict:
                 all_addrs.update(msg.to_addrs)
                 all_addrs.update(msg.cc_addrs)
                 # Remove the shared inbox address itself
-                all_addrs.discard(settings.GMAIL_SHARED_INBOX.lower())
+                all_addrs.discard(inbox.lower())
                 all_addrs.discard("")
 
                 if not all_addrs:
@@ -169,6 +185,13 @@ async def _async_sync() -> dict:
                     session.add(activity)
                     activities_created += 1
 
+            settings_row = await session.get(WorkspaceSettings, 1)
+            if settings_row:
+                if gmail.updated_token_payload:
+                    settings_row.gmail_token_data = gmail.updated_token_payload
+                settings_row.gmail_last_error = None
+                session.add(settings_row)
+
             await session.commit()
 
         # Update cursor
@@ -180,6 +203,14 @@ async def _async_sync() -> dict:
             "emails_found": len(messages),
             "activities_created": activities_created,
         }
+    except Exception as exc:
+        async with SessionLocal() as session:
+            settings_row = await session.get(WorkspaceSettings, 1)
+            if settings_row:
+                settings_row.gmail_last_error = str(exc)[:500]
+                session.add(settings_row)
+                await session.commit()
+        raise
 
     finally:
         await engine.dispose()

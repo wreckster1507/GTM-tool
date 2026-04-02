@@ -13,6 +13,7 @@ Each company takes 15-30s. Use Celery for batch processing.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import copy
 import json
@@ -362,14 +363,6 @@ You MUST respond with valid JSON containing these exact keys:
   "events_thought_leadership": "specific findings about conference appearances, publications",
   "reviews_case_studies": "specific findings from G2 reviews, case studies about implementation complexity",
 
-  "implementation_cycle": {
-    "enterprise": "typical enterprise deployment timeline — e.g. '3-9 months with Big 4 SI involvement'",
-    "mid_market": "mid-market or fast-track timeline if available — e.g. '4-8 weeks self-serve'",
-    "minimum": "shortest possible timeline — e.g. '3 months with minimal IT involvement'",
-    "key_drivers": "what makes implementations long or complex — e.g. 'ERP complexity, data migration, change management'",
-    "evidence": "sources: cite G2/Capterra reviews, case studies, job postings, website content that mention timelines"
-  },
-
   "internal_ai_overlap": "evidence of internal AI/automation that overlaps with Beacon — or 'None observed'",
   "strategic_constraints": "M&A, IPO, or other strategic constraints — or 'None observed'",
   "ps_cs_contraction": "evidence of PS/CS team contraction — or 'None observed'",
@@ -413,7 +406,94 @@ CRITICAL RULES:
 3. For signals: quote actual job postings, news articles, G2 reviews — not vague summaries
 4. If you can't find evidence for a field, say exactly what's missing — don't make things up
 5. The classification must follow TAL filter logic: Target (meets inclusion AND no exclusions), Watch (partial fit), Exclude (fails inclusion or meets exclusion)
-6. Financial capacity is binary: met or not met based on the thresholds above"""
+6. Financial capacity is binary: met or not met based on the thresholds above
+7. Return ONE JSON object only. Do not add markdown fences, prose before the JSON, or prose after the JSON.
+8. Be concise. Keep string values tight and evidence-focused. Avoid long marketing descriptions."""
+
+
+def _try_parse_object(text: str) -> dict[str, Any] | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+
+    candidates = [raw]
+    normalized = (
+        raw.replace("\ufeff", "")
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("‘", "'")
+        .replace("’", "'")
+    )
+    if normalized != raw:
+        candidates.append(normalized)
+
+    no_trailing_commas = re.sub(r",(\s*[}\]])", r"\1", normalized)
+    if no_trailing_commas not in candidates:
+        candidates.append(no_trailing_commas)
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        try:
+            parsed = ast.literal_eval(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+    return None
+
+
+def _find_nested_dict_with_keys(value: Any, required_keys: set[str]) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        if required_keys.issubset(value.keys()):
+            return value
+        for nested in value.values():
+            found = _find_nested_dict_with_keys(nested, required_keys)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _find_nested_dict_with_keys(item, required_keys)
+            if found:
+                return found
+    return None
+
+
+def _extract_icp_payload(raw_text: str, required_keys: set[str]) -> dict[str, Any] | None:
+    from app.clients.claude_enrichment import _extract_json_object
+
+    direct = _extract_json_object(raw_text)
+    if direct:
+        found = _find_nested_dict_with_keys(direct, required_keys)
+        if found:
+            return found
+
+    text = (raw_text or "").strip()
+    if "```" in text:
+        fence_matches = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        for fenced in fence_matches:
+            parsed = _try_parse_object(fenced)
+            found = _find_nested_dict_with_keys(parsed, required_keys) if parsed else None
+            if found:
+                return found
+
+    best: dict[str, Any] | None = None
+    for idx, ch in enumerate(text):
+        if ch != "{":
+            continue
+        brace_match = re.search(r"\{.*", text[idx:], flags=re.DOTALL)
+        if not brace_match:
+            continue
+        parsed = _try_parse_object(brace_match.group(0))
+        found = _find_nested_dict_with_keys(parsed, required_keys) if parsed else None
+        if found and (best is None or len(json.dumps(found, default=str)) > len(json.dumps(best, default=str))):
+            best = found
+    return best
 
 
 async def _run_icp_analysis(
@@ -434,6 +514,12 @@ async def _run_icp_analysis(
     user_data = f"## Company: {company_name}\n"
     if domain and not domain.endswith(".unknown"):
         user_data += f"## Domain: {domain}\n\n"
+    user_data += (
+        "### Output constraints:\n"
+        "- Keep the response compact enough to fit in one complete JSON object.\n"
+        "- Prefer short evidence-rich bullets inside strings over long paragraphs.\n"
+        "- Keep `company_overview`, `icp_why`, and `intent_why` to 2 sentences each.\n\n"
+    )
 
     # Extra context from CSV (if user provided additional columns)
     if extra_context:
@@ -447,13 +533,13 @@ async def _run_icp_analysis(
     scraped = collected.get("scraped", {})
     if isinstance(scraped, dict) and scraped.get("text"):
         user_data += f"### Company Website Content ({scraped.get('pages_scraped', 0)} pages scraped):\n"
-        user_data += scraped["text"][:5000] + "\n\n"
+        user_data += scraped["text"][:2500] + "\n\n"
 
     # General search results
     general = collected.get("general_search", [])
     if general:
         user_data += "### General Company Search Results:\n"
-        for r in general[:5]:
+        for r in general[:3]:
             if isinstance(r, dict):
                 user_data += f"- [{r.get('title', '')}] {r.get('snippet', '')}\n"
         user_data += "\n"
@@ -468,7 +554,7 @@ async def _run_icp_analysis(
     all_contacts = collected.get("all_contacts", [])
     if isinstance(all_contacts, list) and all_contacts:
         user_data += f"### Discovered Contacts ({len(all_contacts)} found via Apollo + Hunter):\n"
-        for c in all_contacts[:20]:
+        for c in all_contacts[:10]:
             if isinstance(c, dict):
                 source = c.get("_source", "unknown")
                 email_info = ""
@@ -512,7 +598,7 @@ async def _run_icp_analysis(
     funding = collected.get("funding", [])
     if funding:
         user_data += "### PR/Funding/Expansion Search Results:\n"
-        for r in funding[:5]:
+        for r in funding[:3]:
             if isinstance(r, dict):
                 user_data += f"- [{r.get('title', '')}] {r.get('snippet', '')}\n"
         user_data += "\n"
@@ -555,7 +641,7 @@ async def _run_icp_analysis(
         news_items = []
     if news_items:
         user_data += "### Recent News:\n"
-        for r in news_items[:5]:
+        for r in news_items[:3]:
             if isinstance(r, dict):
                 title = r.get("title", "")
                 snippet = r.get("snippet") or r.get("description", "")
@@ -565,41 +651,23 @@ async def _run_icp_analysis(
     try:
         response = await client.messages.create(
             model=settings.ANTHROPIC_MODEL,
-            max_tokens=4000,
+            max_tokens=5500,
             system=_ICP_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_data}],
         )
         text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]
         text = "\n".join(text_blocks).strip()
 
-        from app.clients.claude_enrichment import _extract_json_object
-
-        # Try to find the LARGEST valid JSON object (the full ICP response, not a nested sub-object)
         _ICP_REQUIRED_KEYS = {"icp_fit_score", "classification", "confidence"}
-        payload = None
-
-        # First try: extract and validate
-        candidate = _extract_json_object(text)
-        if candidate and _ICP_REQUIRED_KEYS.issubset(candidate.keys()):
-            payload = candidate
-        else:
-            # Fallback: scan for the largest JSON object that has required keys
-            decoder = json.JSONDecoder()
-            best = None
-            for idx, ch in enumerate(text):
-                if ch != "{":
-                    continue
-                try:
-                    parsed, end = decoder.raw_decode(text[idx:])
-                    if isinstance(parsed, dict) and _ICP_REQUIRED_KEYS.issubset(parsed.keys()):
-                        if best is None or len(parsed) > len(best):
-                            best = parsed
-                except Exception:
-                    continue
-            payload = best
+        payload = _extract_icp_payload(text, _ICP_REQUIRED_KEYS)
 
         if payload is None:
-            logger.warning(f"Claude ICP analysis returned no valid ICP JSON for {company_name}")
+            logger.warning(
+                "Claude ICP analysis returned no valid ICP JSON for %s. stop_reason=%s Raw preview: %s",
+                company_name,
+                getattr(response, "stop_reason", None),
+                text[:600],
+            )
             return None
 
         payload["_source"] = "claude_icp_pipeline"
@@ -1398,6 +1466,8 @@ async def research_company_and_update(
                 # Fill in any missing fields on existing contact
                 if email and not existing.email:
                     existing.email = email
+                if c.get("phone") and not existing.phone:
+                    existing.phone = c["phone"]
                 if c.get("title") and not existing.title:
                     existing.title = c["title"]
                 if c.get("linkedin_url") and not existing.linkedin_url:
@@ -1417,6 +1487,7 @@ async def research_company_and_update(
                     first_name=first_name or "Unknown",
                     last_name=last_name or "",
                     email=email or None,
+                    phone=c.get("phone") or None,
                     title=c.get("title"),
                     seniority=c.get("seniority"),
                     linkedin_url=c.get("linkedin_url"),

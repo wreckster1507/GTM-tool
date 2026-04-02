@@ -13,7 +13,7 @@ class User(SQLModel, table=True):
     name: str
     avatar_url: Optional[str] = None
     google_id: str = Field(index=True, unique=True)
-    role: str = Field(default="sales_rep")  # admin | sales_rep
+    role: str = Field(default="sdr")  # admin | ae | sdr
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

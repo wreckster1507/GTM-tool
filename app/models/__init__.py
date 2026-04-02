@@ -21,6 +21,7 @@ from app.models.angel import (
     AngelInvestor, AngelInvestorCreate, AngelInvestorRead, AngelInvestorUpdate,
     AngelMapping, AngelMappingCreate, AngelMappingRead, AngelMappingUpdate,
 )
+from app.models.reminder import Reminder, ReminderCreate, ReminderRead, ReminderUpdate
 
 __all__ = [
     "Company", "CompanyCreate", "CompanyRead", "CompanyUpdate",
@@ -38,4 +39,5 @@ __all__ = [
     "User", "UserRead", "UserUpdate",
     "AngelInvestor", "AngelInvestorCreate", "AngelInvestorRead", "AngelInvestorUpdate",
     "AngelMapping", "AngelMappingCreate", "AngelMappingRead", "AngelMappingUpdate",
+    "Reminder", "ReminderCreate", "ReminderRead", "ReminderUpdate",
 ]

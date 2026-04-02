@@ -2,7 +2,7 @@
 Authentication endpoints — Google OAuth2 login, token exchange, user management.
 
 The first user to sign in is automatically granted the 'admin' role.
-Subsequent users default to 'sales_rep'.
+Subsequent users default to 'sdr'.
 """
 from typing import List
 from urllib.parse import urlencode
@@ -23,6 +23,7 @@ from app.services.auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+ALLOWED_USER_ROLES = {"admin", "ae", "sdr"}
 
 
 # ── Google OAuth flow ────────────────────────────────────────────────────────
@@ -70,9 +71,9 @@ async def google_callback(
 
     if user is None:
         # Bootstrap rule: the very first user can administer the system without a
-        # manual seed step; everyone after that starts as a sales rep.
+        # manual seed step; everyone after that starts as an SDR.
         user_count = (await session.execute(select(func.count(User.id)))).scalar_one()
-        role = "admin" if user_count == 0 else "sales_rep"
+        role = "admin" if user_count == 0 else "sdr"
 
         user = User(
             email=google_info["email"],
@@ -147,10 +148,23 @@ async def update_user(
     if not user:
         raise NotFoundError("User not found")
 
+    if data.role and data.role not in ALLOWED_USER_ROLES:
+        raise ForbiddenError("Role must be one of: admin, ae, sdr")
+
     # Prevent the current admin from accidentally locking themselves out of
     # admin-only routes by changing their own role.
     if user.id == admin.id and data.role and data.role != "admin":
         raise ForbiddenError("Cannot change your own admin role")
+
+    admin_count = (
+        await session.execute(
+            select(func.count(User.id)).where(User.role == "admin", User.is_active == True)  # noqa: E712
+        )
+    ).scalar_one()
+    demoting_last_admin = user.role == "admin" and data.role and data.role != "admin" and admin_count <= 1
+    deactivating_last_admin = user.role == "admin" and data.is_active is False and admin_count <= 1
+    if demoting_last_admin or deactivating_last_admin:
+        raise ForbiddenError("At least one active admin must remain on the workspace")
 
     # Only apply fields that were explicitly sent in the PATCH payload.
     update_data = data.model_dump(exclude_unset=True)

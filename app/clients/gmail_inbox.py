@@ -17,15 +17,17 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from app.config import settings
+from app.services.gmail_oauth import GMAIL_SCOPE, GOOGLE_TOKEN_URL
 
 logger = logging.getLogger(__name__)
 
 # Scopes: read-only access to the shared inbox
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [GMAIL_SCOPE]
 
 
 @dataclass
@@ -52,43 +54,69 @@ def _extract_addrs(header_value: str) -> list[str]:
     return [addr.lower().strip() for _name, addr in pairs if addr]
 
 
-def _get_credentials():
+def _serialize_credentials(creds) -> dict:
+    return {
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "scopes": list(creds.scopes or SCOPES),
+        "expiry": creds.expiry.isoformat() if getattr(creds, "expiry", None) else None,
+    }
+
+
+def _get_credentials(token_payload: Optional[dict] = None):
     """Load or refresh OAuth2 credentials from token file."""
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
     token_path = Path(settings.GMAIL_TOKEN_JSON)
     creds = None
+    updated_token_payload = None
 
-    if token_path.exists():
+    if token_payload:
+        info = {
+            "token": token_payload.get("token"),
+            "refresh_token": token_payload.get("refresh_token"),
+            "scopes": token_payload.get("scopes") or SCOPES,
+            "expiry": token_payload.get("expiry"),
+            "client_id": settings.gmail_client_id,
+            "client_secret": settings.gmail_client_secret,
+            "token_uri": GOOGLE_TOKEN_URL,
+        }
+        creds = Credentials.from_authorized_user_info(info, SCOPES)
+    elif token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        token_path.write_text(creds.to_json())
+        if token_payload is not None:
+            updated_token_payload = _serialize_credentials(creds)
+        else:
+            token_path.write_text(creds.to_json())
 
     if not creds or not creds.valid:
-        return None
+        return None, updated_token_payload
 
-    return creds
+    return creds, updated_token_payload
 
 
-def _build_service():
+def _build_service(token_payload: Optional[dict] = None):
     """Build Gmail API service client."""
     from googleapiclient.discovery import build
 
-    creds = _get_credentials()
+    creds, updated_token_payload = _get_credentials(token_payload)
     if not creds:
-        return None
-    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+        return None, updated_token_payload
+    return build("gmail", "v1", credentials=creds, cache_discovery=False), updated_token_payload
 
 
 class GmailInboxClient:
     """Polls a Gmail shared inbox for new messages."""
 
-    def __init__(self) -> None:
-        self.inbox = settings.GMAIL_SHARED_INBOX
-        self.enabled = bool(self.inbox and settings.GMAIL_TOKEN_JSON)
+    def __init__(self, inbox: Optional[str] = None, token_payload: Optional[dict] = None) -> None:
+        self.inbox = inbox or settings.GMAIL_SHARED_INBOX
+        self.token_payload = token_payload
+        self.updated_token_payload: Optional[dict] = None
+        self.enabled = bool(self.inbox and (self.token_payload or settings.GMAIL_TOKEN_JSON))
 
     def fetch_new_messages(self, after_epoch: int, max_results: int = 50) -> list[EmailMessage]:
         """
@@ -101,7 +129,9 @@ class GmailInboxClient:
             logger.debug("Gmail sync disabled — no inbox configured")
             return []
 
-        service = _build_service()
+        service, updated_token_payload = _build_service(self.token_payload)
+        if updated_token_payload:
+            self.updated_token_payload = updated_token_payload
         if not service:
             logger.warning("Gmail credentials not valid — run setup first")
             return []

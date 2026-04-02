@@ -89,7 +89,7 @@ def _score_label(stage: str, score: int) -> str:
 def _deal_stage_score(stage: str) -> int:
     if stage == "closed_won":
         return 98
-    if stage in {"commercial_negotiation", "proposal"}:
+    if stage in {"commercial_negotiation", "proposal", "msa_review", "workshop"}:
         return 92
     if stage.startswith("poc"):
         return 88

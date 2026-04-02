@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import {
-  X, ChevronDown, Building2, CalendarDays, Flag, UserCircle2,
+  X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText,
 } from "lucide-react";
 import { dealsApi, contactsApi } from "../../lib/api";
+import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
 
@@ -15,6 +16,7 @@ interface Props {
   stages: { id: string; label: string; group: string }[];
   onClose: () => void;
   onDealUpdated: (deal: Deal) => void;
+  onDealDeleted?: (dealId: string) => void;
   onConvert?: (deal: Deal) => void;
 }
 
@@ -38,9 +40,24 @@ const ACTIVITY_ICON: Record<string, typeof ActivityIcon> = {
   visit: Globe,
 };
 
-type DrawerTab = "overview" | "activity";
+type DrawerTab = "overview" | "meddpicc" | "activity";
 
-export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onConvert }: Props) {
+const MEDDPICC_DIMENSIONS = [
+  { key: "metrics", label: "Metrics", desc: "Quantified business impact of solving the problem" },
+  { key: "economic_buyer", label: "Economic Buyer", desc: "Person with veto power and budget authority" },
+  { key: "decision_criteria", label: "Decision Criteria", desc: "Technical, business, and legal requirements" },
+  { key: "decision_process", label: "Decision Process", desc: "Steps, timeline, and approvals needed to close" },
+  { key: "paper_process", label: "Paper Process", desc: "Legal, procurement, and security review steps" },
+  { key: "identify_pain", label: "Identify Pain", desc: "The core business pain driving urgency" },
+  { key: "champion", label: "Champion", desc: "Internal advocate who sells when you're not there" },
+  { key: "competition", label: "Competition", desc: "Alternatives being evaluated, including status quo" },
+] as const;
+
+const MEDDPICC_LEVEL_LABELS = ["Not Started", "Identified", "Validated", "Confirmed"] as const;
+const MEDDPICC_LEVEL_COLORS = ["#94a3b8", "#f59e0b", "#3b82f6", "#22c55e"] as const;
+
+export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert }: Props) {
+  const { isAdmin } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [dealContacts, setDealContacts] = useState<DealContact[]>([]);
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
@@ -104,6 +121,15 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
       setActivities((prev) => [act, ...prev]);
       setComment("");
     } finally { setSendingComment(false); }
+  };
+
+  const handleDeleteDeal = async () => {
+    if (!isAdmin) return;
+    const label = deal.pipeline_type === "prospect" ? "prospect" : "deal";
+    if (!window.confirm(`Delete this ${label}? This cannot be undone.`)) return;
+    await dealsApi.delete(deal.id);
+    onDealDeleted?.(deal.id);
+    onClose();
   };
 
   // ── Contact linking ───────────────────────────────────────────────────────
@@ -320,6 +346,30 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 Convert to Deal
               </button>
             )}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={handleDeleteDeal}
+                style={{
+                  height: 30,
+                  marginLeft: onConvert && deal.stage === "in_progress" ? 0 : "auto",
+                  borderRadius: 10,
+                  border: "1px solid #fecaca",
+                  background: "#fff1f2",
+                  color: "#b42336",
+                  padding: "0 10px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                <Trash2 size={12} />
+                Delete
+              </button>
+            )}
           </div>
         </div>
 
@@ -327,6 +377,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
           <div style={{ display: "flex", gap: 8, padding: "12px 0 14px" }}>
             {[
               { id: "overview", label: "Overview" },
+              { id: "meddpicc", label: `MEDDPICC${deal.meddpicc_score != null ? ` (${deal.meddpicc_score})` : ""}` },
               { id: "activity", label: `Activity (${activities.length})` },
             ].map((item) => {
               const active = activeTab === item.id;
@@ -404,17 +455,6 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               />
             </FieldRow>
 
-            {/* Department */}
-            <FieldRow label="Department" icon={<Flag size={13} />}>
-              <input
-                type="text"
-                defaultValue={deal.department ?? ""}
-                onBlur={(e) => patchDeal({ department: e.target.value || undefined } as Partial<Deal>)}
-                style={{ ...fieldInputStyle }}
-                placeholder="e.g. Finance"
-              />
-            </FieldRow>
-
             {/* Health */}
             <FieldRow label="Health" icon={<span style={{ width: 10, height: 10, borderRadius: "50%", background: deal.health === "green" ? "#22c55e" : deal.health === "yellow" ? "#f59e0b" : "#ef4444" }} />}>
               <select
@@ -436,12 +476,9 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 style={{ ...fieldInputStyle }}
               >
                 <option value="">Select region</option>
-                <option value="NA">North America</option>
-                <option value="EMEA">EMEA</option>
-                <option value="APAC">APAC</option>
-                <option value="LATAM">LATAM</option>
-                <option value="India">India</option>
-                <option value="Global">Global</option>
+                <option value="US">US</option>
+                <option value="Americas">Americas</option>
+                <option value="Rest of World">Rest of World</option>
               </select>
             </FieldRow>
 
@@ -674,6 +711,14 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
           </div>
 
             </>
+          ) : activeTab === "meddpicc" ? (
+            <MeddpiccPanel
+              qualification={deal.qualification}
+              onUpdate={async (meddpicc) => {
+                const updated = { ...deal.qualification, meddpicc };
+                await patchDeal({ qualification: updated } as Partial<Deal>);
+              }}
+            />
           ) : (
             <ActivityPanel
               activities={activities}
@@ -681,6 +726,12 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               sendingComment={sendingComment}
               onCommentChange={setComment}
               onAddComment={handleAddComment}
+              onMoveToPoc={deal.stage !== "poc_agreed" && deal.stage !== "poc_wip" && deal.stage !== "poc_done" ? async () => {
+                const updated = await dealsApi.moveStage(deal.id, "poc_agreed");
+                onDealUpdated(updated);
+                setActivities((current) => current);
+              } : undefined}
+              pocEligible={deal.stage !== "poc_agreed" && deal.stage !== "poc_wip" && deal.stage !== "poc_done"}
             />
           )}
         </div>
@@ -710,18 +761,122 @@ function FieldRow({ label, icon, children }: { label: string; icon: React.ReactN
   );
 }
 
+// ── MEDDPICC Scorecard Panel ────────────────────────────────────────────────
+
+function MeddpiccPanel({
+  qualification,
+  onUpdate,
+}: {
+  qualification?: Record<string, unknown>;
+  onUpdate: (meddpicc: Record<string, number>) => Promise<void>;
+}) {
+  const meddpicc = (qualification?.meddpicc ?? {}) as Record<string, number>;
+
+  const handleChange = (key: string, value: number) => {
+    onUpdate({ ...meddpicc, [key]: value });
+  };
+
+  const total = MEDDPICC_DIMENSIONS.reduce((sum, d) => sum + (meddpicc[d.key] ?? 0), 0);
+  const filled = MEDDPICC_DIMENSIONS.filter((d) => (meddpicc[d.key] ?? 0) > 0).length;
+  const pct = filled > 0 ? Math.round((total / 24) * 100) : 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Score summary bar */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 16,
+        padding: "16px 20px", borderRadius: 14,
+        background: "linear-gradient(135deg, #f8fafc 0%, #f0f6ff 100%)",
+        border: "1px solid #e2eaf2",
+      }}>
+        <div style={{
+          width: 52, height: 52, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 18, fontWeight: 800,
+          background: pct >= 75 ? "#dcfce7" : pct >= 50 ? "#fef9c3" : pct > 0 ? "#fef2f2" : "#f1f5f9",
+          color: pct >= 75 ? "#166534" : pct >= 50 ? "#854d0e" : pct > 0 ? "#991b1b" : "#94a3b8",
+          border: `2px solid ${pct >= 75 ? "#bbf7d0" : pct >= 50 ? "#fde68a" : pct > 0 ? "#fecaca" : "#e2e8f0"}`,
+        }}>
+          {pct > 0 ? pct : "—"}
+        </div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#1f2d3d" }}>
+            MEDDPICC Score
+          </div>
+          <div style={{ fontSize: 12, color: "#6b7f96", marginTop: 2 }}>
+            {filled}/8 dimensions scored · {total}/24 points
+          </div>
+        </div>
+      </div>
+
+      {/* Dimension cards */}
+      {MEDDPICC_DIMENSIONS.map((dim) => {
+        const val = meddpicc[dim.key] ?? 0;
+        return (
+          <div key={dim.key} style={{
+            padding: "14px 18px", borderRadius: 12,
+            border: "1px solid #e8eef5", background: "#fff",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d" }}>
+                  {dim.label}
+                </span>
+                <span style={{
+                  marginLeft: 8, fontSize: 10, fontWeight: 600,
+                  padding: "2px 7px", borderRadius: 5,
+                  background: `${MEDDPICC_LEVEL_COLORS[val]}18`,
+                  color: MEDDPICC_LEVEL_COLORS[val],
+                }}>
+                  {MEDDPICC_LEVEL_LABELS[val]}
+                </span>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#7a8ca1", marginBottom: 10 }}>
+              {dim.desc}
+            </div>
+            {/* Level selector buttons */}
+            <div style={{ display: "flex", gap: 6 }}>
+              {MEDDPICC_LEVEL_LABELS.map((label, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleChange(dim.key, idx)}
+                  style={{
+                    flex: 1, padding: "6px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
+                    cursor: "pointer", transition: "all 0.15s",
+                    border: idx === val ? `2px solid ${MEDDPICC_LEVEL_COLORS[idx]}` : "1px solid #e2e8f0",
+                    background: idx === val ? `${MEDDPICC_LEVEL_COLORS[idx]}14` : "#fff",
+                    color: idx === val ? MEDDPICC_LEVEL_COLORS[idx] : "#94a3b8",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Activity Panel ──────────────────────────────────────────────────────────
+
 function ActivityPanel({
   activities,
   comment,
   sendingComment,
   onCommentChange,
   onAddComment,
+  onMoveToPoc,
+  pocEligible,
 }: {
   activities: Activity[];
   comment: string;
   sendingComment: boolean;
   onCommentChange: (value: string) => void;
   onAddComment: () => void;
+  onMoveToPoc?: () => Promise<void>;
+  pocEligible?: boolean;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minHeight: "100%" }}>
@@ -794,7 +949,7 @@ function ActivityPanel({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {activities.map((act) => (
-          <ActivityFeedItem key={act.id} activity={act} />
+          <ActivityFeedItem key={act.id} activity={act} onMoveToPoc={onMoveToPoc} pocEligible={pocEligible} />
         ))}
         {activities.length === 0 && (
           <div style={{
@@ -815,12 +970,26 @@ function ActivityPanel({
   );
 }
 
-function ActivityFeedItem({ activity }: { activity: Activity }) {
+function shouldSuggestPoc(activity: Activity) {
+  const text = `${activity.ai_summary ?? ""} ${activity.content ?? ""} ${activity.email_subject ?? ""}`.toLowerCase();
+  return text.includes("poc") && (
+    text.includes("agree") ||
+    text.includes("approved") ||
+    text.includes("move forward") ||
+    text.includes("green light") ||
+    text.includes("let's do")
+  );
+}
+
+function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Activity; onMoveToPoc?: () => Promise<void>; pocEligible?: boolean }) {
   const Icon = ACTIVITY_ICON[activity.type] ?? ActivityIcon;
   const isSystem = activity.type !== "comment";
   const isEmail = activity.type === "email";
   const actor = activity.user_name || activity.aircall_user_name || activity.source || "System";
   const [expanded, setExpanded] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [movingPoc, setMovingPoc] = useState(false);
+  const showPocSuggestion = Boolean(isEmail && pocEligible && !dismissed && shouldSuggestPoc(activity));
 
   return (
     <div style={{
@@ -927,6 +1096,69 @@ function ActivityFeedItem({ activity }: { activity: Activity }) {
                   marginBottom: 6,
                 }}>
                   {activity.ai_summary}
+                </div>
+              )}
+
+              {showPocSuggestion && (
+                <div style={{
+                  marginBottom: 8,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #bfdbfe",
+                  background: "#eff6ff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}>
+                  <div style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 700 }}>
+                    Buyer sounds aligned on a POC. Move this deal to POC Agreed?
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setDismissed(true)}
+                      style={{
+                        borderRadius: 8,
+                        border: "1px solid #cbd5e1",
+                        background: "#fff",
+                        color: "#475569",
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      No
+                    </button>
+                    <button
+                      type="button"
+                      disabled={movingPoc}
+                      onClick={async () => {
+                        if (!onMoveToPoc) return;
+                        setMovingPoc(true);
+                        try {
+                          await onMoveToPoc();
+                          setDismissed(true);
+                        } finally {
+                          setMovingPoc(false);
+                        }
+                      }}
+                      style={{
+                        borderRadius: 8,
+                        border: "1px solid #2563eb",
+                        background: "#2563eb",
+                        color: "#fff",
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: movingPoc ? "wait" : "pointer",
+                      }}
+                    >
+                      {movingPoc ? "Moving..." : "Yes, move to POC"}
+                    </button>
+                  </div>
                 </div>
               )}
 

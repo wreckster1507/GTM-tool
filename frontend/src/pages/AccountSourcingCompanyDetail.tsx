@@ -13,17 +13,16 @@ import {
   MessageSquare,
   Phone,
   RefreshCw,
-  Send,
   AlertTriangle,
   Newspaper,
   Radar,
-  Shield,
   Target,
   TrendingUp,
   Users,
 } from "lucide-react";
 
-import { accountSourcingApi } from "../lib/api";
+import { accountSourcingApi, contactsApi, dealsApi } from "../lib/api";
+import { Plus, UserPlus } from "lucide-react";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
@@ -65,13 +64,17 @@ const PERSONA_STYLE: Record<string, CSSProperties> = {
   buyer: { background: "#eaf2ff", color: "#2556c4" },
   evaluator: { background: colors.amberSoft, color: colors.amber },
   blocker: { background: colors.redSoft, color: colors.red },
+  influencer: { background: "#f0e6ff", color: "#6b3fa0" },
+  implementation_owner: { background: "#e6f7ff", color: "#0369a1" },
 };
 
 const PERSONA_LABEL: Record<string, string> = {
-  buyer: "Buyer",
+  buyer: "Economic Buyer",
   champion: "Champion",
-  evaluator: "Evaluator",
+  evaluator: "Technical Evaluator",
   blocker: "Blocker",
+  influencer: "Influencer",
+  implementation_owner: "Implementation Owner",
   unknown: "Unknown",
 };
 
@@ -163,14 +166,42 @@ function canonicalPersona(persona?: string | null, personaType?: string | null):
   if (normalized === "technical_evaluator" || normalized === "evaluator") return "evaluator";
   if (normalized === "champion") return "champion";
   if (normalized === "blocker") return "blocker";
+  if (normalized === "influencer") return "influencer";
+  if (normalized === "implementation_owner") return "implementation_owner";
   return "unknown";
 }
 
-function MetricCard({ label, value, hint, tone = "neutral" }: {
+function isPriorityStakeholder(contact: Contact): boolean {
+  const normalizedTitle = (contact.title || "").toLowerCase();
+  const normalizedPersona = (contact.persona_type || contact.persona || "").toLowerCase();
+  if (["buyer", "champion", "evaluator", "technical_evaluator", "implementation_owner"].includes(normalizedPersona)) {
+    return true;
+  }
+  return [
+    "director of engineering",
+    "engineering director",
+    "vp engineering",
+    "head of engineering",
+    "professional services",
+    "implementation",
+    "solutions consulting",
+    "product management",
+    "product manager",
+    "director of product",
+    "technology",
+    "technical",
+    "data science",
+    "data",
+    "enterprise applications",
+  ].some((needle) => normalizedTitle.includes(needle));
+}
+
+function MetricCard({ label, value, hint, tone = "neutral", onClick }: {
   label: string;
   value: string;
   hint: string;
   tone?: "neutral" | "primary" | "warm" | "green";
+  onClick?: () => void;
 }) {
   const toneStyle = {
     neutral: { bg: "#fbfdff", border: colors.border, accent: colors.sub },
@@ -180,7 +211,16 @@ function MetricCard({ label, value, hint, tone = "neutral" }: {
   }[tone];
 
   return (
-    <div style={{ border: `1px solid ${toneStyle.border}`, background: toneStyle.bg, borderRadius: 14, padding: "14px 16px" }}>
+    <div
+      onClick={onClick}
+      style={{
+        border: `1px solid ${toneStyle.border}`,
+        background: toneStyle.bg,
+        borderRadius: 14,
+        padding: "14px 16px",
+        cursor: onClick ? "pointer" : "default",
+      }}
+    >
       <div style={{ color: colors.faint, fontWeight: 800, fontSize: 11, letterSpacing: 0.5 }}>{label.toUpperCase()}</div>
       <div style={{ marginTop: 8, color: toneStyle.accent, fontWeight: 800, fontSize: 26 }}>{value}</div>
       <div style={{ marginTop: 6, color: colors.sub, fontSize: 13, lineHeight: 1.45 }}>{hint}</div>
@@ -319,7 +359,7 @@ function SourceLinks({ items }: { items: EvidenceSource[] }) {
   );
 }
 
-function ContactItem({ contact }: { contact: Contact }) {
+function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () => void }) {
   const [re, setRe] = useState(false);
 
   const persona = canonicalPersona(contact.persona, contact.persona_type);
@@ -442,12 +482,37 @@ function ContactItem({ contact }: { contact: Contact }) {
           </div>
 
           <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at)}</div>
+          <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
+            <div style={{ color: colors.faint, fontSize: 11, fontWeight: 700 }}>AE</div>
+            <AssignDropdown
+              entityType="contact"
+              entityId={contact.id}
+              currentAssignedId={contact.assigned_to_id}
+              currentAssignedName={contact.assigned_to_name || contact.assigned_rep_email}
+              onAssigned={() => onChanged()}
+              compact
+              role="ae"
+              label="Assign AE"
+            />
+            <div style={{ color: colors.faint, fontSize: 11, fontWeight: 700 }}>SDR</div>
+            <AssignDropdown
+              entityType="contact"
+              entityId={contact.id}
+              currentAssignedId={contact.sdr_id}
+              currentAssignedName={contact.sdr_name}
+              onAssigned={() => onChanged()}
+              compact
+              role="sdr"
+              label="Assign SDR"
+            />
+          </div>
           <div style={{ display: "inline-flex", gap: 8 }}>
             <button
               onClick={async () => {
                 setRe(true);
                 try {
                   await accountSourcingApi.reEnrichContact(contact.id);
+                  onChanged();
                 } finally {
                   setTimeout(() => setRe(false), 2500);
                 }
@@ -473,20 +538,15 @@ export default function AccountSourcingCompanyDetail() {
 
   const [re, setRe] = useState(false);
   const [icpResearching, setIcpResearching] = useState(false);
-  const [push, setPush] = useState(false);
-  const [savingWorkflow, setSavingWorkflow] = useState(false);
-  const [workflow, setWorkflow] = useState({
-    assigned_rep: "",
-    assigned_rep_name: "",
-    assigned_rep_email: "",
-    outreach_status: "",
-    disposition: "",
-    recommended_outreach_lane: "",
-    instantly_campaign_id: "",
-    account_thesis: "",
-    why_now: "",
-    beacon_angle: "",
-    rep_feedback: "",
+  const [showAddStakeholder, setShowAddStakeholder] = useState(false);
+  const [showDealModal, setShowDealModal] = useState(false);
+  const [creatingDeal, setCreatingDeal] = useState(false);
+  const [dealError, setDealError] = useState("");
+  const [dealForm, setDealForm] = useState({
+    name: "",
+    value: "",
+    stage: "discovery",
+    close_date_est: "",
   });
 
   const load = useCallback(async () => {
@@ -526,34 +586,6 @@ export default function AccountSourcingCompanyDetail() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    setWorkflow({
-      assigned_rep: company?.assigned_rep || "",
-      assigned_rep_name: company?.assigned_rep_name || "",
-      assigned_rep_email: company?.assigned_rep_email || "",
-      outreach_status: company?.outreach_status || "",
-      disposition: company?.disposition || "",
-      recommended_outreach_lane: company?.recommended_outreach_lane || "",
-      instantly_campaign_id: company?.instantly_campaign_id || "",
-      account_thesis: company?.account_thesis || "",
-      why_now: company?.why_now || "",
-      beacon_angle: company?.beacon_angle || "",
-      rep_feedback: company?.rep_feedback || "",
-    });
-  }, [
-    company?.assigned_rep,
-    company?.assigned_rep_name,
-    company?.assigned_rep_email,
-    company?.outreach_status,
-    company?.disposition,
-    company?.recommended_outreach_lane,
-    company?.instantly_campaign_id,
-    company?.account_thesis,
-    company?.why_now,
-    company?.beacon_angle,
-    company?.rep_feedback,
-  ]);
-
   const cache = useMemo(() => (company?.enrichment_cache || {}) as Record<string, unknown>, [company]);
   const prospectingProfile = (company?.prospecting_profile || {}) as Record<string, unknown>;
   const outreachPlan = (company?.outreach_plan || {}) as Record<string, unknown>;
@@ -561,7 +593,6 @@ export default function AccountSourcingCompanyDetail() {
   const web = unwrapCache(cache, "web_scrape");
   const apollo = unwrapCache(cache, "apollo_company");
   const committee = unwrapCache(cache, "committee_coverage");
-  const priorities = unwrapCache(cache, "prospecting_priorities");
   const committeeScore = typeof committee?.coverage_score === "number" ? committee.coverage_score : 0;
   const missingRoles = Array.isArray(committee?.missing_roles)
     ? (committee.missing_roles as Array<{ label?: string; why?: string }>)
@@ -572,8 +603,6 @@ export default function AccountSourcingCompanyDetail() {
   const fitReasoning = asText(ai?.icp_fit_reasoning);
   const intentSummary = asText(ai?.intent_signals_summary);
   const companySummary = asText(ai?.description) || company?.description || undefined;
-  const competitors = asList(ai?.competitive_landscape);
-  const techSignals = asList(ai?.tech_stack_signals);
   const websiteText = asText(web?.text);
   const warmPaths = Array.isArray(prospectingProfile.warm_paths)
     ? prospectingProfile.warm_paths as Array<Record<string, unknown>>
@@ -603,14 +632,6 @@ export default function AccountSourcingCompanyDetail() {
     return [...hiringNews, ...fundingNews, ...productNews].filter((n) => n.title);
   }, [hiringNews, fundingNews, productNews]);
 
-  // Tech stack from company model
-  const techStackEntries = useMemo(() => {
-    if (!company?.tech_stack || typeof company.tech_stack !== "object") return [];
-    return Object.entries(company.tech_stack as Record<string, unknown>)
-      .filter(([, v]) => v !== null && v !== undefined && v !== "")
-      .map(([k, v]) => ({ category: k, tools: String(v) }));
-  }, [company?.tech_stack]);
-
   // ICP Intelligence Pipeline data
   const icpAnalysis = useMemo(() => {
     const entry = cache.icp_analysis as Record<string, unknown> | undefined;
@@ -635,11 +656,6 @@ export default function AccountSourcingCompanyDetail() {
     return Array.isArray(gaps) ? gaps.map(String) : [];
   }, [prospectingProfile]);
   const icpCommitteeCoverage = asText(prospectingProfile.committee_coverage);
-  const implementationCycle = useMemo(() => {
-    const raw = icpAnalysis?.implementation_cycle;
-    if (!raw || typeof raw !== "object") return null;
-    return raw as Record<string, unknown>;
-  }, [icpAnalysis]);
   const salesPlay = useMemo(() => {
     const play = prospectingProfile.sales_play;
     return play && typeof play === "object" ? (play as Record<string, unknown>) : undefined;
@@ -649,8 +665,6 @@ export default function AccountSourcingCompanyDetail() {
     : undefined;
   const entryPersonaTitle = asText(entryPersona?.title);
   const entryPersonaRelevance = asText(entryPersona?.relevance);
-  const riskFlags = Array.isArray(salesPlay?.risk_flags) ? (salesPlay.risk_flags as unknown[]).map(String).filter(Boolean) : [];
-  const proofPoints = Array.isArray(salesPlay?.proof_points) ? (salesPlay.proof_points as unknown[]).map(String).filter(Boolean) : [];
   const whyNowItems = toBriefItems(icpAnalysis?.why_now ?? company?.why_now, 3);
   const outreachItems = toBriefItems(icpAnalysis?.recommended_outreach_strategy, 4);
   const starterItems = toBriefItems(icpAnalysis?.conversation_starter, 2);
@@ -698,12 +712,16 @@ export default function AccountSourcingCompanyDetail() {
   const hookSources = sourceList(researchSources.conversation_starter);
   const hiringSources = sourceList(researchSources.ps_impl_hiring);
   const leadershipSources = sourceList(researchSources.leadership_org_moves);
+  const relevantContacts = useMemo(() => {
+    const filtered = contacts.filter(isPriorityStakeholder);
+    return filtered.length ? filtered : contacts;
+  }, [contacts]);
   const contactMomentum = useMemo(() => {
-    if (!contacts.length) return null;
-    const ranked = [...contacts].sort((a, b) => (b.tracking_score || 0) - (a.tracking_score || 0));
+    if (!relevantContacts.length) return null;
+    const ranked = [...relevantContacts].sort((a, b) => (b.tracking_score || 0) - (a.tracking_score || 0));
     const best = ranked[0];
-    const goodCount = contacts.filter((contact) => contact.tracking_label === "good").length;
-    const blockedCount = contacts.filter((contact) => contact.tracking_label === "blocked").length;
+    const goodCount = relevantContacts.filter((contact) => contact.tracking_label === "good").length;
+    const blockedCount = relevantContacts.filter((contact) => contact.tracking_label === "blocked").length;
     return {
       best,
       goodCount,
@@ -711,11 +729,11 @@ export default function AccountSourcingCompanyDetail() {
       hint:
         goodCount > 0
           ? `${goodCount} stakeholder${goodCount === 1 ? "" : "s"} showing positive momentum.`
-          : blockedCount === contacts.length
+          : blockedCount === relevantContacts.length
             ? "All visible stakeholders are currently blocked."
             : "No stakeholder has a strong signal yet.",
     };
-  }, [contacts]);
+  }, [relevantContacts]);
   const fundingSources = sourceList(researchSources.pr_funding_expansion);
   const eventsSources = sourceList(researchSources.events_thought_leadership);
   const reviewsSources = sourceList(researchSources.reviews_case_studies);
@@ -724,6 +742,14 @@ export default function AccountSourcingCompanyDetail() {
   const revenueSources = sourceList(researchSources.revenue_funding);
   const committeeCoverageSources = sourceList(researchSources.committee_coverage);
   const nextStepSources = sourceList(researchSources.next_steps);
+  const activityEntries = useMemo(() => {
+    const entries = cache.activity_log;
+    return Array.isArray(entries) ? [...entries].reverse().slice(0, 8) as Array<Record<string, unknown>> : [];
+  }, [cache]);
+  const competitorCards = useMemo(() => {
+    const items = cache.competitive_landscape_v2;
+    return Array.isArray(items) ? items as Array<Record<string, unknown>> : [];
+  }, [cache]);
   const detailMetaItems = [
     company?.domain ? (company.domain.endsWith(".unknown") ? `Domain unresolved: ${company.domain}` : company.domain) : undefined,
     asText(company?.industry),
@@ -754,26 +780,33 @@ export default function AccountSourcingCompanyDetail() {
     );
   }
 
-  const saveWorkflow = async () => {
-    setSavingWorkflow(true);
-    try {
-      await accountSourcingApi.updateCompany(company.id, {
-        assigned_rep: workflow.assigned_rep.trim() || null,
-        assigned_rep_name: workflow.assigned_rep_name.trim() || null,
-        assigned_rep_email: workflow.assigned_rep_email.trim() || null,
-        outreach_status: workflow.outreach_status || null,
-        disposition: workflow.disposition || null,
-        recommended_outreach_lane: workflow.recommended_outreach_lane || null,
-        instantly_campaign_id: workflow.instantly_campaign_id.trim() || null,
-        account_thesis: workflow.account_thesis.trim() || null,
-        why_now: workflow.why_now.trim() || null,
-        beacon_angle: workflow.beacon_angle.trim() || null,
-        rep_feedback: workflow.rep_feedback.trim() || null,
-      });
-      await load();
-    } finally {
-      setSavingWorkflow(false);
+  const handleCreateDeal = async () => {
+    if (!company) return;
+    if (!dealForm.name.trim()) {
+      setDealError("Deal name is required.");
+      return;
     }
+    setCreatingDeal(true);
+    setDealError("");
+    try {
+      await dealsApi.create({
+        company_id: company.id,
+        name: dealForm.name.trim(),
+        stage: dealForm.stage,
+        value: dealForm.value ? Number(dealForm.value) : undefined,
+        close_date_est: dealForm.close_date_est || undefined,
+      });
+      setShowDealModal(false);
+      setDealForm({ name: "", value: "", stage: "discovery", close_date_est: "" });
+    } catch (error) {
+      setDealError(error instanceof Error ? error.message : "Failed to create deal");
+    } finally {
+      setCreatingDeal(false);
+    }
+  };
+
+  const scrollToContacts = () => {
+    document.getElementById("stakeholders-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const tier = company.icp_tier || "cold";
@@ -868,7 +901,21 @@ export default function AccountSourcingCompanyDetail() {
               ) : null}
             </div>
 
-            <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
+            <div style={{ display: "grid", gap: 10, alignContent: "start", minWidth: 230 }}>
+              <div style={{ ...cardStyle, padding: "12px 14px", display: "grid", gap: 8 }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ACCOUNT OWNER</div>
+                <AssignDropdown
+                  entityType="company"
+                  entityId={company.id}
+                  currentAssignedId={company.assigned_to_id}
+                  currentAssignedName={company.assigned_to_name || company.assigned_rep_name || company.assigned_rep}
+                  onAssigned={() => load()}
+                  label="Assign owner"
+                />
+                <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
+                  Assign ownership here. Stakeholder-level AE and SDR assignment stays inside the contacts section.
+                </div>
+              </div>
               <button
                 onClick={async () => {
                   setIcpResearching(true);
@@ -912,17 +959,11 @@ export default function AccountSourcingCompanyDetail() {
               </button>
 
               <button
-                onClick={async () => {
-                  setPush(true);
-                  try {
-                    await accountSourcingApi.pushToInstantly(company.id, workflow.instantly_campaign_id || company.instantly_campaign_id || "default");
-                  } finally {
-                    setTimeout(() => setPush(false), 1800);
-                  }
-                }}
+                type="button"
+                onClick={() => setShowDealModal(true)}
                 style={{ border: `1px solid #cde5ff`, background: "#eff7ff", color: "#1f5ecc", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}
               >
-                {push ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Push to Instantly
+                <Plus size={13} /> Add to Deal
               </button>
             </div>
           </div>
@@ -959,12 +1000,6 @@ export default function AccountSourcingCompanyDetail() {
             tone="primary"
           />
           <MetricCard
-            label="Proof / Risks"
-            value={`${proofPoints.length} / ${riskFlags.length}`}
-            hint={riskFlags.length === 0 ? "Clean signal set so far." : "Review the captured risks before sequencing."}
-            tone={riskFlags.length === 0 ? "green" : "warm"}
-          />
-          <MetricCard
             label="Priority"
             value={priority ? `${priority.priorityScore}` : "0"}
             hint={priority ? `${priority.priorityBand} priority based on fit, timing, evidence, and sales feedback.` : "Priority unavailable"}
@@ -972,9 +1007,10 @@ export default function AccountSourcingCompanyDetail() {
           />
           <MetricCard
             label="Contacts"
-            value={String(contacts.length)}
-            hint="Discovered stakeholders available for prospecting and meeting prep."
+            value={String(relevantContacts.length)}
+            hint="Relevant stakeholders ready for prospecting and meeting prep."
             tone="neutral"
+            onClick={scrollToContacts}
           />
           <MetricCard
             label="Prospect Momentum"
@@ -994,8 +1030,7 @@ export default function AccountSourcingCompanyDetail() {
           />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(320px, 0.95fr)", gap: 16, alignItems: "start" }}>
-          <div style={{ display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gap: 14 }}>
             <Section title="Account Thesis" icon={<Target size={15} color={colors.primary} />}>
               {toBriefItems(icpAnalysis?.core_focus, 3).length > 0 && (
                 <div style={{ background: "#f8fbff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 16px" }}>
@@ -1019,50 +1054,6 @@ export default function AccountSourcingCompanyDetail() {
                 </div>
               </div>
             </Section>
-
-            {implementationCycle && (
-              <Section title="Implementation Cycle" icon={<Clock size={15} color={colors.amber} />}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-                  {typeof implementationCycle.enterprise === "string" && implementationCycle.enterprise && (
-                    <div style={{ background: colors.redSoft, border: `1px solid #ffd0d8`, borderRadius: 10, padding: "10px 14px" }}>
-                      <div style={{ color: colors.red, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>ENTERPRISE</div>
-                      <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{String(implementationCycle.enterprise)}</div>
-                    </div>
-                  )}
-                  {typeof implementationCycle.midmarket === "string" && implementationCycle.midmarket && (
-                    <div style={{ background: colors.amberSoft, border: `1px solid #ffe4b0`, borderRadius: 10, padding: "10px 14px" }}>
-                      <div style={{ color: colors.amber, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>MID-MARKET</div>
-                      <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{String(implementationCycle.midmarket)}</div>
-                    </div>
-                  )}
-                  {typeof implementationCycle.minimum === "string" && implementationCycle.minimum && (
-                    <div style={{ background: colors.greenSoft, border: `1px solid #c8e8d8`, borderRadius: 10, padding: "10px 14px" }}>
-                      <div style={{ color: colors.green, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>MINIMUM</div>
-                      <div style={{ color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{String(implementationCycle.minimum)}</div>
-                    </div>
-                  )}
-                </div>
-                {Array.isArray(implementationCycle.key_drivers) && (implementationCycle.key_drivers as string[]).length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={{ color: colors.faint, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 6 }}>KEY DRIVERS</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {(implementationCycle.key_drivers as string[]).map((driver, i) => (
-                        <span key={i} style={{
-                          fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 999,
-                          background: "#f0f3f9", color: colors.sub, border: `1px solid ${colors.border}`,
-                        }}>{driver}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {typeof implementationCycle.review_signals === "string" && implementationCycle.review_signals && (
-                  <div style={{ marginTop: 10, background: "#f8f7f5", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
-                    <div style={{ color: colors.faint, fontWeight: 800, fontSize: 10, letterSpacing: 0.4, marginBottom: 4 }}>G2 / CAPTERRA / REDDIT REVIEWS</div>
-                    <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.65, fontStyle: "italic" }}>{String(implementationCycle.review_signals)}</div>
-                  </div>
-                )}
-              </Section>
-            )}
 
             {icpAnalysis ? (
               <Section title="Sales Brief" icon={<Brain size={15} color="#7a2dd9" />}>
@@ -1231,37 +1222,6 @@ export default function AccountSourcingCompanyDetail() {
               </Section>
             ) : null}
 
-            <Section title="Warm Intro Map" icon={<Users size={15} color={colors.primary} />}>
-              {warmPaths.length === 0 ? (
-                <div style={{ color: colors.faint }}>No connector paths captured for this account yet.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {warmPaths.map((item, idx) => (
-                    <div key={`warm-path-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                        <div style={{ color: colors.text, fontWeight: 800 }}>{String(item.name || `Connector ${idx + 1}`)}</div>
-                        {item.strength ? (
-                          <span style={{ borderRadius: 999, padding: "4px 8px", background: "#eef5ff", color: colors.primary, fontSize: 11, fontWeight: 800 }}>
-                            Strength {String(item.strength)}
-                          </span>
-                        ) : null}
-                      </div>
-                      {item.connection_path ? (
-                        <div style={{ marginTop: 8, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
-                          <strong style={{ color: colors.text }}>Path:</strong> {String(item.connection_path)}
-                        </div>
-                      ) : null}
-                      {item.why_it_works ? (
-                        <div style={{ marginTop: 6, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
-                          <strong style={{ color: colors.text }}>Why it works:</strong> {String(item.why_it_works)}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Section>
-
             {allNewsItems.length > 0 && (
               <Section title="Recent News & Signals" icon={<Newspaper size={15} color={colors.primary} />}>
                 <div style={{ display: "grid", gap: 8 }}>
@@ -1308,37 +1268,102 @@ export default function AccountSourcingCompanyDetail() {
               </Section>
             )}
 
-            <Section title="Competitive & Tech Landscape" icon={<Shield size={15} color={colors.primary} />}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-                <ListCard title="Competitors" items={competitors} empty="No competitive landscape captured." />
-                <ListCard title="Tech Signals" items={techSignals} empty="No tech signals captured." />
-              </div>
-              {techStackEntries.length > 0 && (
-                <div>
-                  <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>DETECTED TECH STACK</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {techStackEntries.map(({ category, tools }) => (
-                      <span key={category} style={{ borderRadius: 999, padding: "6px 10px", background: "#f3eaff", color: colors.violet, fontSize: 12, fontWeight: 600 }}>
-                        {category}: {tools}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {Array.isArray(priorities) && priorities.length > 0 ? (
-                <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ color: colors.text, fontWeight: 800 }}>Prospecting priorities</div>
-                  {(priorities as unknown[]).map((item, idx) => (
-                    <div key={idx} style={{ display: "flex", gap: 8, alignItems: "flex-start", borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "12px 14px" }}>
-                      <CheckCircle2 size={14} color={colors.primary} style={{ marginTop: 2, flexShrink: 0 }} />
-                      <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{String(item)}</div>
+            <Section title="Competitive Landscape" icon={<Radar size={15} color={colors.primary} />}>
+              {competitorCards.length === 0 ? (
+                <div style={{ color: colors.faint }}>No competitor view has been captured yet.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {competitorCards.map((item, idx) => (
+                    <div key={`competitor-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ color: colors.text, fontWeight: 800 }}>{String(item.name || `Competitor ${idx + 1}`)}</div>
+                        {item.website ? (
+                          <a href={String(item.website)} target="_blank" rel="noreferrer" style={{ color: colors.primary, fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
+                            Visit site <ExternalLink size={11} style={{ display: "inline" }} />
+                          </a>
+                        ) : null}
+                      </div>
+                      {item.summary ? <div style={{ marginTop: 8, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{String(item.summary)}</div> : null}
+                      {item.pitch_angle ? (
+                        <div style={{ marginTop: 10, borderRadius: 10, background: "#eef5ff", border: "1px solid #d5e5ff", padding: "10px 12px" }}>
+                          <div style={{ color: colors.primary, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>PITCH ANGLE</div>
+                          <div style={{ marginTop: 4, color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>{String(item.pitch_angle)}</div>
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
-              ) : null}
+              )}
             </Section>
 
-            <Section title={`Stakeholders (${contacts.length})`} icon={<Users size={15} color={colors.primary} />}>
+            <Section title="Account Activity" icon={<MessageSquare size={15} color={colors.primary} />}>
+              {activityEntries.length === 0 ? (
+                <div style={{ color: colors.faint }}>No account activity captured yet.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {activityEntries.map((entry, idx) => (
+                    <div key={`activity-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "12px 14px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ color: colors.text, fontWeight: 700 }}>
+                          {`${String(entry.message || entry.action || "Update")}${entry.actor_name ? ` by ${String(entry.actor_name)}` : ""}`}
+                        </div>
+                        <div style={{ color: colors.faint, fontSize: 12 }}>{typeof entry.at === "string" ? ts(String(entry.at)) : "-"}</div>
+                      </div>
+                      <div style={{ color: colors.sub, fontSize: 12.5, marginTop: 6 }}>
+                        {entry.actor_name ? `By ${String(entry.actor_name)}` : "By system"}
+                        {entry.actor_email ? ` • ${String(entry.actor_email)}` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Section>
+
+            <div id="stakeholders-section">
+            <Section title={`Stakeholders (${relevantContacts.length})`} icon={<Users size={15} color={colors.primary} />}>
+              {/* Add Stakeholder button */}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+                <button
+                  onClick={() => setShowAddStakeholder(true)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "7px 14px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+                    background: colors.primary, color: "#fff", border: "none", cursor: "pointer",
+                  }}
+                >
+                  <UserPlus size={13} /> Add Stakeholder
+                </button>
+              </div>
+
+              {/* Buying Committee grouped view */}
+              {relevantContacts.length > 0 && (() => {
+                const grouped: Record<string, Contact[]> = {};
+                for (const c of relevantContacts) {
+                  const role = canonicalPersona(c.persona, c.persona_type);
+                  (grouped[role] ??= []).push(c);
+                }
+                const roleOrder = ["champion", "buyer", "evaluator", "influencer", "implementation_owner", "blocker", "unknown"];
+                const sortedRoles = roleOrder.filter((r) => grouped[r]?.length);
+                if (sortedRoles.length > 1 || (sortedRoles.length === 1 && sortedRoles[0] !== "unknown")) {
+                  return (
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>BUYING COMMITTEE</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {sortedRoles.map((role) => (
+                          <span key={role} style={{
+                            ...PERSONA_STYLE[role] ?? { background: "#f1f5f9", color: "#64748b" },
+                            borderRadius: 999, fontSize: 11, padding: "4px 10px", fontWeight: 700,
+                          }}>
+                            {PERSONA_LABEL[role] ?? role} ({grouped[role].length})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               {icpPersonas.length > 0 && (
                 <div style={{ marginBottom: 10 }}>
                   <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>KEY PERSONAS</div>
@@ -1353,128 +1378,15 @@ export default function AccountSourcingCompanyDetail() {
                   </div>
                 </div>
               )}
-              {contacts.length === 0 && icpPersonas.length === 0 ? (
+              {relevantContacts.length === 0 && icpPersonas.length === 0 ? (
                 <div style={{ color: colors.faint }}>No contacts discovered yet.</div>
-              ) : contacts.length > 0 ? (
+              ) : relevantContacts.length > 0 ? (
                 <div style={{ display: "grid", gap: 10 }}>
-                  {contacts.map((c) => <ContactItem key={c.id} contact={c} />)}
+                  {relevantContacts.map((c) => <ContactItem key={c.id} contact={c} onChanged={load} />)}
                 </div>
               ) : null}
             </Section>
-
-            <Section title="Rep Workflow" icon={<MessageSquare size={15} color={colors.primary} />}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-                <div style={{ background: "#f8fafc", borderRadius: 12, padding: "14px 16px" }}>
-                  <div style={{ fontSize: 11, color: colors.faint, fontWeight: 600, marginBottom: 6 }}>Assigned Owner</div>
-                  <AssignDropdown
-                    entityType="company"
-                    entityId={company.id}
-                    currentAssignedId={company.assigned_to_id}
-                    currentAssignedName={company.assigned_to_name || company.assigned_rep_name || company.assigned_rep}
-                    onAssigned={() => load()}
-                  />
-                </div>
-                <MetricCard
-                  label="Outreach Lane"
-                  value={company.recommended_outreach_lane ? company.recommended_outreach_lane.replace(/_/g, " ") : "Auto"}
-                  hint={sequenceFamily || "Lane determines whether this should go through a connector, event follow-up, or Instantly."}
-                  tone="primary"
-                />
-                <MetricCard
-                  label="Leverage"
-                  value={priority ? `${priority.outreachLeverage}` : "0"}
-                  hint={
-                    warmPaths.length > 0
-                      ? `${warmPaths.length} warm paths available. ${company.disposition ? `Disposition: ${company.disposition.replace(/_/g, " ")}.` : ""}`
-                      : company.disposition ? `Disposition: ${company.disposition.replace(/_/g, " ")}` : "No warm path captured yet."
-                  }
-                  tone="green"
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-                <input
-                  value={workflow.assigned_rep_name}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_name: e.target.value }))}
-                  placeholder="Assigned rep name"
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
-                />
-                <input
-                  value={workflow.assigned_rep_email}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_email: e.target.value }))}
-                  placeholder="Assigned rep email"
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
-                />
-                <input
-                  value={workflow.assigned_rep}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep: e.target.value }))}
-                  placeholder="Legacy owner label"
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-                <select
-                  value={workflow.outreach_status}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, outreach_status: e.target.value }))}
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-                >
-                  {OUTREACH_STATUS_OPTIONS.map((option) => (
-                    <option key={option.value || "blank"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={workflow.recommended_outreach_lane}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, recommended_outreach_lane: e.target.value }))}
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-                >
-                  {OUTREACH_LANE_OPTIONS.map((option) => (
-                    <option key={option.value || "blank"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  value={workflow.instantly_campaign_id}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, instantly_campaign_id: e.target.value }))}
-                  placeholder="Instantly campaign ID"
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
-                />
-                <select
-                  value={workflow.disposition}
-                  onChange={(e) => setWorkflow((current) => ({ ...current, disposition: e.target.value }))}
-                  style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-                >
-                  {DISPOSITION_OPTIONS.map((option) => (
-                    <option key={option.value || "blank"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <textarea
-                value={workflow.rep_feedback}
-                onChange={(e) => setWorkflow((current) => ({ ...current, rep_feedback: e.target.value }))}
-                placeholder="What happened in outreach? Why is this account worth pushing, pausing, or dropping?"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, color: colors.text, minHeight: 92, resize: "vertical" }}
-              />
-
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                <div style={{ color: colors.faint, fontSize: 12 }}>
-                  {company.last_outreach_at ? `Last outreach saved on ${formatDate(company.last_outreach_at)}.` : "Rep feedback will shape the interest and priority indicators for this account."}
-                </div>
-                <button
-                  onClick={saveWorkflow}
-                  disabled={savingWorkflow}
-                  style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center" }}
-                >
-                  {savingWorkflow ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                  Save workflow
-                </button>
-              </div>
-            </Section>
+            </div>
 
             <Section title="Website Research" icon={<Globe size={15} color={colors.primary} />}>
               {websiteText ? (
@@ -1485,10 +1397,6 @@ export default function AccountSourcingCompanyDetail() {
                 <div style={{ color: colors.faint }}>No website scrape content available.</div>
               )}
             </Section>
-          </div>
-
-          <div style={{ display: "grid", gap: 14 }}>
-
             <Section title="Data Freshness" icon={<TrendingUp size={15} color={colors.primary} />}>
               {[
                 ["Website Scrape", cacheTs(cache, "web_scrape")],
@@ -1516,9 +1424,215 @@ export default function AccountSourcingCompanyDetail() {
                 </div>
               ) : null}
             </Section>
-          </div>
         </div>
       </div>
+
+      {/* ── Add Stakeholder Modal ──────────────────────────────────── */}
+      {showDealModal && (
+        <>
+          <div onClick={() => setShowDealModal(false)} style={{
+            position: "fixed", inset: 0, background: "rgba(15,23,42,0.22)",
+            backdropFilter: "blur(3px)", zIndex: 100,
+          }} />
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+            zIndex: 101, width: 460, maxWidth: "90vw", background: "#fff",
+            borderRadius: 18, boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+            padding: "26px 26px 22px", display: "grid", gap: 14,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: colors.text, margin: 0 }}>Add to Deal</h3>
+              <button onClick={() => setShowDealModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: colors.faint, fontSize: 18 }}>x</button>
+            </div>
+            <input
+              value={dealForm.name}
+              onChange={(e) => setDealForm((current) => ({ ...current, name: e.target.value }))}
+              placeholder="Deal name"
+              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <input
+                value={dealForm.value}
+                onChange={(e) => setDealForm((current) => ({ ...current, value: e.target.value }))}
+                placeholder="Value (optional)"
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+              />
+              <input
+                type="date"
+                value={dealForm.close_date_est}
+                onChange={(e) => setDealForm((current) => ({ ...current, close_date_est: e.target.value }))}
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+              />
+            </div>
+            <select
+              value={dealForm.stage}
+              onChange={(e) => setDealForm((current) => ({ ...current, stage: e.target.value }))}
+              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
+            >
+              {["discovery", "evaluation", "proposal", "negotiation"].map((stage) => (
+                <option key={stage} value={stage}>{stage.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+            {dealError ? <div style={{ color: colors.red, fontSize: 12, fontWeight: 700 }}>{dealError}</div> : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button onClick={() => setShowDealModal(false)} style={{
+                padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                background: "#f1f5f9", color: colors.sub, border: "none", cursor: "pointer",
+              }}>Cancel</button>
+              <button onClick={() => void handleCreateDeal()} disabled={creatingDeal} style={{
+                padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                background: colors.primary, color: "#fff", border: "none", cursor: "pointer",
+                opacity: creatingDeal ? 0.6 : 1,
+              }}>
+                {creatingDeal ? "Creating..." : "Create deal"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      {showAddStakeholder && (
+        <AddStakeholderModal
+          companyId={company.id}
+          onClose={() => setShowAddStakeholder(false)}
+          onCreated={() => { setShowAddStakeholder(false); load(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ── Add Stakeholder Modal ───────────────────────────────────────────────────
+
+function AddStakeholderModal({
+  companyId,
+  onClose,
+  onCreated,
+}: {
+  companyId: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [form, setForm] = useState({
+    first_name: "",
+    last_name: "",
+    title: "",
+    email: "",
+    phone: "",
+    linkedin_url: "",
+    persona_type: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = async () => {
+    if (!form.first_name.trim() || !form.last_name.trim()) {
+      setError("First and last name are required.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await contactsApi.create({
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        title: form.title.trim() || undefined,
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        linkedin_url: form.linkedin_url.trim() || undefined,
+        persona_type: form.persona_type || undefined,
+        company_id: companyId,
+      } as Parameters<typeof contactsApi.create>[0]);
+      onCreated();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to create contact");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fieldStyle: CSSProperties = {
+    width: "100%", padding: "9px 12px", borderRadius: 10, fontSize: 13,
+    border: `1px solid ${colors.border}`, outline: "none", fontFamily: "inherit",
+  };
+
+  return (
+    <>
+      <div onClick={onClose} style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.22)",
+        backdropFilter: "blur(3px)", zIndex: 100,
+      }} />
+      <div style={{
+        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+        zIndex: 101, width: 480, maxWidth: "90vw", background: "#fff",
+        borderRadius: 18, boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+        padding: "28px 28px 22px", display: "flex", flexDirection: "column", gap: 16,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ fontSize: 17, fontWeight: 700, color: colors.text, margin: 0 }}>Add Stakeholder</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: colors.faint, fontSize: 18 }}>x</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: colors.faint, marginBottom: 4, display: "block" }}>First Name *</label>
+            <input style={fieldStyle} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} placeholder="Jane" />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: colors.faint, marginBottom: 4, display: "block" }}>Last Name *</label>
+            <input style={fieldStyle} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} placeholder="Smith" />
+          </div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: colors.faint, marginBottom: 4, display: "block" }}>Job Title</label>
+          <input style={fieldStyle} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="VP of Engineering" />
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: colors.faint, marginBottom: 4, display: "block" }}>Buying Committee Role</label>
+          <select style={{ ...fieldStyle, appearance: "auto" }} value={form.persona_type} onChange={(e) => setForm({ ...form, persona_type: e.target.value })}>
+            <option value="">Select role...</option>
+            <option value="champion">Champion</option>
+            <option value="buyer">Economic Buyer</option>
+            <option value="evaluator">Technical Evaluator</option>
+            <option value="influencer">Influencer</option>
+            <option value="implementation_owner">Implementation Owner</option>
+            <option value="blocker">Blocker</option>
+          </select>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: colors.faint, marginBottom: 4, display: "block" }}>Email</label>
+            <input style={fieldStyle} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="jane@company.com" />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: colors.faint, marginBottom: 4, display: "block" }}>Phone</label>
+            <input style={fieldStyle} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 555 0100" />
+          </div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: colors.faint, marginBottom: 4, display: "block" }}>LinkedIn URL</label>
+          <input style={fieldStyle} value={form.linkedin_url} onChange={(e) => setForm({ ...form, linkedin_url: e.target.value })} placeholder="https://linkedin.com/in/janesmith" />
+        </div>
+
+        {error && <div style={{ color: colors.red, fontSize: 12, fontWeight: 600 }}>{error}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+          <button onClick={onClose} style={{
+            padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+            background: "#f1f5f9", color: colors.sub, border: "none", cursor: "pointer",
+          }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{
+            padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+            background: colors.primary, color: "#fff", border: "none", cursor: "pointer",
+            opacity: saving ? 0.6 : 1,
+          }}>
+            {saving ? "Saving..." : "Add Stakeholder"}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }

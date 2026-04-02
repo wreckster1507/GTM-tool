@@ -8,7 +8,6 @@ import {
   KanbanSquare,
   Radar,
   Search,
-  Sparkles,
   Swords,
   LayoutPanelTop,
   Settings,
@@ -36,11 +35,15 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
     <aside className={`crm-sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="crm-brand">
         <div className="crm-brand-mark">
-          <Sparkles size={16} />
+          <img
+            src="/beacon-logo.jpg"
+            alt="Beacon"
+            style={{ width: "76%", height: "76%", objectFit: "contain", display: "block" }}
+          />
         </div>
         <div className="crm-brand-copy">
           <p className="crm-brand-title">beacon.li</p>
-          <p className="crm-brand-sub">Execution workspace</p>
+          <p className="crm-brand-sub">Execution OS</p>
         </div>
         <button type="button" className="crm-sidebar-collapse-button" onClick={onToggle} aria-label={collapsed ? "Open sidebar" : "Collapse sidebar"}>
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
@@ -79,10 +82,14 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
             <span className="crm-nav-link-label">Team</span>
           </NavLink>
         )}
-        <button type="button" className="crm-sidebar-settings" title={collapsed ? "Settings" : undefined}>
+        <NavLink
+          to="/settings"
+          className={({ isActive }) => `crm-sidebar-settings ${isActive ? "active" : ""}`}
+          title={collapsed ? "Settings" : undefined}
+        >
           <Settings size={16} />
           <span className="crm-nav-link-label">Settings</span>
-        </button>
+        </NavLink>
       </div>
     </aside>
   );

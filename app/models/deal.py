@@ -12,17 +12,41 @@ from sqlmodel import Field, SQLModel
 
 DEAL_STAGES = [
     "open", "demo_scheduled", "demo_done", "qualified_lead",
-    "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation",
+    "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop",
     "closed_won", "closed_lost", "not_a_fit", "on_hold", "nurture", "churned",
 ]
 
 PROSPECT_STAGES = [
-    "todo", "in_progress", "converted", "blocked", "not_a_fit",
+    "cold_account", "prospecting", "in_progress", "converted", "blocked", "not_a_fit",
 ]
 
 ALL_STAGES = frozenset(DEAL_STAGES + PROSPECT_STAGES)
 
 PRIORITIES = frozenset(["urgent", "high", "normal", "low"])
+
+# ── MEDDPICC qualification framework ────────────────────────────────────────
+
+MEDDPICC_FIELDS = [
+    "metrics", "economic_buyer", "decision_criteria", "decision_process",
+    "paper_process", "identify_pain", "champion", "competition",
+]
+
+def compute_meddpicc_score(qualification: dict | None) -> int | None:
+    """Compute MEDDPICC score (0-100) from qualification.meddpicc dict.
+
+    Each of the 8 dimensions is scored 0-3 (not_started, identified,
+    validated, confirmed).  Total 0-24, scaled to 0-100.
+    """
+    if not qualification:
+        return None
+    meddpicc = qualification.get("meddpicc")
+    if not meddpicc or not isinstance(meddpicc, dict):
+        return None
+    total = sum(meddpicc.get(f, 0) for f in MEDDPICC_FIELDS)
+    filled = sum(1 for f in MEDDPICC_FIELDS if meddpicc.get(f, 0) > 0)
+    if filled == 0:
+        return None
+    return round(total / 24 * 100)
 
 
 # ── Deal ─────────────────────────────────────────────────────────────────────
@@ -95,6 +119,8 @@ class DealRead(DealBase):
     company_name: Optional[str] = None
     assigned_rep_name: Optional[str] = None
     contact_count: int = 0
+    # Computed from qualification.meddpicc
+    meddpicc_score: Optional[int] = None
 
 
 class DealUpdate(SQLModel):

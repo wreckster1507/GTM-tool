@@ -19,6 +19,7 @@ from app.core.exceptions import NotFoundError
 from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
 from app.models.user import User
+from app.services.account_sourcing import append_company_activity_log
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
@@ -41,7 +42,7 @@ async def assign_company(
     company_id: UUID,
     body: AssignRequest,
     session: DBSession,
-    _admin: AdminUser,
+    admin: AdminUser,
 ):
     """Assign a company to a sales rep. Admin only. Pass user_id=null to unassign."""
     company = (
@@ -50,6 +51,7 @@ async def assign_company(
     if not company:
         raise NotFoundError("Company not found")
 
+    previous_name = company.assigned_rep_name or company.assigned_rep or company.assigned_rep_email
     if body.user_id:
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
@@ -64,6 +66,19 @@ async def assign_company(
         company.assigned_rep_email = None
         company.assigned_rep_name = None
 
+    append_company_activity_log(
+        company,
+        action="company_assignment_updated",
+        actor_name=admin.name,
+        actor_email=admin.email,
+        message=f"AE updated from {previous_name or 'Unassigned'} to {company.assigned_rep_name or company.assigned_rep_email or 'Unassigned'}",
+        metadata={
+            "role": "ae",
+            "before": previous_name,
+            "after": company.assigned_rep_name or company.assigned_rep_email,
+        },
+    )
+
     company.updated_at = datetime.utcnow()
     session.add(company)
     await session.commit()
@@ -76,7 +91,7 @@ async def assign_contact(
     contact_id: UUID,
     body: AssignRequest,
     session: DBSession,
-    _admin: AdminUser,
+    admin: AdminUser,
 ):
     """Assign a contact to a sales rep. Admin only.
     role="ae" (default) sets AE, role="sdr" sets SDR. Pass user_id=null to unassign.
@@ -88,6 +103,7 @@ async def assign_contact(
         raise NotFoundError("Contact not found")
 
     is_sdr = (body.role or "ae") == "sdr"
+    previous_name = contact.sdr_name if is_sdr else contact.assigned_rep_email
 
     if body.user_id:
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
@@ -109,6 +125,26 @@ async def assign_contact(
 
     contact.updated_at = datetime.utcnow()
     session.add(contact)
+    if contact.company_id:
+        company = (await session.execute(select(Company).where(Company.id == contact.company_id))).scalar_one_or_none()
+        if company:
+            next_name = contact.sdr_name if is_sdr else contact.assigned_rep_email
+            append_company_activity_log(
+                company,
+                action="contact_assignment_updated",
+                actor_name=admin.name,
+                actor_email=admin.email,
+                message=f"{'SDR' if is_sdr else 'AE'} updated to {next_name or 'Unassigned'} for {contact.first_name} {contact.last_name}",
+                metadata={
+                    "role": "sdr" if is_sdr else "ae",
+                    "contact_id": str(contact.id),
+                    "contact_name": f"{contact.first_name} {contact.last_name}".strip(),
+                    "before": previous_name,
+                    "after": next_name,
+                },
+            )
+            company.updated_at = datetime.utcnow()
+            session.add(company)
     await session.commit()
     await session.refresh(contact)
     return contact

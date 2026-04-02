@@ -4,6 +4,12 @@ import { authApi, assignmentsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { User } from "../types";
 
+function roleLabel(role: User["role"]) {
+  if (role === "admin") return "Admin";
+  if (role === "ae") return "AE";
+  return "SDR";
+}
+
 interface Props {
   entityType: "company" | "contact";
   entityId: string;
@@ -200,7 +206,7 @@ export default function AssignDropdown({
               )}
               <div style={{ minWidth: 0 }}>
                 <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
-                <div style={{ fontSize: "11px", color: "#7f8fa5" }}>{u.role === "admin" ? "Admin" : "Sales Rep"}</div>
+                <div style={{ fontSize: "11px", color: "#7f8fa5" }}>{roleLabel(u.role)}</div>
               </div>
             </button>
           ))}

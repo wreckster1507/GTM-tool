@@ -10,6 +10,7 @@ from sqlmodel import Field, SQLModel
 class ActivityBase(SQLModel):
     type: str  # email, call, meeting, note, transcript, visit
     source: Optional[str] = None  # instantly, fireflies, rb2b, manual
+    medium: Optional[str] = None  # email, call, linkedin, whatsapp, in_person, sms, other
     # Plain str here — sa_column only goes on the table class below
     content: Optional[str] = None
     ai_summary: Optional[str] = None
@@ -25,6 +26,7 @@ class Activity(ActivityBase, table=True):
     content: Optional[str] = Field(default=None, sa_column=Column(Text))
     ai_summary: Optional[str] = Field(default=None, sa_column=Column(Text))
     event_metadata: Optional[Any] = Field(default=None, sa_column=Column("metadata", JSONB))
+    medium: Optional[str] = None  # email, call, linkedin, whatsapp, in_person, sms, other
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Call-specific fields (populated by Aircall webhook handler)
@@ -78,6 +80,7 @@ class ActivityRead(ActivityBase):
 class ActivityUpdate(SQLModel):
     type: Optional[str] = None
     source: Optional[str] = None
+    medium: Optional[str] = None
     content: Optional[str] = None
     ai_summary: Optional[str] = None
     deal_id: Optional[UUID] = None

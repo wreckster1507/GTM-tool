@@ -18,6 +18,8 @@ import type {
   AngelMapping,
   ExecutionTrackerItem,
   ExecutionTrackerSummary,
+  Reminder,
+  GmailSyncSettings,
 } from "../types";
 
 /**
@@ -586,6 +588,17 @@ export const accountSourcingApi = {
   batchStatus: (batchId: string) =>
     request<SourcingBatch>(`/api/v1/account-sourcing/batches/${batchId}`),
 
+  confirmBatch: (batchId: string, force = true) =>
+    request<SourcingBatch>(`/api/v1/account-sourcing/batches/${batchId}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    }),
+
+  cancelBatch: (batchId: string) =>
+    request<SourcingBatch>(`/api/v1/account-sourcing/batches/${batchId}/cancel`, {
+      method: "POST",
+    }),
+
   batchCompanies: (batchId: string) =>
     requestList<Company>(`/api/v1/account-sourcing/batches/${batchId}/companies`),
 
@@ -620,6 +633,12 @@ export const accountSourcingApi = {
 
   getCompany: (companyId: string) =>
     request<Company>(`/api/v1/account-sourcing/companies/${companyId}`),
+
+  createManualCompany: (data: { name: string; domain?: string }) =>
+    request<SourcingBatch>("/api/v1/account-sourcing/companies/manual", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   updateCompany: (companyId: string, data: Record<string, unknown>) =>
     request<Company>(`/api/v1/account-sourcing/companies/${companyId}`, {
@@ -663,11 +682,12 @@ export const accountSourcingApi = {
       { method: "POST" }
     ),
 
-  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string }) => {
+  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string; batchId?: string }) => {
     const search = new URLSearchParams();
     if (params?.assignedRep) search.set("assigned_rep", params.assignedRep);
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
     if (params?.disposition) search.set("disposition", params.disposition);
+    if (params?.batchId) search.set("batch_id", params.batchId);
     const qs = search.toString();
     const res = await fetch(`${BASE}/api/v1/account-sourcing/export${qs ? `?${qs}` : ""}`, {
       headers: getAuthHeaders(),
@@ -679,9 +699,10 @@ export const accountSourcingApi = {
     return res.blob();
   },
 
-  exportContactsCsv: async (params?: { assignedRepEmail?: string }) => {
+  exportContactsCsv: async (params?: { assignedRepEmail?: string; batchId?: string }) => {
     const search = new URLSearchParams();
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
+    if (params?.batchId) search.set("batch_id", params.batchId);
     const qs = search.toString();
     const res = await fetch(`${BASE}/api/v1/account-sourcing/export-contacts${qs ? `?${qs}` : ""}`, {
       headers: getAuthHeaders(),
@@ -1020,6 +1041,23 @@ export const settingsApi = {
       method: "PATCH",
       body: JSON.stringify({ step_delays }),
     }),
+  getGmailSync: () =>
+    request<GmailSyncSettings>("/api/v1/settings/email-sync"),
+  updateGmailInbox: (inbox: string) =>
+    request<GmailSyncSettings>("/api/v1/settings/email-sync", {
+      method: "PATCH",
+      body: JSON.stringify({ inbox }),
+    }),
+  getGmailConnectUrl: () =>
+    request<{ url: string }>("/api/v1/settings/email-sync/google/connect-url"),
+  disconnectGmail: () =>
+    request<{ status: string }>("/api/v1/settings/email-sync/google", {
+      method: "DELETE",
+    }),
+  triggerEmailSync: () =>
+    request<{ status: string; task_id?: string; message?: string }>("/api/v1/email-sync/trigger", {
+      method: "POST",
+    }),
 };
 
 export const aircallApi = {
@@ -1043,4 +1081,23 @@ export const aircallApi = {
     }),
   registerWebhook: () =>
     request<{ status: string }>("/api/v1/aircall/register-webhook", { method: "POST" }),
+};
+
+// ── Reminders ───────────────────────────────────────────────────────────────
+
+export const remindersApi = {
+  list: (params?: { contact_id?: string; company_id?: string; status?: string; assigned_to_id?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.contact_id) search.set("contact_id", params.contact_id);
+    if (params?.company_id) search.set("company_id", params.company_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.assigned_to_id) search.set("assigned_to_id", params.assigned_to_id);
+    return request<Reminder[]>(`/api/v1/reminders/?${search}`);
+  },
+  create: (data: { contact_id: string; company_id?: string; note: string; due_at: string; assigned_to_id?: string }) =>
+    request<Reminder>("/api/v1/reminders/", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<Reminder>) =>
+    request<Reminder>(`/api/v1/reminders/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<void>(`/api/v1/reminders/${id}`, { method: "DELETE" }),
 };

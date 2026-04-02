@@ -13,6 +13,7 @@ from app.models.contact import Contact
 from app.models.company import Company
 from app.models.deal import (
     ALL_STAGES, Deal, DealContact, DealContactRead, DealRead,
+    compute_meddpicc_score,
 )
 from app.models.user import User
 from app.repositories.base import BaseRepository
@@ -58,6 +59,7 @@ class DealRepository(BaseRepository[Deal]):
             read.company_name = company_name
             read.assigned_rep_name = rep_name
             read.contact_count = cc or 0
+            read.meddpicc_score = compute_meddpicc_score(deal.qualification)
             board.setdefault(deal.stage, []).append(read)
 
         return board
@@ -97,6 +99,7 @@ class DealRepository(BaseRepository[Deal]):
         read.company_name = company_name
         read.assigned_rep_name = rep_name
         read.contact_count = cc or 0
+        read.meddpicc_score = compute_meddpicc_score(deal.qualification)
         return read
 
     # ── Contact management ───────────────────────────────────────────────────
