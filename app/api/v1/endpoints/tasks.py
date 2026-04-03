@@ -3,10 +3,13 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from sqlalchemy import case, select
+from sqlalchemy import and_, case, or_, select
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
+from app.models.company import Company
+from app.models.contact import Contact
+from app.models.deal import Deal
 from app.models.task import (
     TASK_ASSIGNED_ROLES,
     TASK_ENTITY_TYPES,
@@ -19,6 +22,7 @@ from app.models.task import (
     TaskCreate,
     TaskRead,
     TaskUpdate,
+    TaskWorkspaceRead,
 )
 from app.models.user import User
 from app.services.tasks import apply_task_action, refresh_system_tasks_for_entity
@@ -86,6 +90,71 @@ async def _build_task_reads(session: DBSession, tasks: list[Task]) -> list[TaskR
     return reads
 
 
+async def _build_workspace_task_reads(session: DBSession, tasks: list[Task]) -> list[TaskWorkspaceRead]:
+    base_reads = await _build_task_reads(session, tasks)
+    if not base_reads:
+        return []
+
+    ids_by_type: dict[str, list[UUID]] = defaultdict(list)
+    for task in base_reads:
+        ids_by_type[task.entity_type].append(task.entity_id)
+
+    company_map: dict[UUID, Company] = {}
+    contact_map: dict[UUID, Contact] = {}
+    deal_map: dict[UUID, Deal] = {}
+
+    if ids_by_type["company"]:
+        rows = (
+            await session.execute(select(Company).where(Company.id.in_(ids_by_type["company"])))
+        ).scalars().all()
+        company_map = {row.id: row for row in rows if row.id}
+    if ids_by_type["contact"]:
+        rows = (
+            await session.execute(select(Contact).where(Contact.id.in_(ids_by_type["contact"])))
+        ).scalars().all()
+        contact_map = {row.id: row for row in rows if row.id}
+    if ids_by_type["deal"]:
+        rows = (
+            await session.execute(select(Deal).where(Deal.id.in_(ids_by_type["deal"])))
+        ).scalars().all()
+        deal_map = {row.id: row for row in rows if row.id}
+
+    reads: list[TaskWorkspaceRead] = []
+    for task in base_reads:
+        entity_name = "Unknown record"
+        entity_subtitle = None
+        entity_link = "/"
+
+        if task.entity_type == "company":
+            company = company_map.get(task.entity_id)
+            if company:
+                entity_name = company.name
+                entity_subtitle = company.domain
+            entity_link = f"/account-sourcing/{task.entity_id}"
+        elif task.entity_type == "contact":
+            contact = contact_map.get(task.entity_id)
+            if contact:
+                entity_name = f"{contact.first_name} {contact.last_name}".strip()
+                entity_subtitle = contact.title or contact.email or contact.company_name
+            entity_link = f"/account-sourcing/contacts/{task.entity_id}"
+        elif task.entity_type == "deal":
+            deal = deal_map.get(task.entity_id)
+            if deal:
+                entity_name = deal.name
+                entity_subtitle = deal.stage.replace("_", " ")
+            entity_link = f"/deals/{task.entity_id}"
+
+        reads.append(
+            TaskWorkspaceRead(
+                **task.model_dump(),
+                entity_name=entity_name,
+                entity_subtitle=entity_subtitle,
+                entity_link=entity_link,
+            )
+        )
+    return reads
+
+
 @router.get("/", response_model=list[TaskRead])
 async def list_tasks(
     session: DBSession,
@@ -121,6 +190,51 @@ async def list_tasks(
 
     tasks = (await session.execute(stmt)).scalars().all()
     return await _build_task_reads(session, tasks)
+
+
+@router.get("/workspace", response_model=list[TaskWorkspaceRead])
+async def list_workspace_tasks(
+    session: DBSession,
+    current_user: CurrentUser,
+    include_closed: bool = Query(default=False),
+    task_type: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+):
+    if task_type and task_type not in {"manual", "system"}:
+        raise ValidationError("task_type must be one of: ['manual', 'system']")
+    if entity_type:
+        _validate_entity_type(entity_type)
+
+    ownership_filter = or_(
+        Task.assigned_to_id == current_user.id,
+        and_(Task.assigned_to_id.is_(None), Task.assigned_role == current_user.role),
+        and_(Task.created_by_id == current_user.id, Task.task_type == "manual"),
+    )
+    status_rank = case(
+        (Task.status == "open", 0),
+        (Task.status == "completed", 1),
+        else_=2,
+    )
+    priority_rank = case(
+        (Task.priority == "high", 0),
+        (Task.priority == "medium", 1),
+        else_=2,
+    )
+
+    stmt = (
+        select(Task)
+        .where(ownership_filter)
+        .order_by(status_rank, priority_rank, Task.updated_at.desc())
+    )
+    if not include_closed:
+        stmt = stmt.where(Task.status == "open")
+    if task_type:
+        stmt = stmt.where(Task.task_type == task_type)
+    if entity_type:
+        stmt = stmt.where(Task.entity_type == entity_type)
+
+    tasks = (await session.execute(stmt)).scalars().all()
+    return await _build_workspace_task_reads(session, tasks)
 
 
 @router.post("/", response_model=TaskRead, status_code=201)

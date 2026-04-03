@@ -329,6 +329,7 @@ export default function AccountSourcingContactDetail() {
   const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
   const [reEnriching, setReEnriching] = useState(false);
+  const [companyEnriching, setCompanyEnriching] = useState(false);
   const [convertingDeal, setConvertingDeal] = useState(false);
   const [commsLog, setCommsLog] = useState<Activity[]>([]);
   const [showTasksModal, setShowTasksModal] = useState(false);
@@ -397,6 +398,12 @@ export default function AccountSourcingContactDetail() {
     : {};
   const aiSummary = aiEntry && typeof aiEntry === "object" ? (aiEntry as Record<string, unknown>) : {};
   const trackingTone = getProspectTrackingTone(contact);
+  const suggestedCompanyName = asText(displayRawRow["company name"]) || asText(displayRawRow.company) || contact?.company_name;
+  const suggestedCompanyDomain = asText(displayRawRow.domain) || asText(displayRawRow.website) || asText(displayRawRow.url);
+  const companyNeedsEnrichment = Boolean(
+    company && (!company.enriched_at || (company.domain || "").endsWith(".unknown"))
+  );
+  const canCreateCompanyFromProspect = !company && Boolean(suggestedCompanyName);
 
   if (loading) {
     return (
@@ -458,6 +465,30 @@ export default function AccountSourcingContactDetail() {
       navigate(`/deals/${deal.id}`);
     } finally {
       setConvertingDeal(false);
+    }
+  };
+
+  const handleEnrichCompany = async () => {
+    if (!contact || (!company && !suggestedCompanyName)) return;
+    setCompanyEnriching(true);
+    try {
+      if (company) {
+        await accountSourcingApi.reEnrichCompany(company.id);
+        window.alert(`${company.name} was queued for enrichment.`);
+      } else {
+        const batch = await accountSourcingApi.createManualCompany({
+          name: suggestedCompanyName!,
+          domain: suggestedCompanyDomain,
+        });
+        const createdCompanyId = typeof batch.meta?.company_id === "string" ? batch.meta.company_id : undefined;
+        if (createdCompanyId) {
+          await contactsApi.update(contact.id, { company_id: createdCompanyId });
+        }
+        window.alert(`${suggestedCompanyName} was added to Account Sourcing and queued for enrichment.`);
+      }
+      await load();
+    } finally {
+      setCompanyEnriching(false);
     }
   };
 
@@ -530,6 +561,55 @@ export default function AccountSourcingContactDetail() {
                       {getProspectTrackingSummary(contact)}
                     </div>
                   </div>
+                  {(companyNeedsEnrichment || canCreateCompanyFromProspect) ? (
+                    <div
+                      style={{
+                        marginTop: 14,
+                        maxWidth: 840,
+                        padding: "14px 16px",
+                        borderRadius: 16,
+                        background: "#fff8e8",
+                        border: "1px solid #f5ddaa",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ color: "#8a5b00", fontWeight: 800, fontSize: 12, letterSpacing: 0.35 }}>
+                          COMPANY ENRICHMENT
+                        </div>
+                        <div style={{ marginTop: 6, color: "#6c5a2f", fontSize: 13.5, lineHeight: 1.6 }}>
+                          {company
+                            ? `${company.name} is attached to this prospect, but its account research is still incomplete. Enrich it now to unlock full account context here.`
+                            : `${suggestedCompanyName} has not been sourced into Beacon yet. Add and enrich it now so this prospect can inherit the account context.`}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleEnrichCompany()}
+                        disabled={companyEnriching}
+                        style={{
+                          border: "1px solid #e5c980",
+                          background: "#fff",
+                          color: "#8a5b00",
+                          borderRadius: 12,
+                          padding: "10px 14px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          fontWeight: 700,
+                          cursor: companyEnriching ? "default" : "pointer",
+                          opacity: companyEnriching ? 0.75 : 1,
+                        }}
+                      >
+                        {companyEnriching ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
+                        {company ? "Enrich company" : "Add & enrich company"}
+                      </button>
+                    </div>
+                  ) : null}
                   <div style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
                     {company ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
                     {contact.email ? <ContactActionButton icon={<Mail size={14} />} href={`mailto:${contact.email}`} label={`Email ${contact.email}`} tone="primary" /> : null}

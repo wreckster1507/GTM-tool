@@ -1036,7 +1036,7 @@ async def get_sourced_company_summary(
 @router.post("/companies/manual", response_model=SourcingBatchRead, status_code=202)
 async def create_manual_company(
     payload: ManualCompanyCreate,
-    admin: AdminUser,
+    current_user: CurrentUser,
     session: DBSession = None,
 ):
     name = (payload.name or "").strip()
@@ -1054,9 +1054,9 @@ async def create_manual_company(
         filename=filename,
         total_rows=1,
         status="pending",
-        created_by_id=admin.id,
-        created_by_name=admin.name,
-        created_by_email=admin.email,
+        created_by_id=current_user.id,
+        created_by_name=current_user.name,
+        created_by_email=current_user.email,
         meta={
             "upload_mode": "manual_entry",
             "verdict_summary": {
@@ -1095,9 +1095,9 @@ async def create_manual_company(
         append_company_activity_log(
             company,
             action="manual_company_requeued",
-            actor_name=admin.name,
-            actor_email=admin.email,
-            message=f"Added back into sourcing by {admin.name}",
+            actor_name=current_user.name,
+            actor_email=current_user.email,
+            message=f"Added back into sourcing by {current_user.name}",
             metadata={"batch_id": str(batch.id)},
         )
     else:
@@ -1105,9 +1105,9 @@ async def create_manual_company(
         append_company_activity_log(
             company,
             action="manual_company_created",
-            actor_name=admin.name,
-            actor_email=admin.email,
-            message=f"Manually created by {admin.name}",
+            actor_name=current_user.name,
+            actor_email=current_user.email,
+            message=f"Manually created by {current_user.name}",
             metadata={"batch_id": str(batch.id)},
         )
     company = refresh_company_prospecting_fields(company)
@@ -1117,6 +1117,10 @@ async def create_manual_company(
     await session.refresh(company)
 
     batch.created_companies = 1
+    meta = dict(batch.meta or {})
+    meta["company_id"] = str(company.id)
+    meta["company_name"] = company.name
+    batch.meta = meta
     batch.updated_at = datetime.utcnow()
     session.add(batch)
     await session.commit()

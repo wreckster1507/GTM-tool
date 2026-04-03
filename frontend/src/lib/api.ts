@@ -6,6 +6,7 @@ import type {
   Activity,
   TaskComment,
   TaskItem,
+  TaskWorkspaceItem,
   AssignmentUpdate,
   OutreachSequence,
   OutreachStep,
@@ -353,6 +354,17 @@ export const activitiesApi = {
 export const tasksApi = {
   list: (entityType: "company" | "contact" | "deal", entityId: string, includeClosed = true) =>
     request<TaskItem[]>(`/api/v1/tasks/?entity_type=${encodeURIComponent(entityType)}&entity_id=${encodeURIComponent(entityId)}&include_closed=${includeClosed ? "true" : "false"}`),
+  workspace: (params?: {
+    includeClosed?: boolean;
+    taskType?: "manual" | "system";
+    entityType?: "company" | "contact" | "deal";
+  }) => {
+    const search = new URLSearchParams();
+    search.set("include_closed", params?.includeClosed ? "true" : "false");
+    if (params?.taskType) search.set("task_type", params.taskType);
+    if (params?.entityType) search.set("entity_type", params.entityType);
+    return request<TaskWorkspaceItem[]>(`/api/v1/tasks/workspace?${search}`);
+  },
   create: (data: {
     entity_type: "company" | "contact" | "deal";
     entity_id: string;

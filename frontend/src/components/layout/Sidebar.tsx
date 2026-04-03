@@ -9,6 +9,7 @@ import {
   Radar,
   Search,
   Swords,
+  CheckSquare,
   LayoutPanelTop,
   Settings,
   Users,
@@ -25,6 +26,7 @@ const NAV = [
   { to: "/custom-demo-assistance", label: "Custom-Demo Assistance", icon: BriefcaseBusiness },
   { to: "/live-meeting-assistance", label: "Live-Meeting Assistance", icon: Swords },
   { to: "/crm-insights-alerts", label: "CRM- Insights and Alerts", icon: BarChart3 },
+  { to: "/tasks", label: "Tasks", icon: CheckSquare },
   { to: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
   { to: "/sales-workspace", label: "Sales Workspace", icon: LayoutPanelTop },
 ];

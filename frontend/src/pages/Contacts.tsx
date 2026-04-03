@@ -128,6 +128,7 @@ export default function Contacts() {
     message: string;
   } | null>(null);
   const [creatingMissingCompanies, setCreatingMissingCompanies] = useState(false);
+  const [enrichingMissingKey, setEnrichingMissingKey] = useState<string | null>(null);
 
   // ── Angel mapping state ──────────────────────────────────────────────
   const [mappings, setMappings] = useState<AngelMapping[]>([]);
@@ -186,8 +187,49 @@ export default function Contacts() {
     }
   };
 
+  const removeMissingCompanyFromSummary = (name: string, domain?: string) => {
+    setImportSummary((current) => {
+      if (!current) return current;
+      const nextMissing = current.missing_companies.filter(
+        (company) => !(company.name === name && (company.domain || "") === (domain || ""))
+      );
+      return {
+        ...current,
+        missing_company_count: nextMissing.length,
+        missing_companies: nextMissing,
+      };
+    });
+  };
+
+  const handleEnrichMissingCompany = async (company: { name: string; domain?: string }) => {
+    const shouldEnrich = window.confirm(
+      `Beacon could not map prospects for ${company.name}. Do you want to add this account to Account Sourcing and start enrichment now?`
+    );
+    if (!shouldEnrich) return;
+
+    const key = `${company.domain || ""}-${company.name}`;
+    setEnrichingMissingKey(key);
+    try {
+      await accountSourcingApi.createManualCompany({
+        name: company.name,
+        domain: company.domain,
+      });
+      removeMissingCompanyFromSummary(company.name, company.domain);
+      window.alert(`${company.name} was added to Account Sourcing and queued for enrichment.`);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to queue company enrichment");
+    } finally {
+      setEnrichingMissingKey(null);
+    }
+  };
+
   const handleCreateMissingCompanies = async () => {
     if (!importSummary?.missing_companies.length) return;
+    const shouldEnrich = window.confirm(
+      `Beacon found ${importSummary.missing_company_count} missing compan${importSummary.missing_company_count === 1 ? "y" : "ies"}. Do you want to add ${importSummary.missing_company_count === 1 ? "it" : "them"} to Account Sourcing and start enrichment now?`
+    );
+    if (!shouldEnrich) return;
+
     setCreatingMissingCompanies(true);
     try {
       for (const company of importSummary.missing_companies) {
@@ -201,7 +243,7 @@ export default function Contacts() {
           ? { ...current, missing_company_count: 0, missing_companies: [] }
           : current
       );
-      window.alert("Missing companies were added to Account Sourcing and queued for enrichment.");
+      window.alert("The missing companies were added to Account Sourcing and queued for enrichment.");
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to queue missing companies");
     } finally {
@@ -600,7 +642,7 @@ export default function Contacts() {
                   Prospect sourcing update
                 </div>
                 <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6, maxWidth: 860 }}>
-                  Beacon is temporarily not pulling contacts during company research. Upload your prospect CSV here to map stakeholders onto sourced companies. If a company is missing, Beacon will flag it so you can enrich that account next.
+                  Beacon is temporarily not pulling contacts during company research. Upload your prospect CSV here to map stakeholders onto sourced companies. If a company is missing, Beacon will ask whether you want to add and enrich that account now.
                 </div>
               </div>
             </div>
@@ -1375,40 +1417,73 @@ export default function Contacts() {
                   Missing companies
                 </div>
                 <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6 }}>
-                  {importSummary.missing_company_count} compan{importSummary.missing_company_count === 1 ? "y is" : "ies are"} not in Beacon yet, so those prospects could not be mapped.
+                  {importSummary.missing_company_count} compan{importSummary.missing_company_count === 1 ? "y is" : "ies are"} not in Beacon yet, so those prospects could not be mapped until you decide whether to enrich the missing account.
                 </div>
                 <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
                   {importSummary.missing_companies.map((company) => (
-                    <div key={`${company.domain || ""}-${company.name}`} style={{ border: "1px solid #ead6ab", background: "#fffdf6", borderRadius: 12, padding: "10px 12px" }}>
-                      <div style={{ color: "#1d2b3c", fontWeight: 700, fontSize: 13 }}>{company.name}</div>
-                      <div style={{ color: "#7d6d4f", fontSize: 12, marginTop: 2 }}>
-                        {company.domain || "No domain provided"} · {company.contacts_count} prospect{company.contacts_count === 1 ? "" : "s"}
+                    <div
+                      key={`${company.domain || ""}-${company.name}`}
+                      style={{
+                        border: "1px solid #ead6ab",
+                        background: "#fffdf6",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div>
+                        <div style={{ color: "#1d2b3c", fontWeight: 700, fontSize: 13 }}>{company.name}</div>
+                        <div style={{ color: "#7d6d4f", fontSize: 12, marginTop: 2 }}>
+                          {company.domain || "No domain provided"} · {company.contacts_count} prospect{company.contacts_count === 1 ? "" : "s"}
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleEnrichMissingCompany(company)}
+                        disabled={enrichingMissingKey === `${company.domain || ""}-${company.name}` || creatingMissingCompanies}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          borderRadius: 10,
+                          border: "1px solid #b8d0f0",
+                          background: "#eef5ff",
+                          color: "#175089",
+                          padding: "8px 12px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          cursor: enrichingMissingKey === `${company.domain || ""}-${company.name}` || creatingMissingCompanies ? "default" : "pointer",
+                          opacity: enrichingMissingKey === `${company.domain || ""}-${company.name}` || creatingMissingCompanies ? 0.7 : 1,
+                        }}
+                      >
+                        {enrichingMissingKey === `${company.domain || ""}-${company.name}` ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
+                        Enrich account
+                      </button>
                     </div>
                   ))}
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
                   <div style={{ color: "#7d6d4f", fontSize: 12.5 }}>
-                    {isAdmin
-                      ? "You can add these accounts to Account Sourcing now and enrich them next."
-                      : "Ask an admin to add these accounts to Account Sourcing, then re-upload this file or add the prospects again."}
+                    Choose enrich when you want Beacon to add the missing company and start research. If you skip it for now, Beacon will leave those prospects unmapped until the account is enriched later.
                   </div>
-                  {isAdmin ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleCreateMissingCompanies()}
-                      disabled={creatingMissingCompanies}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 6,
-                        borderRadius: 10, border: "1px solid #b8d0f0", background: "#eef5ff", color: "#175089",
-                        padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: creatingMissingCompanies ? "default" : "pointer",
-                        opacity: creatingMissingCompanies ? 0.7 : 1,
-                      }}
-                    >
-                      {creatingMissingCompanies ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
-                      Create & enrich missing companies
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateMissingCompanies()}
+                    disabled={creatingMissingCompanies || importSummary.missing_companies.length === 0}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      borderRadius: 10, border: "1px solid #b8d0f0", background: "#eef5ff", color: "#175089",
+                      padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: creatingMissingCompanies || importSummary.missing_companies.length === 0 ? "default" : "pointer",
+                      opacity: creatingMissingCompanies || importSummary.missing_companies.length === 0 ? 0.7 : 1,
+                    }}
+                  >
+                    {creatingMissingCompanies ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
+                    Enrich all missing companies
+                  </button>
                 </div>
               </div>
             )}

@@ -104,3 +104,9 @@ class TaskRead(TaskBase):
     created_at: datetime
     updated_at: datetime
     comments: list[TaskCommentRead] = []
+
+
+class TaskWorkspaceRead(TaskRead):
+    entity_name: str
+    entity_subtitle: Optional[str] = None
+    entity_link: str

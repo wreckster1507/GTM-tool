@@ -25,6 +25,7 @@ import KnowledgeBase from "./pages/KnowledgeBase";
 import TeamManagement from "./pages/TeamManagement";
 import ExecutionTracker from "./pages/ExecutionTracker";
 import SettingsPage from "./pages/Settings";
+import TasksPage from "./pages/Tasks";
 
 function RouteScopedAircallPhone() {
   const location = useLocation();
@@ -84,6 +85,7 @@ export default function App() {
             <Route path="knowledge-base" element={<KnowledgeBase />} />
             <Route path="angel-mapping" element={<Contacts />} />
             <Route path="execution-tracker" element={<ExecutionTracker />} />
+            <Route path="tasks" element={<TasksPage />} />
             <Route path="team" element={<TeamManagement />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

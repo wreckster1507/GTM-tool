@@ -277,6 +277,12 @@ export interface TaskItem {
   comments: TaskComment[];
 }
 
+export interface TaskWorkspaceItem extends TaskItem {
+  entity_name: string;
+  entity_subtitle?: string;
+  entity_link: string;
+}
+
 export interface ProspectImportMissingCompany {
   name: string;
   domain?: string;

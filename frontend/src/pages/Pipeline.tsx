@@ -60,7 +60,7 @@ const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
   mofu: ["in_progress"],
   bofu: ["meeting_booked"],
 };
-const GEO_OPTIONS = ["US", "Americas", "India", "APAC", "Rest of World"] as const;
+const GEO_OPTIONS = ["Americas", "India", "APAC", "Rest of World"] as const;
 
 function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, defaults: FunnelConfig): FunnelConfig {
   return {
@@ -77,10 +77,10 @@ function normalizePipelineSummarySettings(value?: Partial<PipelineSummarySetting
   };
 }
 
-function normalizeGeo(raw?: string | null): "US" | "Americas" | "India" | "APAC" | "Rest of World" | "" {
+function normalizeGeo(raw?: string | null): "Americas" | "India" | "APAC" | "Rest of World" | "" {
   const value = (raw ?? "").trim().toLowerCase();
   if (!value) return "";
-  if (["us", "usa", "united states", "united states of america"].includes(value)) return "US";
+  if (["us", "usa", "united states", "united states of america"].includes(value)) return "Americas";
   if (["na", "north america", "americas", "latam", "latin america", "canada", "mexico"].includes(value)) return "Americas";
   if (["india", "in"].includes(value)) return "India";
   if (["apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan"].includes(value)) return "APAC";
