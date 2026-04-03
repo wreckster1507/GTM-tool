@@ -65,7 +65,7 @@ export default function AssignDropdown({
     setLoading(true);
     try {
       if (entityType === "company") {
-        await assignmentsApi.assignCompany(entityId, userId);
+        await assignmentsApi.assignCompany(entityId, userId, role);
       } else {
         await assignmentsApi.assignContact(entityId, userId, role);
       }

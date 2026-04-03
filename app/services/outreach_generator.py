@@ -18,7 +18,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select, delete
+from sqlmodel import select
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,57 @@ _LINKEDIN_SYSTEM = (
     "Be authentic, specific to their role, and give a clear reason to connect. "
     "Do NOT use generic openers. Do NOT pitch the product in the connection note."
 )
+
+_DEFAULT_OUTREACH_CONTENT = {
+    "general_prompt": (
+        "Write concise enterprise outbound emails for Beacon.li. Personalize to the contact and company, "
+        "avoid hype, avoid fluff, and keep the CTA low-friction."
+    ),
+    "linkedin_prompt": (
+        "Keep LinkedIn notes conversational and specific to the person's role or recent company context."
+    ),
+    "step_templates": [
+        {
+            "step_number": 1,
+            "label": "Initial email",
+            "goal": "Start a personalized conversation with a specific reason for reaching out.",
+            "subject_hint": "Quick question about {{company_name}}",
+            "body_template": (
+                "Hi {{first_name}},\n\n"
+                "Noticed {{company_name}} is pushing on {{reason_to_reach_out}}. Beacon helps teams reduce "
+                "implementation drag without replacing the systems they already run.\n\n"
+                "Worth a quick compare?"
+            ),
+            "prompt_hint": "Open with a strong personalization point and end with a simple CTA.",
+        },
+        {
+            "step_number": 2,
+            "label": "Follow-up",
+            "goal": "Add one fresh signal or proof point without repeating the first note.",
+            "subject_hint": "Re: {{company_name}} implementation motion",
+            "body_template": (
+                "Hi {{first_name}},\n\n"
+                "Following up with one more angle: teams like yours use Beacon to remove manual coordination "
+                "from implementation work and get faster rollout consistency.\n\n"
+                "Happy to share a quick example if useful."
+            ),
+            "prompt_hint": "Reference the first email lightly and contribute one new idea, signal, or stat.",
+        },
+        {
+            "step_number": 3,
+            "label": "Final touch",
+            "goal": "Close the loop politely while keeping the door open.",
+            "subject_hint": "Re: {{company_name}}",
+            "body_template": (
+                "Hi {{first_name}},\n\n"
+                "Last nudge from me. If implementation orchestration is on your roadmap this quarter, "
+                "I can share what Beacon is doing for teams with similar rollout complexity.\n\n"
+                "If not relevant, no worries."
+            ),
+            "prompt_hint": "Be brief, respectful, and easy to ignore without sounding passive-aggressive.",
+        },
+    ],
+}
 
 
 async def generate_sequence(
@@ -110,28 +161,47 @@ async def generate_sequence(
             persona=persona,
         )
 
-    # ── Email 1 — initial outreach ────────────────────────────────────────────
-    email1_prompt = _build_initial_prompt(context)
-    email1_result = await ai.complete(system_prompt, email1_prompt, max_tokens=250)
+    ws = await session.get(WorkspaceSettings, 1)
+    step_delays = (ws.outreach_step_delays if ws else None) or [0, 3, 7]
+    content_settings = _normalize_outreach_content_settings(
+        ws.outreach_content_settings if ws else None,
+        step_count=len(step_delays),
+    )
+    system_prompt = _build_system_prompt(persona, content_settings["general_prompt"])
 
-    seq.email_1 = email1_result
-    seq.subject_1 = _extract_subject(email1_result) or f"Quick question for {context['company_name']}"
+    generated_bodies: list[str] = []
+    generated_subjects: list[str] = []
 
-    # ── Email 2 — 3-day follow-up ────────────────────────────────────────────
-    email2_prompt = _build_followup_prompt(context, touch=1, prior_email=email1_result)
-    email2_result = await ai.complete(system_prompt, email2_prompt, max_tokens=200)
-    seq.email_2 = email2_result
-    seq.subject_2 = f"Re: {seq.subject_1}"
+    for index, _delay in enumerate(step_delays, start=1):
+        step_template = _template_for_step(content_settings["step_templates"], index)
+        prompt = _build_step_prompt(
+            ctx=context,
+            step_number=index,
+            step_template=step_template,
+            prior_email=generated_bodies[-1] if generated_bodies else None,
+            prior_subject=generated_subjects[0] if generated_subjects else None,
+        )
+        result = await ai.complete(
+            system_prompt,
+            prompt,
+            max_tokens=250 if index == 1 else 190,
+        )
+        body = result or ""
+        subject = _extract_subject(result) or _fallback_subject(index, context, step_template, generated_subjects)
+        generated_bodies.append(body)
+        generated_subjects.append(subject)
 
-    # ── Email 3 — 7-day final follow-up ──────────────────────────────────────
-    email3_prompt = _build_followup_prompt(context, touch=2, prior_email=email1_result)
-    email3_result = await ai.complete(system_prompt, email3_prompt, max_tokens=150)
-    seq.email_3 = email3_result
-    seq.subject_3 = f"Re: {seq.subject_1}"
+    seq.email_1 = generated_bodies[0] if len(generated_bodies) > 0 else None
+    seq.email_2 = generated_bodies[1] if len(generated_bodies) > 1 else None
+    seq.email_3 = generated_bodies[2] if len(generated_bodies) > 2 else None
+    seq.subject_1 = generated_subjects[0] if len(generated_subjects) > 0 else f"Quick question for {context['company_name']}"
+    seq.subject_2 = generated_subjects[1] if len(generated_subjects) > 1 else f"Re: {seq.subject_1}"
+    seq.subject_3 = generated_subjects[2] if len(generated_subjects) > 2 else f"Re: {seq.subject_1}"
 
     # ── LinkedIn message ──────────────────────────────────────────────────────
     li_prompt = _build_linkedin_prompt(context)
-    li_result = await ai.complete(_LINKEDIN_SYSTEM, li_prompt, max_tokens=80)
+    li_system = f"{_LINKEDIN_SYSTEM} {content_settings['linkedin_prompt']}".strip()
+    li_result = await ai.complete(li_system, li_prompt, max_tokens=80)
     seq.linkedin_message = li_result
 
     seq.generation_context = context
@@ -141,10 +211,6 @@ async def generate_sequence(
     session.add(seq)
     await session.flush()  # Flush to get seq.id before creating steps
 
-    # ── Load step delays from workspace settings ──────────────────────────────
-    ws = await session.get(WorkspaceSettings, 1)
-    step_delays = (ws.outreach_step_delays if ws else None) or [0, 3, 7]
-
     # ── Create OutreachStep records (flexible, non-hardcoded) ─────────────────
     # Delete any existing steps for this sequence before regenerating
     existing_steps = await session.execute(
@@ -153,12 +219,9 @@ async def generate_sequence(
     for old_step in existing_steps.scalars().all():
         await session.delete(old_step)
 
-    email_bodies = [email1_result, email2_result, email3_result]
-    subjects = [seq.subject_1, seq.subject_2, seq.subject_3]
-
     for i, delay in enumerate(step_delays):
-        body = email_bodies[i] if i < len(email_bodies) else email_bodies[-1]
-        subject = subjects[i] if i < len(subjects) else subjects[-1]
+        body = generated_bodies[i] if i < len(generated_bodies) else (generated_bodies[-1] if generated_bodies else "")
+        subject = generated_subjects[i] if i < len(generated_subjects) else (generated_subjects[-1] if generated_subjects else seq.subject_1)
         step = OutreachStep(
             sequence_id=seq.id,
             step_number=i + 1,
@@ -208,7 +271,56 @@ def _build_context(contact, company) -> dict:
     }
 
 
-def _build_initial_prompt(ctx: dict) -> str:
+def _build_system_prompt(persona: str, general_prompt: str) -> str:
+    base = _PERSONA_SYSTEM.get(persona, _PERSONA_SYSTEM["unknown"])
+    return f"{base} {general_prompt}".strip()
+
+
+def _normalize_outreach_content_settings(value: Optional[dict], step_count: int) -> dict:
+    raw = value if isinstance(value, dict) else {}
+    raw_steps = raw.get("step_templates")
+    steps = raw_steps if isinstance(raw_steps, list) and raw_steps else _DEFAULT_OUTREACH_CONTENT["step_templates"]
+    normalized_steps = []
+    for idx, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        normalized_steps.append(
+            {
+                "step_number": int(step.get("step_number") or idx),
+                "label": str(step.get("label") or f"Step {idx}"),
+                "goal": str(step.get("goal") or ""),
+                "subject_hint": str(step.get("subject_hint") or "") or None,
+                "body_template": str(step.get("body_template") or "") or None,
+                "prompt_hint": str(step.get("prompt_hint") or "") or None,
+            }
+        )
+    if not normalized_steps:
+        normalized_steps = list(_DEFAULT_OUTREACH_CONTENT["step_templates"])
+    normalized_steps.sort(key=lambda item: item["step_number"])
+    while len(normalized_steps) < step_count:
+        last = normalized_steps[-1]
+        normalized_steps.append(
+            {
+                **last,
+                "step_number": len(normalized_steps) + 1,
+                "label": f"Step {len(normalized_steps) + 1}",
+            }
+        )
+    return {
+        "general_prompt": str(raw.get("general_prompt") or _DEFAULT_OUTREACH_CONTENT["general_prompt"]),
+        "linkedin_prompt": str(raw.get("linkedin_prompt") or _DEFAULT_OUTREACH_CONTENT["linkedin_prompt"]),
+        "step_templates": normalized_steps,
+    }
+
+
+def _template_for_step(step_templates: list[dict], step_number: int) -> dict:
+    for template in step_templates:
+        if int(template.get("step_number") or 0) == step_number:
+            return template
+    return step_templates[min(step_number - 1, len(step_templates) - 1)]
+
+
+def _build_initial_prompt(ctx: dict, step_template: dict | None = None) -> str:
     funding_note = ""
     if ctx["funding_headlines"]:
         funding_note = f"\nRecent news: {ctx['funding_headlines'][0]}"
@@ -222,6 +334,7 @@ def _build_initial_prompt(ctx: dict) -> str:
         stack_note = f"\nTech stack: {', '.join(ctx['tech_stack'])}"
 
     kb_note = ctx.get("kb_context", "")
+    template_note = _build_template_note(step_template)
 
     return (
         f"Write a cold outreach email to {ctx['contact_name']}, {ctx['title']} at {ctx['company_name']}.\n"
@@ -230,17 +343,22 @@ def _build_initial_prompt(ctx: dict) -> str:
         "Include: a subject line on the first line (format 'Subject: ...'), "
         "then the email body. Reference something specific about their company or role. "
         "End with a clear, low-friction CTA (15-min chat or a simple yes/no question)."
+        f"{template_note}"
         f"{kb_note}"
     )
 
 
-def _build_followup_prompt(ctx: dict, touch: int, prior_email: str) -> str:
+def _build_followup_prompt(ctx: dict, touch: int, prior_email: str, prior_subject: Optional[str], step_template: dict | None = None) -> str:
     nudge = _FOLLOWUP_NUDGES.get(touch, "")
+    template_note = _build_template_note(step_template)
     return (
         f"Contact: {ctx['contact_name']}, {ctx['title']} at {ctx['company_name']}.\n"
+        f"Primary thread subject: {prior_subject or f'Re: {ctx['company_name']}'}\n"
         f"Prior email sent:\n{prior_email[:300]}...\n\n"
         f"{nudge}\n"
-        "Do NOT repeat the full prior email. Write only the follow-up body (no subject line needed)."
+        "Include a subject line on the first line (format 'Subject: ...'), then the follow-up body. "
+        "Do NOT repeat the full prior email."
+        f"{template_note}"
     )
 
 
@@ -250,6 +368,49 @@ def _build_linkedin_prompt(ctx: dict) -> str:
         f"{ctx['title']} at {ctx['company_name']} ({ctx['industry']}). "
         "Max 300 characters. Be specific, warm, and give one concrete reason to connect."
     )
+
+
+def _build_step_prompt(
+    ctx: dict,
+    step_number: int,
+    step_template: dict,
+    prior_email: Optional[str],
+    prior_subject: Optional[str],
+) -> str:
+    if step_number == 1 or not prior_email:
+        return _build_initial_prompt(ctx, step_template)
+    touch_index = min(step_number - 1, 2)
+    return _build_followup_prompt(ctx, touch_index, prior_email, prior_subject, step_template)
+
+
+def _build_template_note(step_template: dict | None) -> str:
+    if not step_template:
+        return ""
+    label = step_template.get("label")
+    if not label:
+        label = f"Step {step_template.get('step_number') or ''}".strip()
+    fragments = [
+        f"\n\nHouse playbook for this touch ({label}):",
+        f"\nGoal: {step_template.get('goal') or 'Keep momentum moving.'}",
+    ]
+    if step_template.get("subject_hint"):
+        fragments.append(f"\nSubject hint: {step_template['subject_hint']}")
+    if step_template.get("body_template"):
+        fragments.append(f"\nReference template (adapt, do not copy verbatim):\n{step_template['body_template']}")
+    if step_template.get("prompt_hint"):
+        fragments.append(f"\nAdditional guidance: {step_template['prompt_hint']}")
+    return "".join(fragments)
+
+
+def _fallback_subject(step_number: int, ctx: dict, step_template: dict | None, generated_subjects: list[str]) -> str:
+    if step_template and step_template.get("subject_hint"):
+        subject_hint = str(step_template["subject_hint"]).strip()
+        if subject_hint:
+            return subject_hint.replace("{{company_name}}", ctx["company_name"])
+    if step_number == 1:
+        return f"Quick question for {ctx['company_name']}"
+    primary_subject = generated_subjects[0] if generated_subjects else f"Quick question for {ctx['company_name']}"
+    return f"Re: {primary_subject}"
 
 
 def _extract_subject(email_text: Optional[str]) -> Optional[str]:
@@ -262,5 +423,3 @@ def _extract_subject(email_text: Optional[str]) -> Optional[str]:
             # Remove it from the body by returning it
             return subject
     return None
-
-

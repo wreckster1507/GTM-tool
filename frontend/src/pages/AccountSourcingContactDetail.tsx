@@ -18,6 +18,8 @@ import {
 
 import { accountSourcingApi, activitiesApi, companiesApi, contactsApi, dealsApi } from "../lib/api";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
+import AssignDropdown from "../components/AssignDropdown";
+import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
@@ -329,6 +331,7 @@ export default function AccountSourcingContactDetail() {
   const [reEnriching, setReEnriching] = useState(false);
   const [convertingDeal, setConvertingDeal] = useState(false);
   const [commsLog, setCommsLog] = useState<Activity[]>([]);
+  const [showTasksModal, setShowTasksModal] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -442,6 +445,10 @@ export default function AccountSourcingContactDetail() {
               ? "US"
               : company.region.toLowerCase().includes("america")
                 ? "Americas"
+                : company.region.toLowerCase().includes("india")
+                  ? "India"
+                  : company.region.toLowerCase().includes("apac") || company.region.toLowerCase().includes("asia")
+                    ? "APAC"
                 : "Rest of World")
           : undefined,
         tags: ["converted_from_prospect"],
@@ -541,6 +548,14 @@ export default function AccountSourcingContactDetail() {
             </div>
 
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => setShowTasksModal(true)}
+              style={{ border: `1px solid #d5e5ff`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+            >
+              <CheckCircle2 size={14} />
+              Tasks
+            </button>
             {canConvertToDeal && company ? (
               <button
                 onClick={handleConvertToDeal}
@@ -817,7 +832,34 @@ export default function AccountSourcingContactDetail() {
                 ) : undefined}
               />
               <KV label="LinkedIn" value={contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" /> : undefined} />
-              <KV label="Assigned Rep" value={contact.assigned_rep_email || company?.assigned_rep_email} />
+              <KV
+                label="Assigned AE"
+                value={
+                  <AssignDropdown
+                    entityType="contact"
+                    entityId={contact.id}
+                    currentAssignedId={contact.assigned_to_id || undefined}
+                    currentAssignedName={contact.assigned_to_name || contact.assigned_rep_email || company?.assigned_to_name || company?.assigned_rep_name || company?.assigned_rep_email}
+                    onAssigned={() => load()}
+                    role="ae"
+                    label="Assign AE"
+                  />
+                }
+              />
+              <KV
+                label="Assigned SDR"
+                value={
+                  <AssignDropdown
+                    entityType="contact"
+                    entityId={contact.id}
+                    currentAssignedId={contact.sdr_id || undefined}
+                    currentAssignedName={contact.sdr_name || company?.sdr_name || company?.sdr_email}
+                    onAssigned={() => load()}
+                    role="sdr"
+                    label="Assign SDR"
+                  />
+                }
+              />
               <KV label="Sequence Status" value={prettify(contact.sequence_status)} />
               <KV label="Instantly Status" value={prettify(contact.instantly_status)} />
               <KV label="Persona" value={contact.persona_type || contact.persona} />
@@ -859,6 +901,17 @@ export default function AccountSourcingContactDetail() {
           </div>
         </div>
       </div>
+
+      <TaskCenterModal
+        isOpen={showTasksModal}
+        onClose={() => setShowTasksModal(false)}
+        entityType="contact"
+        entityId={contact.id}
+        entityLabel={fullName || "this prospect"}
+        onChanged={() => {
+          void load();
+        }}
+      />
 
     </div>
   );

@@ -6,7 +6,7 @@ import { useAuth } from "../lib/AuthContext";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
-  Building2, Target, Settings2, Phone,
+  Building2, Target, Settings2, Phone, Upload, Download,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import {
@@ -117,6 +117,17 @@ export default function Contacts() {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [resetting, setResetting] = useState(false);
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
+  const [uploadingProspects, setUploadingProspects] = useState(false);
+  const [importSummary, setImportSummary] = useState<{
+    imported_rows: number;
+    created_count: number;
+    updated_count: number;
+    skipped_count: number;
+    missing_company_count: number;
+    missing_companies: { name: string; domain?: string; contacts_count: number }[];
+    message: string;
+  } | null>(null);
+  const [creatingMissingCompanies, setCreatingMissingCompanies] = useState(false);
 
   // ── Angel mapping state ──────────────────────────────────────────────
   const [mappings, setMappings] = useState<AngelMapping[]>([]);
@@ -143,6 +154,59 @@ export default function Contacts() {
       setContactsTotal(result.total);
       setContactsPages(result.pages);
     }).finally(() => setLoading(false));
+  };
+
+  const downloadProspectTemplate = () => {
+    const template = [
+      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Phone"],
+      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+15135330040"],
+    ]
+      .map((row) => row.join(","))
+      .join("\n");
+    const blob = new Blob([template], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "beacon-prospect-upload-template.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleProspectUpload = async (file: File) => {
+    setUploadingProspects(true);
+    try {
+      const result = await contactsApi.importCsv(file);
+      setImportSummary(result);
+      setPage(1);
+      loadContacts();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to import prospects");
+    } finally {
+      setUploadingProspects(false);
+    }
+  };
+
+  const handleCreateMissingCompanies = async () => {
+    if (!importSummary?.missing_companies.length) return;
+    setCreatingMissingCompanies(true);
+    try {
+      for (const company of importSummary.missing_companies) {
+        await accountSourcingApi.createManualCompany({
+          name: company.name,
+          domain: company.domain,
+        });
+      }
+      setImportSummary((current) =>
+        current
+          ? { ...current, missing_company_count: 0, missing_companies: [] }
+          : current
+      );
+      window.alert("Missing companies were added to Account Sourcing and queued for enrichment.");
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to queue missing companies");
+    } finally {
+      setCreatingMissingCompanies(false);
+    }
   };
 
   const loadAngels = () => {
@@ -404,6 +468,48 @@ export default function Contacts() {
                   Sequence Timing
                 </button>
 
+                <button
+                  type="button"
+                  onClick={downloadProspectTemplate}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: "1px solid #d0dcea", background: "#ffffff",
+                    color: "#2c4a63", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  <Download size={14} />
+                  Template
+                </button>
+
+                <label
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: "1px solid #b8d0f0", background: "#eef5ff",
+                    color: "#175089", fontSize: 13, fontWeight: 700,
+                    cursor: uploadingProspects ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                    opacity: uploadingProspects ? 0.7 : 1,
+                  }}
+                >
+                  {uploadingProspects ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                  Upload Prospects CSV
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx"
+                    style={{ display: "none" }}
+                    disabled={uploadingProspects}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        void handleProspectUpload(file);
+                      }
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+
                 {/* Clear — danger, right side */}
                 {isAdmin && (
                   <button
@@ -476,6 +582,29 @@ export default function Contacts() {
         {/* ═══════════════════════════════════════════════════════════════ */}
         {tab === "contacts" && (
           <>
+            <div
+              style={{
+                background: "#fff8e8",
+                border: "1px solid #f5ddaa",
+                borderRadius: 14,
+                padding: "12px 16px",
+                display: "flex",
+                alignItems: "start",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ color: "#8a5b00", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
+                  Prospect sourcing update
+                </div>
+                <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6, maxWidth: 860 }}>
+                  Beacon is temporarily not pulling contacts during company research. Upload your prospect CSV here to map stakeholders onto sourced companies. If a company is missing, Beacon will flag it so you can enrich that account next.
+                </div>
+              </div>
+            </div>
+
             {/* Filters */}
             {(() => {
               const hasFilters = !!(personaFilter || laneFilter || sequenceFilter || emailFilter || search);
@@ -1208,6 +1337,84 @@ export default function Contacts() {
         open={showSequenceSettings}
         onClose={() => setShowSequenceSettings(false)}
       />
+
+      {importSummary && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setImportSummary(null)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-2xl border border-[#d9e1ec]" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+              <div>
+                <h2 className="text-[16px] font-bold text-[#1d2b3c] mb-1">Prospect upload complete</h2>
+                <p className="text-[13px] text-[#6b7e92] mb-0">{importSummary.message}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImportSummary(null)}
+                style={{ border: "1px solid #dce8f4", background: "#fff", color: "#5f7390", borderRadius: 10, width: 34, height: 34, cursor: "pointer" }}
+              >
+                <XCircle size={14} style={{ margin: "0 auto" }} />
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginTop: 18 }}>
+              {[
+                ["Rows", importSummary.imported_rows],
+                ["Created", importSummary.created_count],
+                ["Updated", importSummary.updated_count],
+                ["Skipped", importSummary.skipped_count],
+              ].map(([label, value]) => (
+                <div key={String(label)} style={{ border: "1px solid #dce8f4", borderRadius: 14, background: "#fbfdff", padding: "12px 14px" }}>
+                  <div style={{ color: "#7f91ab", fontSize: 11, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>{label}</div>
+                  <div style={{ color: "#1d2b3c", fontSize: 24, fontWeight: 800, marginTop: 6 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {importSummary.missing_company_count > 0 && (
+              <div style={{ marginTop: 18, border: "1px solid #f5ddaa", background: "#fff8e8", borderRadius: 14, padding: "14px 16px" }}>
+                <div style={{ color: "#8a5b00", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 8 }}>
+                  Missing companies
+                </div>
+                <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6 }}>
+                  {importSummary.missing_company_count} compan{importSummary.missing_company_count === 1 ? "y is" : "ies are"} not in Beacon yet, so those prospects could not be mapped.
+                </div>
+                <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
+                  {importSummary.missing_companies.map((company) => (
+                    <div key={`${company.domain || ""}-${company.name}`} style={{ border: "1px solid #ead6ab", background: "#fffdf6", borderRadius: 12, padding: "10px 12px" }}>
+                      <div style={{ color: "#1d2b3c", fontWeight: 700, fontSize: 13 }}>{company.name}</div>
+                      <div style={{ color: "#7d6d4f", fontSize: 12, marginTop: 2 }}>
+                        {company.domain || "No domain provided"} · {company.contacts_count} prospect{company.contacts_count === 1 ? "" : "s"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
+                  <div style={{ color: "#7d6d4f", fontSize: 12.5 }}>
+                    {isAdmin
+                      ? "You can add these accounts to Account Sourcing now and enrich them next."
+                      : "Ask an admin to add these accounts to Account Sourcing, then re-upload this file or add the prospects again."}
+                  </div>
+                  {isAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleCreateMissingCompanies()}
+                      disabled={creatingMissingCompanies}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        borderRadius: 10, border: "1px solid #b8d0f0", background: "#eef5ff", color: "#175089",
+                        padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: creatingMissingCompanies ? "default" : "pointer",
+                        opacity: creatingMissingCompanies ? 0.7 : 1,
+                      }}
+                    >
+                      {creatingMissingCompanies ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
+                      Create & enrich missing companies
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Add Investor modal */}
       {showAddInvestor && (

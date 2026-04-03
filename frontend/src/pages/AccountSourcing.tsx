@@ -647,7 +647,7 @@ export default function AccountSourcing() {
               </div>
               <h1 style={{ margin: "14px 0 0", color: colors.text, fontSize: 42, letterSpacing: 0.2 }}>Account Sourcing</h1>
               <p style={{ margin: "10px 0 0", color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 780 }}>
-                Start with company names and turn them into presentable account briefs with verdicts, timing, outreach angles, and the right people to contact first.
+                Start with company names and turn them into presentable account briefs with verdicts, timing, outreach angles, and a clean view of where to aim next.
               </p>
               <div style={{ marginTop: 18, display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#f7faff", border: `1px solid ${colors.border}`, borderRadius: 14, padding: "8px" }}>
                 {[
@@ -817,6 +817,28 @@ export default function AccountSourcing() {
               >
                 <RefreshCw size={15} /> Refresh
               </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            borderRadius: 16,
+            border: "1px solid #f5ddaa",
+            background: "#fff8e8",
+            padding: "12px 16px",
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ color: "#8a5b00", fontSize: 11, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
+              Prospect sourcing update
+            </div>
+            <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6 }}>
+              Beacon is temporarily not getting contacts during company research. Use Prospecting to upload stakeholder CSVs and map them onto sourced accounts once the companies are ready.
             </div>
           </div>
         </div>

@@ -30,6 +30,7 @@ from app.api.v1.endpoints import (
     sales_resources,
     settings,
     signals,
+    tasks,
     webhooks,
     workspace,
 )
@@ -48,6 +49,7 @@ router.include_router(prospecting.router)
 router.include_router(outreach.router)
 router.include_router(intelligence.router)
 router.include_router(signals.router)
+router.include_router(tasks.router)
 router.include_router(meetings.router)
 router.include_router(battlecards.router)
 router.include_router(webhooks.router)

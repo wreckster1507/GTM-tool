@@ -1428,79 +1428,12 @@ async def research_company_and_update(
     profile["research_quality"] = research_quality
     company.prospecting_profile = profile
 
-    # ── Save discovered contacts to the Contact table ────────────────────
     contacts_created = 0
-    all_contacts = result.get("_all_contacts", [])
-    if isinstance(all_contacts, list):
-        from sqlmodel import select
-
-        for c in all_contacts:
-            if not isinstance(c, dict):
-                continue
-            email = (c.get("email") or "").strip().lower()
-            first_name = (c.get("first_name") or "").strip()
-            last_name = (c.get("last_name") or "").strip()
-            if not first_name and not email:
-                continue
-
-            # Skip if contact already exists
-            existing = None
-            if email:
-                existing = (
-                    await session.execute(
-                        select(Contact).where(Contact.email == email).limit(1)
-                    )
-                ).scalars().first()
-            if not existing and first_name and last_name:
-                existing = (
-                    await session.execute(
-                        select(Contact).where(
-                            Contact.company_id == company.id,
-                            Contact.first_name == first_name,
-                            Contact.last_name == last_name,
-                        ).limit(1)
-                    )
-                ).scalars().first()
-
-            if existing:
-                # Fill in any missing fields on existing contact
-                if email and not existing.email:
-                    existing.email = email
-                if c.get("phone") and not existing.phone:
-                    existing.phone = c["phone"]
-                if c.get("title") and not existing.title:
-                    existing.title = c["title"]
-                if c.get("linkedin_url") and not existing.linkedin_url:
-                    existing.linkedin_url = c["linkedin_url"]
-                if c.get("email_verified") == "verified" and not existing.email_verified:
-                    existing.email_verified = True
-                source = c.get("_source", "unknown")
-                enrichment = existing.enrichment_data if isinstance(existing.enrichment_data, dict) else {}
-                enrichment[f"icp_pipeline_{source}"] = True
-                enrichment["icp_sales_play"] = sales_play
-                existing.enrichment_data = enrichment
-                session.add(existing)
-            else:
-                source = c.get("_source", "unknown")
-                contact = Contact(
-                    company_id=company.id,
-                    first_name=first_name or "Unknown",
-                    last_name=last_name or "",
-                    email=email or None,
-                    phone=c.get("phone") or None,
-                    title=c.get("title"),
-                    seniority=c.get("seniority"),
-                    linkedin_url=c.get("linkedin_url"),
-                    email_verified=(c.get("email_verified") == "verified"),
-                    enrichment_data={
-                        f"icp_pipeline_{source}": True,
-                        "confidence": c.get("confidence"),
-                        "department": c.get("department"),
-                        "icp_sales_play": sales_play,
-                    },
-                )
-                session.add(contact)
-                contacts_created += 1
+    profile["contact_discovery_status"] = "paused"
+    profile["contact_discovery_note"] = (
+        "Company research is temporarily not creating contacts automatically. "
+        "Upload prospects from the Prospecting page to attach stakeholders."
+    )
 
     company.icp_score, company.icp_tier = score_company(company)
     company.enriched_at = datetime.utcnow()

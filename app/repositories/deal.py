@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Optional
 from uuid import UUID
 
@@ -22,6 +23,40 @@ from app.repositories.base import BaseRepository
 class DealRepository(BaseRepository[Deal]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Deal, session)
+
+    @staticmethod
+    def _slugify_alias(name: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+        return slug or "deal"
+
+    async def generate_unique_email_cc_alias(self, name: str, *, exclude_id: UUID | None = None) -> str:
+        base = self._slugify_alias(name)
+        candidate = base
+        suffix = 2
+
+        while True:
+            stmt = select(Deal.id).where(Deal.email_cc_alias == candidate)
+            if exclude_id:
+                stmt = stmt.where(Deal.id != exclude_id)
+            existing = (await self.session.execute(stmt)).first()
+            if not existing:
+                return candidate
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+
+    async def create(self, data: dict) -> Deal:
+        if not data.get("email_cc_alias"):
+            data["email_cc_alias"] = await self.generate_unique_email_cc_alias(str(data.get("name") or "deal"))
+        return await super().create(data)
+
+    async def update(self, obj: Deal, data: dict) -> Deal:
+        if "email_cc_alias" in data and data["email_cc_alias"]:
+            normalized = self._slugify_alias(str(data["email_cc_alias"]))
+            if normalized != obj.email_cc_alias:
+                data["email_cc_alias"] = await self.generate_unique_email_cc_alias(normalized, exclude_id=obj.id)
+            else:
+                data["email_cc_alias"] = normalized
+        return await super().update(obj, data)
 
     # ── Board query ──────────────────────────────────────────────────────────
 

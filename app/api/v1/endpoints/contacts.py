@@ -2,17 +2,62 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from sqlalchemy import func
+from sqlmodel import SQLModel, select
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
+from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.repositories.contact import ContactRepository
 from app.schemas.common import PaginatedResponse
+from app.services.account_sourcing import (
+    parse_tabular_file,
+    refresh_company_prospecting_fields,
+    refresh_contact_sequence_plan,
+    row_to_company_fields,
+    row_to_contact_fields,
+)
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.persona_classifier import classify_persona
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
+
+
+class ProspectImportMissingCompany(SQLModel):
+    name: str
+    domain: Optional[str] = None
+    contacts_count: int = 0
+
+
+class ProspectImportResponse(SQLModel):
+    imported_rows: int
+    created_count: int
+    updated_count: int
+    skipped_count: int
+    missing_company_count: int
+    missing_companies: list[ProspectImportMissingCompany]
+    message: str
+
+
+async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> Company | None:
+    company_fields = row_to_company_fields(row)
+    domain = (company_fields.get("domain") or "").strip().lower()
+    name = (company_fields.get("name") or "").strip()
+
+    company: Company | None = None
+    if domain and not domain.endswith(".unknown"):
+        company = (
+            await session.execute(select(Company).where(Company.domain == domain).limit(1))
+        ).scalars().first()
+    if not company and name:
+        company = (
+            await session.execute(
+                select(Company).where(func.lower(Company.name) == name.lower()).limit(1)
+            )
+        ).scalars().first()
+    return company
 
 
 @router.get("/", response_model=PaginatedResponse[ContactRead])
@@ -177,6 +222,150 @@ async def discover_contacts(company_id: UUID, session: DBSession):
     reads = [ContactRead.model_validate(c) for c in created]
     await apply_contact_tracking(session, reads)
     return reads
+
+
+@router.post("/import-csv", response_model=ProspectImportResponse, status_code=201)
+async def import_contacts_csv(
+    current_user: CurrentUser,
+    session: DBSession,
+    file: UploadFile = File(...),
+):
+    lower_name = (file.filename or "").lower()
+    if not (lower_name.endswith(".csv") or lower_name.endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")
+
+    content = await file.read()
+    rows = parse_tabular_file(file.filename or "prospects.csv", content)
+    if not rows:
+        raise HTTPException(status_code=400, detail="No rows found in the upload")
+
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+    touched_company_ids: set[UUID] = set()
+    missing_companies: dict[str, ProspectImportMissingCompany] = {}
+
+    for row in rows:
+        company = await _resolve_uploaded_company(session, row)
+        company_fields = row_to_company_fields(row)
+        company_context = {
+            "assigned_rep_email": company.assigned_rep_email if company else None,
+            "recommended_outreach_lane": company.recommended_outreach_lane if company else None,
+            "prospecting_profile": company.prospecting_profile if company else None,
+            "enrichment_sources": company.enrichment_sources if company else None,
+        }
+        contact_fields = row_to_contact_fields(row, company_context)
+        if not contact_fields:
+            skipped_count += 1
+            continue
+
+        if not company:
+            key = f"{(company_fields.get('domain') or '').strip().lower()}::{(company_fields.get('name') or '').strip().lower()}"
+            current = missing_companies.get(key)
+            if current:
+                current.contacts_count += 1
+            else:
+                missing_companies[key] = ProspectImportMissingCompany(
+                    name=(company_fields.get("name") or "Unknown company").strip(),
+                    domain=(company_fields.get("domain") or "").strip() or None,
+                    contacts_count=1,
+                )
+            skipped_count += 1
+            continue
+
+        touched_company_ids.add(company.id)
+        contact_fields["assigned_to_id"] = contact_fields.get("assigned_to_id") or company.assigned_to_id
+        contact_fields["assigned_rep_email"] = contact_fields.get("assigned_rep_email") or company.assigned_rep_email
+        contact_fields["sdr_id"] = contact_fields.get("sdr_id") or company.sdr_id
+        contact_fields["sdr_name"] = contact_fields.get("sdr_name") or company.sdr_name
+        contact_fields["company_id"] = company.id
+
+        raw_enrichment = contact_fields.get("enrichment_data") if isinstance(contact_fields.get("enrichment_data"), dict) else {}
+        raw_enrichment["source"] = "prospect_csv_upload"
+        raw_enrichment["uploaded_by"] = current_user.email
+        contact_fields["enrichment_data"] = raw_enrichment
+
+        email = (contact_fields.get("email") or "").strip().lower() if isinstance(contact_fields.get("email"), str) else None
+        first_name = (contact_fields.get("first_name") or "").strip()
+        last_name = (contact_fields.get("last_name") or "").strip()
+
+        existing = None
+        if email:
+            existing = (
+                await session.execute(select(Contact).where(Contact.email == email).limit(1))
+            ).scalars().first()
+        if not existing and first_name and last_name:
+            existing = (
+                await session.execute(
+                    select(Contact).where(
+                        Contact.company_id == company.id,
+                        Contact.first_name == first_name,
+                        Contact.last_name == last_name,
+                    ).limit(1)
+                )
+            ).scalars().first()
+
+        if existing and existing.company_id and existing.company_id != company.id:
+            skipped_count += 1
+            continue
+
+        if existing:
+            changed = False
+            for key, value in contact_fields.items():
+                if value in (None, "", []):
+                    continue
+                if key == "enrichment_data":
+                    current_enrichment = existing.enrichment_data if isinstance(existing.enrichment_data, dict) else {}
+                    current_enrichment.update(value)
+                    if current_enrichment != existing.enrichment_data:
+                        existing.enrichment_data = current_enrichment
+                        changed = True
+                    continue
+                if getattr(existing, key, None) != value:
+                    setattr(existing, key, value)
+                    changed = True
+            if changed or not existing.persona:
+                existing.persona = classify_persona(existing)
+                existing.updated_at = datetime.utcnow()
+                refresh_contact_sequence_plan(existing, company)
+                session.add(existing)
+                updated_count += 1
+            else:
+                skipped_count += 1
+        else:
+            contact = Contact(**contact_fields)
+            contact.persona = classify_persona(contact)
+            refresh_contact_sequence_plan(contact, company)
+            session.add(contact)
+            created_count += 1
+
+    await session.commit()
+
+    for company_id in touched_company_ids:
+        company = await session.get(Company, company_id)
+        if not company:
+            continue
+        company_contacts = (
+            await session.execute(select(Contact).where(Contact.company_id == company_id))
+        ).scalars().all()
+        refresh_company_prospecting_fields(company, company_contacts)
+        session.add(company)
+    await session.commit()
+
+    missing_rows = sorted(missing_companies.values(), key=lambda item: (item.name.lower(), item.domain or ""))
+    return ProspectImportResponse(
+        imported_rows=len(rows),
+        created_count=created_count,
+        updated_count=updated_count,
+        skipped_count=skipped_count,
+        missing_company_count=len(missing_rows),
+        missing_companies=missing_rows,
+        message=(
+            "Prospects imported successfully."
+            if not missing_rows
+            else "Prospects imported for mapped companies. Some companies are not sourced yet."
+        ),
+    )
 
 
 @router.get("/{contact_id}/brief")

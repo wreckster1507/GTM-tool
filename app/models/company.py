@@ -39,6 +39,9 @@ class Company(CompanyBase, table=True):
     assigned_rep: Optional[str] = None
     assigned_rep_email: Optional[str] = Field(default=None, index=True)
     assigned_rep_name: Optional[str] = None
+    sdr_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    sdr_email: Optional[str] = Field(default=None, index=True)
+    sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = Field(default=None, index=True)
     rep_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -79,6 +82,9 @@ class CompanyRead(CompanyBase):
     assigned_rep: Optional[str] = None
     assigned_rep_email: Optional[str] = None
     assigned_rep_name: Optional[str] = None
+    sdr_id: Optional[UUID] = None
+    sdr_email: Optional[str] = None
+    sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
     rep_feedback: Optional[str] = None
@@ -138,6 +144,9 @@ class CompanyUpdate(SQLModel):
     assigned_rep: Optional[str] = None
     assigned_rep_email: Optional[str] = None
     assigned_rep_name: Optional[str] = None
+    sdr_id: Optional[UUID] = None
+    sdr_email: Optional[str] = None
+    sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
     rep_feedback: Optional[str] = None

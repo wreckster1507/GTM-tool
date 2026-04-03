@@ -23,6 +23,87 @@ class WorkspaceSettings(SQLModel, table=True):
         default=[0, 3, 7],
         sa_column=Column(JSON, nullable=False, server_default="[0, 3, 7]"),
     )
+    outreach_content_settings: dict = Field(
+        default={
+            "general_prompt": (
+                "Write concise enterprise outbound emails for Beacon.li. Personalize to the contact and company, "
+                "avoid hype, avoid fluff, and keep the CTA low-friction."
+            ),
+            "linkedin_prompt": (
+                "Keep LinkedIn notes conversational and specific to the person's role or recent company context."
+            ),
+            "step_templates": [
+                {
+                    "step_number": 1,
+                    "label": "Initial email",
+                    "goal": "Start a personalized conversation with a specific reason for reaching out.",
+                    "subject_hint": "Quick question about {{company_name}}",
+                    "body_template": (
+                        "Hi {{first_name}},\n\n"
+                        "Noticed {{company_name}} is pushing on {{reason_to_reach_out}}. Beacon helps teams reduce "
+                        "implementation drag without replacing the systems they already run.\n\n"
+                        "Worth a quick compare?"
+                    ),
+                    "prompt_hint": "Open with a strong personalization point and end with a simple CTA.",
+                },
+                {
+                    "step_number": 2,
+                    "label": "Follow-up",
+                    "goal": "Add one fresh signal or proof point without repeating the first note.",
+                    "subject_hint": "Re: {{company_name}} implementation motion",
+                    "body_template": (
+                        "Hi {{first_name}},\n\n"
+                        "Following up with one more angle: teams like yours use Beacon to remove manual coordination "
+                        "from implementation work and get faster rollout consistency.\n\n"
+                        "Happy to share a quick example if useful."
+                    ),
+                    "prompt_hint": "Reference the first email lightly and contribute one new idea, signal, or stat.",
+                },
+                {
+                    "step_number": 3,
+                    "label": "Final touch",
+                    "goal": "Close the loop politely while keeping the door open.",
+                    "subject_hint": "Re: {{company_name}}",
+                    "body_template": (
+                        "Hi {{first_name}},\n\n"
+                        "Last nudge from me. If implementation orchestration is on your roadmap this quarter, "
+                        "I can share what Beacon is doing for teams with similar rollout complexity.\n\n"
+                        "If not relevant, no worries."
+                    ),
+                    "prompt_hint": "Be brief, respectful, and easy to ignore without sounding passive-aggressive.",
+                },
+            ],
+        },
+        sa_column=Column(
+            JSON,
+            nullable=False,
+            server_default=(
+                '{"general_prompt":"Write concise enterprise outbound emails for Beacon.li. Personalize to the contact and company, avoid hype, avoid fluff, and keep the CTA low-friction.",'
+                '"linkedin_prompt":"Keep LinkedIn notes conversational and specific to the person''s role or recent company context.",'
+                '"step_templates":['
+                '{"step_number":1,"label":"Initial email","goal":"Start a personalized conversation with a specific reason for reaching out.","subject_hint":"Quick question about {{company_name}}","body_template":"Hi {{first_name}},\\n\\nNoticed {{company_name}} is pushing on {{reason_to_reach_out}}. Beacon helps teams reduce implementation drag without replacing the systems they already run.\\n\\nWorth a quick compare?","prompt_hint":"Open with a strong personalization point and end with a simple CTA."},'
+                '{"step_number":2,"label":"Follow-up","goal":"Add one fresh signal or proof point without repeating the first note.","subject_hint":"Re: {{company_name}} implementation motion","body_template":"Hi {{first_name}},\\n\\nFollowing up with one more angle: teams like yours use Beacon to remove manual coordination from implementation work and get faster rollout consistency.\\n\\nHappy to share a quick example if useful.","prompt_hint":"Reference the first email lightly and contribute one new idea, signal, or stat."},'
+                '{"step_number":3,"label":"Final touch","goal":"Close the loop politely while keeping the door open.","subject_hint":"Re: {{company_name}}","body_template":"Hi {{first_name}},\\n\\nLast nudge from me. If implementation orchestration is on your roadmap this quarter, I can share what Beacon is doing for teams with similar rollout complexity.\\n\\nIf not relevant, no worries.","prompt_hint":"Be brief, respectful, and easy to ignore without sounding passive-aggressive."}'
+                ']}'
+            ),
+        ),
+    )
+    deal_funnel_config: dict = Field(
+        default={"tofu": ["qualified_lead", "poc_agreed"], "mofu": ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"], "bofu": ["closed_won"]},
+        sa_column=Column(
+            JSON,
+            nullable=False,
+            server_default='{"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"]}',
+        ),
+    )
+    prospect_funnel_config: dict = Field(
+        default={"tofu": ["outreach"], "mofu": ["in_progress"], "bofu": ["meeting_booked"]},
+        sa_column=Column(
+            JSON,
+            nullable=False,
+            server_default='{"tofu":["outreach"],"mofu":["in_progress"],"bofu":["meeting_booked"]}',
+        ),
+    )
 
     # Gmail shared inbox sync
     gmail_shared_inbox: Optional[str] = Field(default=None)
@@ -41,6 +122,55 @@ class OutreachSettingsRead(SQLModel):
 
 class OutreachSettingsUpdate(SQLModel):
     step_delays: list[int]
+
+
+class OutreachTemplateStep(SQLModel):
+    step_number: int
+    label: str
+    goal: str
+    subject_hint: Optional[str] = None
+    body_template: Optional[str] = None
+    prompt_hint: Optional[str] = None
+
+
+class OutreachContentSettingsRead(SQLModel):
+    general_prompt: str
+    linkedin_prompt: str
+    step_templates: list[OutreachTemplateStep]
+
+
+class OutreachContentSettingsUpdate(SQLModel):
+    general_prompt: str
+    linkedin_prompt: str
+    step_templates: list[OutreachTemplateStep]
+
+
+class DealFunnelSettingsRead(SQLModel):
+    tofu: list[str]
+    mofu: list[str]
+    bofu: list[str]
+
+
+class DealFunnelSettingsUpdate(SQLModel):
+    tofu: list[str]
+    mofu: list[str]
+    bofu: list[str]
+
+
+class StageBucketSettings(SQLModel):
+    tofu: list[str]
+    mofu: list[str]
+    bofu: list[str]
+
+
+class PipelineSummarySettingsRead(SQLModel):
+    deal: StageBucketSettings
+    prospect: StageBucketSettings
+
+
+class PipelineSummarySettingsUpdate(SQLModel):
+    deal: StageBucketSettings
+    prospect: StageBucketSettings
 
 
 class GmailSettingsRead(SQLModel):

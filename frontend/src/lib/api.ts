@@ -4,6 +4,8 @@ import type {
   Contact,
   Deal,
   Activity,
+  TaskComment,
+  TaskItem,
   AssignmentUpdate,
   OutreachSequence,
   OutreachStep,
@@ -20,6 +22,9 @@ import type {
   ExecutionTrackerSummary,
   Reminder,
   GmailSyncSettings,
+  OutreachContentSettings,
+  PipelineSummarySettings,
+  ProspectImportResponse,
 } from "../types";
 
 /**
@@ -164,6 +169,26 @@ export const contactsApi = {
     request<void>(`/api/v1/contacts/${id}`, { method: "DELETE" }),
   discover: (companyId: string) =>
     request<Contact[]>(`/api/v1/contacts/discover/${companyId}`, { method: "POST" }),
+  importCsv: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch(`${BASE}/api/v1/contacts/import-csv`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: form,
+    }).then(async (r) => {
+      if (r.status === 401) {
+        localStorage.removeItem("beacon_token");
+        window.location.href = "/login";
+        throw new Error("Session expired");
+      }
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }));
+        throw new Error(err.detail ?? "Upload failed");
+      }
+      return r.json() as Promise<ProspectImportResponse>;
+    });
+  },
 };
 
 export const dealsApi = {
@@ -322,6 +347,47 @@ export const activitiesApi = {
     request<Activity>("/api/v1/activities/", {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+};
+
+export const tasksApi = {
+  list: (entityType: "company" | "contact" | "deal", entityId: string, includeClosed = true) =>
+    request<TaskItem[]>(`/api/v1/tasks/?entity_type=${encodeURIComponent(entityType)}&entity_id=${encodeURIComponent(entityId)}&include_closed=${includeClosed ? "true" : "false"}`),
+  create: (data: {
+    entity_type: "company" | "contact" | "deal";
+    entity_id: string;
+    title: string;
+    description?: string;
+    priority?: "low" | "medium" | "high";
+    due_at?: string;
+    assigned_role?: "admin" | "ae" | "sdr";
+    assigned_to_id?: string;
+  }) =>
+    request<TaskItem>("/api/v1/tasks/", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  update: (id: string, data: {
+    title?: string;
+    description?: string;
+    priority?: "low" | "medium" | "high";
+    due_at?: string | null;
+    status?: "open" | "completed" | "dismissed";
+    assigned_role?: "admin" | "ae" | "sdr" | null;
+    assigned_to_id?: string | null;
+  }) =>
+    request<TaskItem>(`/api/v1/tasks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  addComment: (id: string, body: string) =>
+    request<TaskComment>(`/api/v1/tasks/${id}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  accept: (id: string) =>
+    request<TaskItem>(`/api/v1/tasks/${id}/accept`, {
+      method: "POST",
     }),
 };
 
@@ -951,10 +1017,10 @@ export const angelMappingApi = {
 };
 
 export const assignmentsApi = {
-  assignCompany: (companyId: string, userId: string | null) =>
+  assignCompany: (companyId: string, userId: string | null, role: "ae" | "sdr" = "ae") =>
     request<Company>(`/api/v1/assignments/company/${companyId}`, {
       method: "PATCH",
-      body: JSON.stringify({ user_id: userId }),
+      body: JSON.stringify({ user_id: userId, role }),
     }),
   assignContact: (contactId: string, userId: string | null, role: "ae" | "sdr" = "ae") =>
     request<Contact>(`/api/v1/assignments/contact/${contactId}`, {
@@ -1040,6 +1106,20 @@ export const settingsApi = {
     request<{ step_delays: number[]; steps_count: number }>("/api/v1/settings/outreach", {
       method: "PATCH",
       body: JSON.stringify({ step_delays }),
+    }),
+  getOutreachContent: () =>
+    request<OutreachContentSettings>("/api/v1/settings/outreach-content"),
+  updateOutreachContent: (config: OutreachContentSettings) =>
+    request<OutreachContentSettings>("/api/v1/settings/outreach-content", {
+      method: "PATCH",
+      body: JSON.stringify(config),
+    }),
+  getPipelineSummarySettings: () =>
+    request<PipelineSummarySettings>("/api/v1/settings/pipeline-summary"),
+  updatePipelineSummarySettings: (config: PipelineSummarySettings) =>
+    request<PipelineSummarySettings>("/api/v1/settings/pipeline-summary", {
+      method: "PATCH",
+      body: JSON.stringify(config),
     }),
   getGmailSync: () =>
     request<GmailSyncSettings>("/api/v1/settings/email-sync"),

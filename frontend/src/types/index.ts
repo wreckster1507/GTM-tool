@@ -25,6 +25,9 @@ export interface Company {
   assigned_rep?: string;
   assigned_rep_email?: string;
   assigned_rep_name?: string;
+  sdr_id?: string;
+  sdr_email?: string;
+  sdr_name?: string;
   outreach_status?: string;
   disposition?: string;
   rep_feedback?: string;
@@ -136,6 +139,7 @@ export interface Deal {
   id: string;
   company_id?: string;
   assigned_to_id?: string;
+  email_cc_alias?: string;
   name: string;
   pipeline_type: string;
   stage: string;
@@ -236,6 +240,57 @@ export interface Activity {
   email_from?: string;
   email_to?: string;
   email_cc?: string;
+}
+
+export interface TaskComment {
+  id: string;
+  task_id: string;
+  body: string;
+  created_by_id?: string;
+  created_by_name?: string;
+  created_at: string;
+}
+
+export interface TaskItem {
+  id: string;
+  entity_type: "company" | "contact" | "deal";
+  entity_id: string;
+  task_type: "manual" | "system";
+  title: string;
+  description?: string;
+  status: "open" | "completed" | "dismissed";
+  priority: "low" | "medium" | "high";
+  source?: string;
+  recommended_action?: string;
+  due_at?: string;
+  action_payload?: Record<string, unknown>;
+  system_key?: string;
+  created_by_id?: string;
+  created_by_name?: string;
+  assigned_role?: "admin" | "ae" | "sdr";
+  assigned_to_id?: string;
+  assigned_to_name?: string;
+  accepted_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+  comments: TaskComment[];
+}
+
+export interface ProspectImportMissingCompany {
+  name: string;
+  domain?: string;
+  contacts_count: number;
+}
+
+export interface ProspectImportResponse {
+  imported_rows: number;
+  created_count: number;
+  updated_count: number;
+  skipped_count: number;
+  missing_company_count: number;
+  missing_companies: ProspectImportMissingCompany[];
+  message: string;
 }
 
 export interface Reminder {
@@ -374,6 +429,32 @@ export interface GmailSyncSettings {
   interval_seconds: number;
   last_sync_epoch?: number | null;
   last_error?: string | null;
+}
+
+export interface OutreachTemplateStep {
+  step_number: number;
+  label: string;
+  goal: string;
+  subject_hint?: string | null;
+  body_template?: string | null;
+  prompt_hint?: string | null;
+}
+
+export interface OutreachContentSettings {
+  general_prompt: string;
+  linkedin_prompt: string;
+  step_templates: OutreachTemplateStep[];
+}
+
+export interface StageBucketSettings {
+  tofu: string[];
+  mofu: string[];
+  bofu: string[];
+}
+
+export interface PipelineSummarySettings {
+  deal: StageBucketSettings;
+  prospect: StageBucketSettings;
 }
 
 export interface AngelInvestor {

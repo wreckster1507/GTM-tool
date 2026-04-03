@@ -44,38 +44,72 @@ async def assign_company(
     session: DBSession,
     admin: AdminUser,
 ):
-    """Assign a company to a sales rep. Admin only. Pass user_id=null to unassign."""
+    """Assign a company-level AE or SDR. Admin only. Pass user_id=null to unassign."""
     company = (
         await session.execute(select(Company).where(Company.id == company_id))
     ).scalar_one_or_none()
     if not company:
         raise NotFoundError("Company not found")
 
-    previous_name = company.assigned_rep_name or company.assigned_rep or company.assigned_rep_email
+    is_sdr = (body.role or "ae") == "sdr"
+    previous_name = (
+        company.sdr_name or company.sdr_email
+        if is_sdr
+        else company.assigned_rep_name or company.assigned_rep or company.assigned_rep_email
+    )
     if body.user_id:
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
-        company.assigned_to_id = user.id
-        company.assigned_rep = user.name
-        company.assigned_rep_email = user.email
-        company.assigned_rep_name = user.name
+        if is_sdr:
+            company.sdr_id = user.id
+            company.sdr_email = user.email
+            company.sdr_name = user.name
+        else:
+            company.assigned_to_id = user.id
+            company.assigned_rep = user.name
+            company.assigned_rep_email = user.email
+            company.assigned_rep_name = user.name
     else:
-        company.assigned_to_id = None
-        company.assigned_rep = None
-        company.assigned_rep_email = None
-        company.assigned_rep_name = None
+        if is_sdr:
+            company.sdr_id = None
+            company.sdr_email = None
+            company.sdr_name = None
+        else:
+            company.assigned_to_id = None
+            company.assigned_rep = None
+            company.assigned_rep_email = None
+            company.assigned_rep_name = None
+
+    contacts = (
+        await session.execute(select(Contact).where(Contact.company_id == company.id))
+    ).scalars().all()
+    for contact in contacts:
+        if is_sdr:
+            contact.sdr_id = company.sdr_id
+            contact.sdr_name = company.sdr_name
+        else:
+            contact.assigned_to_id = company.assigned_to_id
+            contact.assigned_rep_email = company.assigned_rep_email
+        contact.updated_at = datetime.utcnow()
+        session.add(contact)
+
+    next_name = (
+        company.sdr_name or company.sdr_email
+        if is_sdr
+        else company.assigned_rep_name or company.assigned_rep_email
+    )
 
     append_company_activity_log(
         company,
         action="company_assignment_updated",
         actor_name=admin.name,
         actor_email=admin.email,
-        message=f"AE updated from {previous_name or 'Unassigned'} to {company.assigned_rep_name or company.assigned_rep_email or 'Unassigned'}",
+        message=f"{'SDR' if is_sdr else 'AE'} updated from {previous_name or 'Unassigned'} to {next_name or 'Unassigned'}",
         metadata={
-            "role": "ae",
+            "role": "sdr" if is_sdr else "ae",
             "before": previous_name,
-            "after": company.assigned_rep_name or company.assigned_rep_email,
+            "after": next_name,
         },
     )
 

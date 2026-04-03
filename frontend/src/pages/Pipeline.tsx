@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, UserCircle2 } from "lucide-react";
-import { activitiesApi, authApi, companiesApi, contactsApi, dealsApi } from "../lib/api";
+import { activitiesApi, authApi, companiesApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import type { Activity, Company, Contact, Deal, User } from "../types";
+import type { Activity, Company, Contact, Deal, PipelineSummarySettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 
@@ -55,32 +55,35 @@ const DEFAULT_FUNNEL: FunnelConfig = {
   mofu: ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
   bofu: ["closed_won"],
 };
-const FUNNEL_KEY = "pipeline.deal-funnel-config.v1";
+const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
+  tofu: ["outreach"],
+  mofu: ["in_progress"],
+  bofu: ["meeting_booked"],
+};
+const GEO_OPTIONS = ["US", "Americas", "India", "APAC", "Rest of World"] as const;
 
-function loadFunnel(): FunnelConfig {
-  try {
-    const raw = window.localStorage.getItem(FUNNEL_KEY);
-    if (!raw) return DEFAULT_FUNNEL;
-    const parsed = JSON.parse(raw) as Partial<FunnelConfig>;
-    return {
-      tofu: Array.isArray(parsed.tofu) ? parsed.tofu : DEFAULT_FUNNEL.tofu,
-      mofu: Array.isArray(parsed.mofu) ? parsed.mofu : DEFAULT_FUNNEL.mofu,
-      bofu: Array.isArray(parsed.bofu) ? parsed.bofu : DEFAULT_FUNNEL.bofu,
-    };
-  } catch {
-    return DEFAULT_FUNNEL;
-  }
+function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, defaults: FunnelConfig): FunnelConfig {
+  return {
+    tofu: Array.isArray(value?.tofu) ? value.tofu : defaults.tofu,
+    mofu: Array.isArray(value?.mofu) ? value.mofu : defaults.mofu,
+    bofu: Array.isArray(value?.bofu) ? value.bofu : defaults.bofu,
+  };
 }
 
-function saveFunnel(config: FunnelConfig) {
-  window.localStorage.setItem(FUNNEL_KEY, JSON.stringify(config));
+function normalizePipelineSummarySettings(value?: Partial<PipelineSummarySettings> | null): PipelineSummarySettings {
+  return {
+    deal: normalizeBucketConfig(value?.deal, DEFAULT_FUNNEL),
+    prospect: normalizeBucketConfig(value?.prospect, DEFAULT_PROSPECT_FUNNEL),
+  };
 }
 
-function normalizeGeo(raw?: string | null): "US" | "Americas" | "Rest of World" | "" {
+function normalizeGeo(raw?: string | null): "US" | "Americas" | "India" | "APAC" | "Rest of World" | "" {
   const value = (raw ?? "").trim().toLowerCase();
   if (!value) return "";
   if (["us", "usa", "united states", "united states of america"].includes(value)) return "US";
   if (["na", "north america", "americas", "latam", "latin america", "canada", "mexico"].includes(value)) return "Americas";
+  if (["india", "in"].includes(value)) return "India";
+  if (["apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan"].includes(value)) return "APAC";
   return "Rest of World";
 }
 
@@ -107,15 +110,72 @@ function prospectPatch(stage: ProspectStageId): Partial<Contact> {
   return { outreach_lane: "not_a_fit", sequence_status: "completed", instantly_status: "not_a_fit" };
 }
 
-function SidebarSelect({ value, onChange, children, label }: { value: string; onChange: (value: string) => void; children: ReactNode; label: string }) {
+function MultiSelectFilter({
+  values,
+  onChange,
+  options,
+  label,
+  allLabel,
+}: {
+  values: string[];
+  onChange: (value: string[]) => void;
+  options: { value: string; label: string }[];
+  label: string;
+  allLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const toggle = (value: string) => {
+    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  };
+
+  const displayLabel =
+    values.length === 0
+      ? allLabel
+      : values.length === 1
+        ? options.find((option) => option.value === values[0])?.label ?? allLabel
+        : `${values.length} selected`;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</label>
-      <div style={{ position: "relative" }}>
-        <select value={value} onChange={(event) => onChange(event.target.value)} style={{ width: "100%", appearance: "none", height: 34, borderRadius: 8, border: value !== "all" ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2", background: value !== "all" ? "#f0f6ff" : "#f8fafc", padding: "0 28px 0 10px", fontSize: 12, fontWeight: 500, color: "#2d4258", cursor: "pointer", outline: "none" }}>
-          {children}
-        </select>
-        <ChevronDown size={12} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#7a96b0" }} />
+      <div ref={ref} style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          style={{ width: "100%", height: 34, borderRadius: 8, border: values.length ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2", background: values.length ? "#f0f6ff" : "#f8fafc", padding: "0 28px 0 10px", fontSize: 12, fontWeight: 500, color: "#2d4258", cursor: "pointer", outline: "none", textAlign: "left", position: "relative" }}
+        >
+          {displayLabel}
+          <ChevronDown size={12} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#7a96b0" }} />
+        </button>
+        {open && (
+          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 10, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 10px 28px rgba(15,23,42,0.12)", padding: 8, display: "grid", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              style={{ border: "none", background: values.length === 0 ? "#f0f6ff" : "transparent", color: values.length === 0 ? "#175089" : "#4d6178", borderRadius: 8, padding: "7px 8px", textAlign: "left", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+            >
+              {allLabel}
+            </button>
+            {options.map((option) => (
+              <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "7px 8px", background: values.includes(option.value) ? "#f8fbff" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer" }}>
+                <input type="checkbox" checked={values.includes(option.value)} onChange={() => toggle(option.value)} />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -137,12 +197,34 @@ function SummaryCard({ label, value, tone = "default", action }: { label: string
 const chip = (background: string, color: string, border: string) => ({ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background, color, border: `1px solid ${border}` } as const);
 const modalInputStyle = { height: 42, borderRadius: 12, border: "1px solid #d7e2ee", padding: "0 14px", fontSize: 14 } as const;
 
-function FunnelSettingsModal({ config, onSave, onClose }: { config: FunnelConfig; onSave: (config: FunnelConfig) => void; onClose: () => void }) {
+function FunnelSettingsModal({
+  title,
+  description,
+  stages,
+  config,
+  defaultConfig,
+  saving,
+  onSave,
+  onClose,
+}: {
+  title: string;
+  description: string;
+  stages: StageMeta[];
+  config: FunnelConfig;
+  defaultConfig: FunnelConfig;
+  saving: boolean;
+  onSave: (config: FunnelConfig) => void;
+  onClose: () => void;
+}) {
   const [draft, setDraft] = useState<FunnelConfig>(config);
   const toggle = (bucket: FunnelKey, stageId: string) => setDraft((current) => ({
     ...current,
     [bucket]: current[bucket].includes(stageId) ? current[bucket].filter((item) => item !== stageId) : [...current[bucket], stageId],
   }));
+
+  useEffect(() => {
+    setDraft(config);
+  }, [config]);
 
   return (
     <>
@@ -151,10 +233,10 @@ function FunnelSettingsModal({ config, onSave, onClose }: { config: FunnelConfig
         <div style={{ width: "100%", maxWidth: 620, background: "#fff", borderRadius: 20, border: "1px solid #dbe6f2", boxShadow: "0 20px 60px rgba(15,23,42,0.15)", padding: 24 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
             <div>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1f2d3d" }}>Funnel tier settings</h3>
-              <p style={{ fontSize: 12, color: "#6b7f95", marginTop: 4 }}>Choose which deal stages count toward ToFU, MoFU, and BoFU in the summary cards.</p>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1f2d3d" }}>{title}</h3>
+              <p style={{ fontSize: 12, color: "#6b7f95", marginTop: 4 }}>{description}</p>
             </div>
-            <button className="crm-button soft" onClick={onClose}>Close</button>
+            <button className="crm-button soft" onClick={onClose} disabled={saving}>Close</button>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
@@ -162,7 +244,7 @@ function FunnelSettingsModal({ config, onSave, onClose }: { config: FunnelConfig
               <div key={bucket} style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: 14, background: "#fbfdff" }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", marginBottom: 10, textTransform: "uppercase" }}>{bucket}</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {DEAL_STAGES.filter((stage) => stage.group === "active" || stage.id === "closed_won").map((stage) => (
+                  {stages.map((stage) => (
                     <label key={`${bucket}-${stage.id}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#41566d" }}>
                       <input type="checkbox" checked={draft[bucket].includes(stage.id)} onChange={() => toggle(bucket, stage.id)} />
                       <span>{stage.label}</span>
@@ -174,8 +256,8 @@ function FunnelSettingsModal({ config, onSave, onClose }: { config: FunnelConfig
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18 }}>
-            <button className="crm-button soft" onClick={() => setDraft(DEFAULT_FUNNEL)}>Reset defaults</button>
-            <button className="crm-button primary" onClick={() => onSave(draft)}>Save settings</button>
+            <button className="crm-button soft" onClick={() => setDraft(defaultConfig)} disabled={saving}>Reset defaults</button>
+            <button className="crm-button primary" onClick={() => onSave(draft)} disabled={saving}>{saving ? "Saving..." : "Save settings"}</button>
           </div>
         </div>
       </div>
@@ -251,9 +333,7 @@ function CreateDealModal({ defaultStage, companies, users, onClose, onCreated }:
               </select>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.geography} onChange={(event) => setForm((current) => ({ ...current, geography: event.target.value }))}>
                 <option value="">Select geography</option>
-                <option value="US">US</option>
-                <option value="Americas">Americas</option>
-                <option value="Rest of World">Rest of World</option>
+                {GEO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -482,10 +562,10 @@ export default function Pipeline() {
   const [loading, setLoading] = useState(true);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [stageGroup, setStageGroup] = useState("all");
-  const [assigneeFilter, setAssigneeFilter] = useState("all");
-  const [geographyFilter, setGeographyFilter] = useState("all");
-  const [tagFilter, setTagFilter] = useState("all");
+  const [stageFilters, setStageFilters] = useState<string[]>([]);
+  const [assigneeFilters, setAssigneeFilters] = useState<string[]>([]);
+  const [geographyFilters, setGeographyFilters] = useState<string[]>([]);
+  const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [createDealStage, setCreateDealStage] = useState<string | null>(null);
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [selectedProspect, setSelectedProspect] = useState<Contact | null>(null);
@@ -495,7 +575,10 @@ export default function Pipeline() {
   const [pendingConvertProspect, setPendingConvertProspect] = useState<Contact | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
   const [showFunnelSettings, setShowFunnelSettings] = useState(false);
-  const [funnelConfig, setFunnelConfig] = useState<FunnelConfig>(() => loadFunnel());
+  const [pipelineSummaryConfig, setPipelineSummaryConfig] = useState<PipelineSummarySettings>(() =>
+    normalizePipelineSummarySettings()
+  );
+  const [savingFunnelSettings, setSavingFunnelSettings] = useState(false);
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
   const allDeals = useMemo(() => Object.values(dealBoard).flat(), [dealBoard]);
@@ -504,16 +587,18 @@ export default function Pipeline() {
   const loadBoard = async () => {
     setLoading(true);
     try {
-      const [board, companyList, userList, contactList] = await Promise.all([
+      const [board, companyList, userList, contactList, summarySettings] = await Promise.all([
         dealsApi.board("deal"),
         companiesApi.list(),
         authApi.listAllUsers().catch(() => []),
         contactsApi.list(0, 500),
+        settingsApi.getPipelineSummarySettings().catch(() => normalizePipelineSummarySettings()),
       ]);
       setDealBoard(board);
       setCompanies(companyList);
       setUsers(userList);
       setContacts(contactList);
+      setPipelineSummaryConfig(normalizePipelineSummarySettings(summarySettings));
     } finally {
       setLoading(false);
     }
@@ -545,14 +630,19 @@ export default function Pipeline() {
         const q = search.toLowerCase();
         items = items.filter((deal) => deal.name.toLowerCase().includes(q) || (deal.company_name ?? "").toLowerCase().includes(q));
       }
-      if (stageGroup !== "all" && stage.group !== stageGroup) items = [];
-      if (assigneeFilter !== "all") items = assigneeFilter === "unassigned" ? items.filter((deal) => !deal.assigned_to_id) : items.filter((deal) => deal.assigned_to_id === assigneeFilter);
-      if (geographyFilter !== "all") items = items.filter((deal) => normalizeGeo(deal.geography) === geographyFilter);
-      if (tagFilter !== "all") items = items.filter((deal) => (deal.tags ?? []).includes(tagFilter));
+      if (stageFilters.length && !stageFilters.includes(stage.id)) items = [];
+      if (assigneeFilters.length) {
+        items = items.filter((deal) => {
+          if (!deal.assigned_to_id) return assigneeFilters.includes("unassigned");
+          return assigneeFilters.includes(deal.assigned_to_id);
+        });
+      }
+      if (geographyFilters.length) items = items.filter((deal) => geographyFilters.includes(normalizeGeo(deal.geography)));
+      if (tagFilters.length) items = items.filter((deal) => (deal.tags ?? []).some((tag) => tagFilters.includes(tag)));
       next[stage.id] = items;
     }
     return next;
-  }, [assigneeFilter, dealBoard, geographyFilter, search, stageGroup, tagFilter]);
+  }, [assigneeFilters, dealBoard, geographyFilters, search, stageFilters, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -561,17 +651,29 @@ export default function Pipeline() {
       const company = contact.company_id ? companyMap.get(contact.company_id) : undefined;
       const text = `${contactName(contact)} ${contact.email ?? ""} ${contact.title ?? ""} ${contact.company_name ?? company?.name ?? ""}`.toLowerCase();
       if (search && !text.includes(search.toLowerCase())) return;
-      if (stageGroup !== "all" && PROSPECT_STAGES.find((item) => item.id === stage)?.group !== stageGroup) return;
-      if (assigneeFilter !== "all") {
-        if (assigneeFilter === "unassigned") {
-          if (contact.assigned_to_id || contact.sdr_id) return;
-        } else if (contact.assigned_to_id !== assigneeFilter && contact.sdr_id !== assigneeFilter) return;
+      if (stageFilters.length && !stageFilters.includes(stage)) return;
+      if (assigneeFilters.length) {
+        if (assigneeFilters.includes("unassigned")) {
+          if (!contact.assigned_to_id && !contact.sdr_id) {
+            next[stage].push(contact);
+            return;
+          }
+        }
+        if (contact.assigned_to_id && assigneeFilters.includes(contact.assigned_to_id)) {
+          next[stage].push(contact);
+          return;
+        }
+        if (contact.sdr_id && assigneeFilters.includes(contact.sdr_id)) {
+          next[stage].push(contact);
+          return;
+        }
+        return;
       }
-      if (geographyFilter !== "all" && normalizeGeo(company?.region) !== geographyFilter) return;
+      if (geographyFilters.length && !geographyFilters.includes(normalizeGeo(company?.region))) return;
       next[stage].push(contact);
     });
     return next;
-  }, [assigneeFilter, companyMap, contacts, geographyFilter, search, stageGroup]);
+  }, [assigneeFilters, companyMap, contacts, geographyFilters, search, stageFilters]);
 
   const dealSummary = useMemo(() => {
     const visible = Object.values(filteredDealBoard).flat();
@@ -579,34 +681,55 @@ export default function Pipeline() {
       total: visible.length,
       active: visible.filter((deal) => DEAL_STAGES.find((stage) => stage.id === deal.stage)?.group === "active").length,
       closed: visible.filter((deal) => DEAL_STAGES.find((stage) => stage.id === deal.stage)?.group === "closed").length,
-      tofu: visible.filter((deal) => funnelConfig.tofu.includes(deal.stage)).length,
-      mofu: visible.filter((deal) => funnelConfig.mofu.includes(deal.stage)).length,
-      bofu: visible.filter((deal) => funnelConfig.bofu.includes(deal.stage)).length,
+      tofu: visible.filter((deal) => pipelineSummaryConfig.deal.tofu.includes(deal.stage)).length,
+      mofu: visible.filter((deal) => pipelineSummaryConfig.deal.mofu.includes(deal.stage)).length,
+      bofu: visible.filter((deal) => pipelineSummaryConfig.deal.bofu.includes(deal.stage)).length,
     };
-  }, [filteredDealBoard, funnelConfig]);
+  }, [filteredDealBoard, pipelineSummaryConfig.deal]);
 
   const prospectSummary = useMemo(() => ({
     total: Object.values(filteredProspects).flat().length,
     active: filteredProspects.outreach.length + filteredProspects.in_progress.length + filteredProspects.meeting_booked.length,
     closed: filteredProspects.negative_response.length + filteredProspects.no_response.length + filteredProspects.not_a_fit.length,
-    tofu: filteredProspects.outreach.length,
-    mofu: filteredProspects.in_progress.length,
-    bofu: filteredProspects.meeting_booked.length,
-  }), [filteredProspects]);
+    tofu: Array.from(new Set(pipelineSummaryConfig.prospect.tofu)).reduce(
+      (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
+      0,
+    ),
+    mofu: Array.from(new Set(pipelineSummaryConfig.prospect.mofu)).reduce(
+      (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
+      0,
+    ),
+    bofu: Array.from(new Set(pipelineSummaryConfig.prospect.bofu)).reduce(
+      (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
+      0,
+    ),
+  }), [filteredProspects, pipelineSummaryConfig.prospect]);
 
   const summary = tab === "deal" ? dealSummary : prospectSummary;
-  const hasFilters = Boolean(search) || stageGroup !== "all" || assigneeFilter !== "all" || geographyFilter !== "all" || tagFilter !== "all";
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0;
   const stages = tab === "deal" ? DEAL_STAGES : PROSPECT_STAGES;
+  const stageOptions = (tab === "deal" ? DEAL_STAGES : PROSPECT_STAGES).map((stage) => ({ value: stage.id, label: stage.label }));
+  const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
+  const geographyOptions = GEO_OPTIONS.map((option) => ({ value: option, label: option }));
+  const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
   const accentColor = tab === "deal" ? "#175089" : "#177b75";
   const accentBg = tab === "deal" ? "#f0f6ff" : "#f0faf9";
   const accentBorder = tab === "deal" ? "#b8d0f0" : "#b2e0dc";
+  const activeFunnelConfig = tab === "deal" ? pipelineSummaryConfig.deal : pipelineSummaryConfig.prospect;
+  const activeFunnelDefaults = tab === "deal" ? DEFAULT_FUNNEL : DEFAULT_PROSPECT_FUNNEL;
+  const funnelModalTitle = tab === "deal" ? "Deal summary settings" : "Prospect summary settings";
+  const funnelModalDescription =
+    tab === "deal"
+      ? "Choose which deal stages count toward ToFU, MoFU, and BoFU in the shared summary cards."
+      : "Choose which prospect lanes count toward ToFU, MoFU, and BoFU in the shared summary cards.";
+  const funnelModalStages = tab === "deal" ? DEAL_STAGES : PROSPECT_STAGES;
 
   const resetFilters = () => {
     setSearch("");
-    setStageGroup("all");
-    setAssigneeFilter("all");
-    setGeographyFilter("all");
-    setTagFilter("all");
+    setStageFilters([]);
+    setAssigneeFilters([]);
+    setGeographyFilters([]);
+    setTagFilters([]);
   };
 
   const handleDealUpdated = (updated: Deal) => {
@@ -688,6 +811,22 @@ export default function Pipeline() {
     }
   };
 
+  const handleSaveFunnelSettings = async (config: FunnelConfig) => {
+    if (!isAdmin) return;
+    setSavingFunnelSettings(true);
+    try {
+      const nextConfig: PipelineSummarySettings =
+        tab === "deal"
+          ? { ...pipelineSummaryConfig, deal: config }
+          : { ...pipelineSummaryConfig, prospect: config };
+      const saved = await settingsApi.updatePipelineSummarySettings(nextConfig);
+      setPipelineSummaryConfig(normalizePipelineSummarySettings(saved));
+      setShowFunnelSettings(false);
+    } finally {
+      setSavingFunnelSettings(false);
+    }
+  };
+
   return (
     <>
       <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", height: "100%", minHeight: 0, gap: 0 }}>
@@ -709,7 +848,7 @@ export default function Pipeline() {
           <div style={{ height: 1, background: "#e8eef5" }} />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Summary</span>
-            {tab === "deal" && <button type="button" onClick={() => setShowFunnelSettings(true)} style={{ border: "1px solid #dbe6f2", background: "#fff", borderRadius: 8, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#5e738b", cursor: "pointer" }} title="Funnel settings"><Settings2 size={14} /></button>}
+            {isAdmin && <button type="button" onClick={() => setShowFunnelSettings(true)} style={{ border: "1px solid #dbe6f2", background: "#fff", borderRadius: 8, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#5e738b", cursor: "pointer" }} title={`${tab === "deal" ? "Deal" : "Prospect"} summary settings`}><Settings2 size={14} /></button>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <SummaryCard label="Active" value={summary.active} tone="accent" />
@@ -730,10 +869,10 @@ export default function Pipeline() {
               <Search size={12} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
               <input type="text" placeholder={`Search ${tab === "deal" ? "deals" : "prospects"}...`} value={search} onChange={(event) => setSearch(event.target.value)} style={{ width: "100%", height: 32, borderRadius: 8, border: search ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2", background: search ? "#f0f6ff" : "#f8fafc", paddingLeft: 28, paddingRight: 10, fontSize: 12, outline: "none" }} />
             </div>
-            <SidebarSelect value={stageGroup} onChange={setStageGroup} label="Stage"><option value="all">All Stages</option><option value="active">Active Only</option><option value="closed">Closed Only</option></SidebarSelect>
-            <SidebarSelect value={assigneeFilter} onChange={setAssigneeFilter} label="Assignee"><option value="all">All Reps</option><option value="unassigned">Unassigned</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</SidebarSelect>
-            <SidebarSelect value={geographyFilter} onChange={setGeographyFilter} label="Geography"><option value="all">All Geographies</option><option value="US">US</option><option value="Americas">Americas</option><option value="Rest of World">Rest of World</option></SidebarSelect>
-            {tab === "deal" && <SidebarSelect value={tagFilter} onChange={setTagFilter} label="Tags"><option value="all">All Tags</option>{dealTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</SidebarSelect>}
+            <MultiSelectFilter values={stageFilters} onChange={setStageFilters} label="Stage" allLabel="All Stages" options={stageOptions} />
+            <MultiSelectFilter values={assigneeFilters} onChange={setAssigneeFilters} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
+            <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
+            {tab === "deal" && <MultiSelectFilter values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
           </div>
 
           <div style={{ flex: 1 }} />
@@ -804,7 +943,18 @@ export default function Pipeline() {
           </div>
         </>
       )}
-      {showFunnelSettings && <FunnelSettingsModal config={funnelConfig} onClose={() => setShowFunnelSettings(false)} onSave={(config) => { setFunnelConfig(config); saveFunnel(config); setShowFunnelSettings(false); }} />}
+      {showFunnelSettings && (
+        <FunnelSettingsModal
+          title={funnelModalTitle}
+          description={funnelModalDescription}
+          stages={funnelModalStages}
+          config={activeFunnelConfig}
+          defaultConfig={activeFunnelDefaults}
+          saving={savingFunnelSettings}
+          onClose={() => setShowFunnelSettings(false)}
+          onSave={handleSaveFunnelSettings}
+        />
+      )}
     </>
   );
 }

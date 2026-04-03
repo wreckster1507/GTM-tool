@@ -75,6 +75,7 @@ class Deal(DealBase, table=True):
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
     assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    email_cc_alias: Optional[str] = Field(default=None, index=True)
     value: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(15, 2)))
     qualification: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     tags: list[str] = Field(default=[], sa_column=Column(JSONB, nullable=False, server_default="[]"))
@@ -102,12 +103,14 @@ class DealCreate(SQLModel):
     qualification: Optional[Any] = None
     health: str = "green"
     owner_id: Optional[str] = None
+    email_cc_alias: Optional[str] = None
 
 
 class DealRead(DealBase):
     id: UUID
     company_id: Optional[UUID] = None
     assigned_to_id: Optional[UUID] = None
+    email_cc_alias: Optional[str] = None
     value: Optional[Decimal] = None
     qualification: Optional[Any] = None
     tags: list[str] = []
@@ -146,6 +149,7 @@ class DealUpdate(SQLModel):
     last_activity_at: Optional[datetime] = None
     stakeholder_count: Optional[int] = None
     owner_id: Optional[str] = None
+    email_cc_alias: Optional[str] = None
 
 
 # ── DealContact junction ─────────────────────────────────────────────────────

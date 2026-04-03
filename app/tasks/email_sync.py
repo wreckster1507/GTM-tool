@@ -16,6 +16,7 @@ Flow:
 import asyncio
 import logging
 import time
+from email.utils import parseaddr
 
 from app.celery_app import celery_app
 from app.config import settings
@@ -23,6 +24,37 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 REDIS_KEY_LAST_SYNC = "email_sync:last_epoch"
+
+
+def _split_inbox_parts(inbox: str) -> tuple[str, str]:
+    _name, addr = parseaddr(inbox or "")
+    addr = (addr or "").strip().lower()
+    if "@" not in addr:
+        return "", ""
+    local, domain = addr.split("@", 1)
+    return local, domain
+
+
+def _extract_deal_aliases(addresses: set[str], inbox: str) -> list[str]:
+    local, domain = _split_inbox_parts(inbox)
+    if not local or not domain:
+        return []
+
+    aliases: list[str] = []
+    prefix = f"{local}+"
+    for addr in addresses:
+        normalized = (addr or "").strip().lower()
+        if not normalized or "@" not in normalized:
+            continue
+        addr_local, addr_domain = normalized.split("@", 1)
+        if addr_domain != domain:
+            continue
+        if not addr_local.startswith(prefix):
+            continue
+        alias = addr_local[len(prefix):].strip()
+        if alias:
+            aliases.append(alias)
+    return list(dict.fromkeys(aliases))
 
 
 @celery_app.task(
@@ -55,7 +87,7 @@ async def _async_sync() -> dict:
     from app.clients.gmail_inbox import GmailInboxClient
     from app.models.activity import Activity
     from app.models.contact import Contact
-    from app.models.deal import DealContact
+    from app.models.deal import Deal, DealContact
     from app.models.settings import WorkspaceSettings
 
     # Fresh engine per task
@@ -119,6 +151,24 @@ async def _async_sync() -> dict:
                 if not all_addrs:
                     continue
 
+                matched_via = "contacts"
+                matched_aliases = _extract_deal_aliases(all_addrs, inbox)
+                deal_ids: list = []
+
+                if matched_aliases:
+                    matched_via = "alias"
+                    deal_rows = await session.execute(
+                        select(Deal.id).where(Deal.email_cc_alias.in_(matched_aliases))
+                    )
+                    deal_ids = list(dict.fromkeys([row.id for row in deal_rows.all()]))
+                    if not deal_ids:
+                        logger.warning(
+                            "Email sync skipped message %s because alias %s did not map to a deal",
+                            msg.message_id,
+                            ", ".join(matched_aliases),
+                        )
+                        continue
+
                 # Find matching contacts
                 contact_result = await session.execute(
                     select(Contact.id, Contact.email).where(
@@ -127,18 +177,19 @@ async def _async_sync() -> dict:
                 )
                 matched_contacts = contact_result.all()
 
-                if not matched_contacts:
+                if not matched_contacts and not deal_ids:
                     continue
 
                 contact_ids = [c.id for c in matched_contacts]
 
                 # Find deals linked to these contacts
-                deal_result = await session.execute(
-                    select(DealContact.deal_id).where(
-                        DealContact.contact_id.in_(contact_ids)
-                    ).distinct()
-                )
-                deal_ids = [row.deal_id for row in deal_result.all()]
+                if not deal_ids and contact_ids:
+                    deal_result = await session.execute(
+                        select(DealContact.deal_id).where(
+                            DealContact.contact_id.in_(contact_ids)
+                        ).distinct()
+                    )
+                    deal_ids = [row.deal_id for row in deal_result.all()]
 
                 if not deal_ids:
                     continue
@@ -181,6 +232,11 @@ async def _async_sync() -> dict:
                         email_from=msg.from_addr,
                         email_to=", ".join(msg.to_addrs),
                         email_cc=", ".join(msg.cc_addrs),
+                        event_metadata={
+                            "matched_via": matched_via,
+                            "matched_aliases": matched_aliases or None,
+                            "gmail_thread_id": msg.thread_id or None,
+                        },
                     )
                     session.add(activity)
                     activities_created += 1

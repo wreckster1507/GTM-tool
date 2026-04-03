@@ -4,10 +4,11 @@ import {
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText,
 } from "lucide-react";
-import { dealsApi, contactsApi } from "../../lib/api";
+import { dealsApi, contactsApi, settingsApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
+import TaskCenterModal from "../tasks/TaskCenterModal";
 
 interface Props {
   deal: Deal;
@@ -40,7 +41,7 @@ const ACTIVITY_ICON: Record<string, typeof ActivityIcon> = {
   visit: Globe,
 };
 
-type DrawerTab = "overview" | "meddpicc" | "activity";
+type DrawerTab = "overview" | "meddpicc" | "activity" | "tasks";
 
 const MEDDPICC_DIMENSIONS = [
   { key: "metrics", label: "Metrics", desc: "Quantified business impact of solving the problem" },
@@ -63,6 +64,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
   const [comment, setComment] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
+  const [sharedInbox, setSharedInbox] = useState("zippy@beacon.li");
 
   // Inline editing states
   const [editingName, setEditingName] = useState(false);
@@ -83,6 +85,12 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
     dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
     dealsApi.getContacts(deal.id).then(setDealContacts).catch(() => {});
   }, [deal.id]);
+
+  useEffect(() => {
+    settingsApi.getGmailSync().then((data) => {
+      if (data.inbox) setSharedInbox(data.inbox);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     setActiveTab("overview");
@@ -180,6 +188,12 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   };
 
   const stageLabel = stages.find((s) => s.id === deal.stage)?.label ?? deal.stage;
+  const emailSyncAddress = deal.email_cc_alias && sharedInbox.includes("@")
+    ? (() => {
+        const [local, domain] = sharedInbox.split("@");
+        return `${local}+${deal.email_cc_alias}@${domain}`;
+      })()
+    : undefined;
 
   return (
     <>
@@ -379,6 +393,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               { id: "overview", label: "Overview" },
               { id: "meddpicc", label: `MEDDPICC${deal.meddpicc_score != null ? ` (${deal.meddpicc_score})` : ""}` },
               { id: "activity", label: `Activity (${activities.length})` },
+              { id: "tasks", label: "Tasks" },
             ].map((item) => {
               const active = activeTab === item.id;
               return (
@@ -478,6 +493,8 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 <option value="">Select region</option>
                 <option value="US">US</option>
                 <option value="Americas">Americas</option>
+                <option value="India">India</option>
+                <option value="APAC">APAC</option>
                 <option value="Rest of World">Rest of World</option>
               </select>
             </FieldRow>
@@ -517,6 +534,52 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 fontSize: 13, outline: "none",
               }}
             />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#5e738b", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+              <Mail size={12} /> Email Sync CC
+            </div>
+            <div
+              style={{
+                width: "100%",
+                minHeight: 42,
+                borderRadius: 10,
+                border: "1px solid #dbe6f2",
+                padding: "10px 12px",
+                fontSize: 13,
+                background: "#f8fbff",
+                color: "#2d4258",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontWeight: 700 }}>{emailSyncAddress ?? "Alias unavailable"}</span>
+              {emailSyncAddress ? (
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(emailSyncAddress)}
+                  style={{
+                    borderRadius: 8,
+                    border: "1px solid #c8daf0",
+                    background: "#eef5ff",
+                    color: "#175089",
+                    padding: "6px 10px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Copy
+                </button>
+              ) : null}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "#7a96b0", lineHeight: 1.5 }}>
+              Ask reps to CC this exact address on client threads. Beacon uses the text after the <code>+</code> to map the email to this deal before any fallback matching.
+            </div>
           </div>
 
           {/* Tags */}
@@ -717,6 +780,17 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               onUpdate={async (meddpicc) => {
                 const updated = { ...deal.qualification, meddpicc };
                 await patchDeal({ qualification: updated } as Partial<Deal>);
+              }}
+            />
+          ) : activeTab === "tasks" ? (
+            <TaskCenterModal
+              mode="inline"
+              entityType="deal"
+              entityId={deal.id}
+              entityLabel={deal.name}
+              onChanged={() => {
+                void dealsApi.get(deal.id).then(onDealUpdated).catch(() => {});
+                void dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
               }}
             />
           ) : (

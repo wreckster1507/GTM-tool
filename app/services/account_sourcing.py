@@ -30,7 +30,6 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import update as sa_update
-from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -2097,6 +2096,13 @@ async def enrich_company_tiered(
         },
         "fetched_at": datetime.utcnow().isoformat(),
     }
+    cache["contact_discovery"] = {
+        "data": {
+            "mode": "paused",
+            "message": "Contact discovery during company research is temporarily paused. Upload prospects from the Prospecting page to attach stakeholders.",
+        },
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
 
     cached_apollo_entry = cache.get("apollo_company") if isinstance(cache.get("apollo_company"), dict) else None
     apollo_data = cached_apollo_entry.get("data") if isinstance(cached_apollo_entry, dict) else None
@@ -2110,27 +2116,16 @@ async def enrich_company_tiered(
         apollo = ApolloClient()
 
         run_apollo_company = force_paid_refresh or not _cache_entry_is_fresh(cache, "apollo_company", _PAID_CACHE_TTL_HOURS)
-        run_apollo_contacts = force_paid_refresh or not _cache_entry_is_fresh(cache, "apollo_contacts", _PAID_CACHE_TTL_HOURS)
 
         apollo_company_result = None
-        apollo_contacts_result = None
-        if run_apollo_company or run_apollo_contacts:
+        if run_apollo_company:
             try:
-                apollo_company_result, apollo_contacts_result = await asyncio.wait_for(
-                    asyncio.gather(
-                        apollo.enrich_company(company.domain) if run_apollo_company else asyncio.sleep(0, result=None),
-                        apollo.search_people(
-                            domain=company.domain,
-                            limit=10,
-                            seniorities=["c_suite", "vp", "director"],
-                        ) if run_apollo_contacts else asyncio.sleep(0, result=[]),
-                        return_exceptions=True,
-                    ),
+                apollo_company_result = await asyncio.wait_for(
+                    apollo.enrich_company(company.domain),
                     timeout=_PAID_ENRICHMENT_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
                 apollo_company_result = None
-                apollo_contacts_result = []
                 logger.warning(f"Apollo enrichment timed out for {company.name} ({company.domain})")
                 _pipeline_stamp(cache, "paid_enrichment", "timeout", "Apollo enrichment timed out; continuing")
 
@@ -2141,27 +2136,12 @@ async def enrich_company_tiered(
             cache["apollo_company"] = {"data": apollo_data, "fetched_at": datetime.utcnow().isoformat()}
             _apply_apollo(company, apollo_data)
             logger.info(f"Apollo enriched company: {company.domain}")
-
-        if isinstance(apollo_contacts_result, Exception):
-            logger.error(f"Apollo contact search failed for {company.domain}: {apollo_contacts_result}")
-        elif isinstance(apollo_contacts_result, list):
-            cache["apollo_contacts"] = {"data": apollo_contacts_result, "fetched_at": datetime.utcnow().isoformat()}
-            if apollo_contacts_result:
-                try:
-                    created = await _create_contacts(company, apollo_contacts_result, session)
-                    logger.info(f"Found {len(apollo_contacts_result)} contacts, created {created} for {company.domain}")
-                except Exception as e:
-                    logger.error(f"Apollo contact persistence failed for {company.domain}: {e}")
-                    if session.in_transaction():
-                        try:
-                            await session.rollback()
-                        except MissingGreenlet as rollback_error:
-                            logger.warning(f"Skipped rollback due to async context mismatch: {rollback_error}")
-                        except Exception as rollback_error:
-                            logger.warning(f"Rollback failed after Apollo contact error: {rollback_error}")
-                    company = await session.get(Company, company_id)
-                    if not company:
-                        return None
+        cache["apollo_contacts"] = {
+            "data": [],
+            "fetched_at": datetime.utcnow().isoformat(),
+            "paused": True,
+            "message": "Apollo contact discovery is temporarily paused during company enrichment.",
+        }
 
         # ── Tier 3: Hunter.io (paid — fallback only) ───────────────────────
         contact_coverage = await _contact_coverage_snapshot(company.id, session)
@@ -2173,35 +2153,26 @@ async def enrich_company_tiered(
             from app.clients.hunter import HunterClient
             hunter = HunterClient()
 
-            run_hunter_contacts = force_paid_refresh or not _cache_entry_is_fresh(cache, "hunter_contacts", _PAID_CACHE_TTL_HOURS)
             run_hunter_company = force_paid_refresh or not _cache_entry_is_fresh(cache, "hunter_company", _PAID_CACHE_TTL_HOURS)
 
-            hunter_contacts_result = None
             hunter_company_result = None
-            if run_hunter_contacts or run_hunter_company:
+            if run_hunter_company:
                 try:
-                    hunter_contacts_result, hunter_company_result = await asyncio.wait_for(
-                        asyncio.gather(
-                            hunter.domain_search(company.domain) if run_hunter_contacts else asyncio.sleep(0, result=None),
-                            hunter.company_enrichment(company.domain) if run_hunter_company else asyncio.sleep(0, result=None),
-                            return_exceptions=True,
-                        ),
+                    hunter_company_result = await asyncio.wait_for(
+                        hunter.company_enrichment(company.domain),
                         timeout=_PAID_ENRICHMENT_TIMEOUT_SECONDS,
                     )
                 except asyncio.TimeoutError:
-                    hunter_contacts_result = None
                     hunter_company_result = None
                     logger.warning(f"Hunter enrichment timed out for {company.name} ({company.domain})")
                     _pipeline_stamp(cache, "paid_enrichment", "timeout", "Hunter enrichment timed out; continuing")
 
-            if isinstance(hunter_contacts_result, Exception):
-                logger.error(f"Hunter domain search failed for {company.domain}: {hunter_contacts_result}")
-            elif isinstance(hunter_contacts_result, dict):
-                cache["hunter_contacts"] = {"data": hunter_contacts_result, "fetched_at": datetime.utcnow().isoformat()}
-                hunter_contacts = hunter_contacts_result.get("contacts", [])
-                if hunter_contacts:
-                    created = await _create_contacts(company, hunter_contacts, session)
-                    logger.info(f"Hunter found {len(hunter_contacts)} contacts, created {created} new for {company.domain}")
+            cache["hunter_contacts"] = {
+                "data": {"contacts": []},
+                "fetched_at": datetime.utcnow().isoformat(),
+                "paused": True,
+                "message": "Hunter contact discovery is temporarily paused during company enrichment.",
+            }
 
             if isinstance(hunter_company_result, Exception):
                 logger.error(f"Hunter company enrichment failed for {company.domain}: {hunter_company_result}")

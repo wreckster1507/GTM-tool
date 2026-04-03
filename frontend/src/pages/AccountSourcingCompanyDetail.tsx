@@ -19,6 +19,7 @@ import {
   Target,
   TrendingUp,
   Users,
+  X,
 } from "lucide-react";
 
 import { accountSourcingApi, contactsApi, dealsApi } from "../lib/api";
@@ -32,6 +33,7 @@ import {
 import type { Company, Contact } from "../types";
 import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
+import TaskCenterModal from "../components/tasks/TaskCenterModal";
 
 const colors = {
   bg: "#f4f7fb",
@@ -247,6 +249,45 @@ function KV({ label, value }: { label: string; value?: ReactNode }) {
       <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3 }}>{label.toUpperCase()}</div>
       <div style={{ color: colors.sub, lineHeight: 1.6 }}>{value}</div>
     </div>
+  );
+}
+
+function NewsSignalCard({
+  item,
+  borderColor,
+  background,
+}: {
+  item: { title?: string; snippet?: string; url?: string };
+  borderColor: string;
+  background: string;
+}) {
+  const content = (
+    <>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{item.title}</div>
+        {item.url ? <ExternalLink size={14} style={{ color: colors.primary, flexShrink: 0, marginTop: 1 }} /> : null}
+      </div>
+      {item.snippet ? <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>{item.snippet}</div> : null}
+      {item.url ? <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: colors.primary }}>Open source</div> : null}
+    </>
+  );
+
+  const sharedStyle: CSSProperties = {
+    border: `1px solid ${borderColor}`,
+    background,
+    borderRadius: 10,
+    padding: "10px 14px",
+    textDecoration: "none",
+  };
+
+  if (!item.url) {
+    return <div style={sharedStyle}>{content}</div>;
+  }
+
+  return (
+    <a href={item.url} target="_blank" rel="noreferrer" style={{ ...sharedStyle, display: "block" }}>
+      {content}
+    </a>
   );
 }
 
@@ -540,6 +581,8 @@ export default function AccountSourcingCompanyDetail() {
   const [icpResearching, setIcpResearching] = useState(false);
   const [showAddStakeholder, setShowAddStakeholder] = useState(false);
   const [showDealModal, setShowDealModal] = useState(false);
+  const [showActivityModal, setShowActivityModal] = useState(false);
+  const [showTasksModal, setShowTasksModal] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
   const [dealForm, setDealForm] = useState({
@@ -839,7 +882,7 @@ export default function AccountSourcingCompanyDetail() {
             background: "linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(242,247,255,0.98) 60%, rgba(255,244,236,0.98) 100%)",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(250px, 290px)", gap: 20, alignItems: "start" }}>
             <div style={{ minWidth: 0, maxWidth: 980 }}>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#eef5ff", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
                 <Brain size={13} />
@@ -901,21 +944,22 @@ export default function AccountSourcingCompanyDetail() {
               ) : null}
             </div>
 
-            <div style={{ display: "grid", gap: 10, alignContent: "start", minWidth: 230 }}>
-              <div style={{ ...cardStyle, padding: "12px 14px", display: "grid", gap: 8 }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ACCOUNT OWNER</div>
-                <AssignDropdown
-                  entityType="company"
-                  entityId={company.id}
-                  currentAssignedId={company.assigned_to_id}
-                  currentAssignedName={company.assigned_to_name || company.assigned_rep_name || company.assigned_rep}
-                  onAssigned={() => load()}
-                  label="Assign owner"
-                />
-                <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
-                  Assign ownership here. Stakeholder-level AE and SDR assignment stays inside the contacts section.
-                </div>
-              </div>
+            <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
+              <div style={{ display: "grid", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setShowTasksModal(true)}
+                style={{ width: "100%", border: `1px solid #d5e5ff`, background: "#eef5ff", color: colors.primary, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+              >
+                <CheckCircle2 size={13} /> Tasks
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowActivityModal(true)}
+                style={{ width: "100%", border: `1px solid ${colors.border}`, background: "#ffffff", color: colors.text, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+              >
+                <MessageSquare size={13} /> Account Activity {activityEntries.length > 0 ? `(${activityEntries.length})` : ""}
+              </button>
               <button
                 onClick={async () => {
                   setIcpResearching(true);
@@ -932,9 +976,9 @@ export default function AccountSourcingCompanyDetail() {
                     load();
                   }
                 }}
-                style={{ border: `1px solid #d0e8d0`, background: "#eef8ef", color: "#1f8f5f", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}
+                style={{ width: "100%", border: `1px solid #d0e8d0`, background: "#eef8ef", color: "#1f8f5f", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
               >
-                {icpResearching ? <Loader2 size={13} className="animate-spin" /> : <Brain size={13} />} ICP Research
+                {icpResearching ? <Loader2 size={13} className="animate-spin" /> : <Brain size={13} />} Refresh ICP Research
               </button>
 
               <button
@@ -953,7 +997,7 @@ export default function AccountSourcingCompanyDetail() {
                     load();
                   }
                 }}
-                style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}
+                style={{ width: "100%", border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
               >
                 {re ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Re-enrich
               </button>
@@ -961,10 +1005,44 @@ export default function AccountSourcingCompanyDetail() {
               <button
                 type="button"
                 onClick={() => setShowDealModal(true)}
-                style={{ border: `1px solid #cde5ff`, background: "#eff7ff", color: "#1f5ecc", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}
+                style={{ width: "100%", border: `1px solid #cde5ff`, background: "#eff7ff", color: "#1f5ecc", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
               >
                 <Plus size={13} /> Add to Deal
               </button>
+              </div>
+
+              <div style={{ ...cardStyle, padding: "12px 14px", display: "grid", gap: 10 }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ACCOUNT TEAM</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ color: colors.faint, fontSize: 11, fontWeight: 700, letterSpacing: 0.35 }}>ACCOUNT AE</div>
+                    <AssignDropdown
+                      entityType="company"
+                      entityId={company.id}
+                      currentAssignedId={company.assigned_to_id}
+                      currentAssignedName={company.assigned_to_name || company.assigned_rep_name || company.assigned_rep_email || company.assigned_rep}
+                      onAssigned={() => load()}
+                      role="ae"
+                      label="Assign AE"
+                    />
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ color: colors.faint, fontSize: 11, fontWeight: 700, letterSpacing: 0.35 }}>ACCOUNT SDR</div>
+                    <AssignDropdown
+                      entityType="company"
+                      entityId={company.id}
+                      currentAssignedId={company.sdr_id}
+                      currentAssignedName={company.sdr_name || company.sdr_email}
+                      onAssigned={() => load()}
+                      role="sdr"
+                      label="Assign SDR"
+                    />
+                  </div>
+                </div>
+                <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
+                  Account-level AE and SDR show up as the default team on prospects, and individual stakeholders can still be adjusted later.
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1211,12 +1289,8 @@ export default function AccountSourcingCompanyDetail() {
                   <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.text, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
                     <Target size={14} /> Action Plan
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 10 }}>
                     <ListCard title="Outreach Strategy" items={outreachItems} empty="No outreach strategy captured yet." />
-                    <div>
-                      <ListCard title="Next Steps" items={nextStepItems} empty="No next steps captured yet." />
-                      <SourceLinks items={nextStepSources} />
-                    </div>
                   </div>
                 </div>
               </Section>
@@ -1230,10 +1304,7 @@ export default function AccountSourcingCompanyDetail() {
                       <div style={{ color: colors.green, fontSize: 11, fontWeight: 700, letterSpacing: 0.3, marginBottom: 6 }}>HIRING SIGNALS</div>
                       <div style={{ display: "grid", gap: 6 }}>
                         {hiringNews.map((item, idx) => (
-                          <div key={`h-${idx}`} style={{ border: `1px solid #d0e8d0`, background: "#f0faf4", borderRadius: 10, padding: "10px 14px" }}>
-                            <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{item.title}</div>
-                            {item.snippet && <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>{item.snippet}</div>}
-                          </div>
+                          <NewsSignalCard key={`h-${idx}`} item={item} borderColor="#d0e8d0" background="#f0faf4" />
                         ))}
                       </div>
                     </div>
@@ -1243,10 +1314,7 @@ export default function AccountSourcingCompanyDetail() {
                       <div style={{ color: colors.primary, fontSize: 11, fontWeight: 700, letterSpacing: 0.3, marginBottom: 6 }}>FUNDING & INVESTMENT</div>
                       <div style={{ display: "grid", gap: 6 }}>
                         {fundingNews.map((item, idx) => (
-                          <div key={`f-${idx}`} style={{ border: `1px solid #cde5ff`, background: "#eff7ff", borderRadius: 10, padding: "10px 14px" }}>
-                            <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{item.title}</div>
-                            {item.snippet && <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>{item.snippet}</div>}
-                          </div>
+                          <NewsSignalCard key={`f-${idx}`} item={item} borderColor="#cde5ff" background="#eff7ff" />
                         ))}
                       </div>
                     </div>
@@ -1256,10 +1324,7 @@ export default function AccountSourcingCompanyDetail() {
                       <div style={{ color: colors.violet, fontSize: 11, fontWeight: 700, letterSpacing: 0.3, marginBottom: 6 }}>PRODUCT & PARTNERSHIPS</div>
                       <div style={{ display: "grid", gap: 6 }}>
                         {productNews.map((item, idx) => (
-                          <div key={`p-${idx}`} style={{ border: `1px solid #e0d5f5`, background: "#f8f4ff", borderRadius: 10, padding: "10px 14px" }}>
-                            <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{item.title}</div>
-                            {item.snippet && <div style={{ color: colors.sub, fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>{item.snippet}</div>}
-                          </div>
+                          <NewsSignalCard key={`p-${idx}`} item={item} borderColor="#e0d5f5" background="#f8f4ff" />
                         ))}
                       </div>
                     </div>
@@ -1296,31 +1361,22 @@ export default function AccountSourcingCompanyDetail() {
               )}
             </Section>
 
-            <Section title="Account Activity" icon={<MessageSquare size={15} color={colors.primary} />}>
-              {activityEntries.length === 0 ? (
-                <div style={{ color: colors.faint }}>No account activity captured yet.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {activityEntries.map((entry, idx) => (
-                    <div key={`activity-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "12px 14px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                        <div style={{ color: colors.text, fontWeight: 700 }}>
-                          {`${String(entry.message || entry.action || "Update")}${entry.actor_name ? ` by ${String(entry.actor_name)}` : ""}`}
-                        </div>
-                        <div style={{ color: colors.faint, fontSize: 12 }}>{typeof entry.at === "string" ? ts(String(entry.at)) : "-"}</div>
-                      </div>
-                      <div style={{ color: colors.sub, fontSize: 12.5, marginTop: 6 }}>
-                        {entry.actor_name ? `By ${String(entry.actor_name)}` : "By system"}
-                        {entry.actor_email ? ` • ${String(entry.actor_email)}` : ""}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Section>
-
             <div id="stakeholders-section">
             <Section title={`Stakeholders (${relevantContacts.length})`} icon={<Users size={15} color={colors.primary} />}>
+              <div
+                style={{
+                  marginBottom: 12,
+                  borderRadius: 12,
+                  border: "1px solid #f5ddaa",
+                  background: "#fff8e8",
+                  padding: "10px 12px",
+                  color: "#6c5a2f",
+                  fontSize: 12.5,
+                  lineHeight: 1.6,
+                }}
+              >
+                Company research is temporarily not pulling contacts automatically. Upload prospects from the Prospecting page or add stakeholders here when you have them.
+              </div>
               {/* Add Stakeholder button */}
               <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
                 <button
@@ -1379,7 +1435,7 @@ export default function AccountSourcingCompanyDetail() {
                 </div>
               )}
               {relevantContacts.length === 0 && icpPersonas.length === 0 ? (
-                <div style={{ color: colors.faint }}>No contacts discovered yet.</div>
+                <div style={{ color: colors.faint }}>No prospects have been added to this account yet.</div>
               ) : relevantContacts.length > 0 ? (
                 <div style={{ display: "grid", gap: 10 }}>
                   {relevantContacts.map((c) => <ContactItem key={c.id} contact={c} onChanged={load} />)}
@@ -1426,6 +1482,74 @@ export default function AccountSourcingCompanyDetail() {
             </Section>
         </div>
       </div>
+
+      <TaskCenterModal
+        isOpen={showTasksModal}
+        onClose={() => setShowTasksModal(false)}
+        entityType="company"
+        entityId={company.id}
+        entityLabel={company.name}
+        onChanged={() => {
+          void load();
+        }}
+      />
+
+      {showActivityModal && (
+        <>
+          <div onClick={() => setShowActivityModal(false)} style={{
+            position: "fixed", inset: 0, background: "rgba(15,23,42,0.28)",
+            backdropFilter: "blur(3px)", zIndex: 100,
+          }} />
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+            zIndex: 101, width: "min(860px, 92vw)", maxHeight: "82vh", background: "#fff",
+            borderRadius: 18, boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+            display: "grid", gridTemplateRows: "auto minmax(0,1fr)", overflow: "hidden",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 14, padding: "20px 22px 16px", borderBottom: `1px solid ${colors.border}` }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800 }}>
+                  <MessageSquare size={16} color={colors.primary} />
+                  <span>Account Activity</span>
+                </div>
+                <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
+                  Review assignment changes, enrichment updates, and sourcing actions without losing your place on the company page.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowActivityModal(false)}
+                style={{
+                  width: 34, height: 34, borderRadius: 10, border: `1px solid ${colors.border}`,
+                  background: "#fff", color: colors.sub, display: "grid", placeItems: "center", cursor: "pointer",
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ overflowY: "auto", padding: 18, background: "#fbfdff", display: "grid", gap: 10 }}>
+              {activityEntries.length === 0 ? (
+                <div style={{ color: colors.faint, padding: "8px 4px" }}>No account activity captured yet.</div>
+              ) : (
+                activityEntries.map((entry, idx) => (
+                  <div key={`activity-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#ffffff", borderRadius: 14, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ color: colors.text, fontWeight: 700 }}>
+                        {`${String(entry.message || entry.action || "Update")}${entry.actor_name ? ` by ${String(entry.actor_name)}` : ""}`}
+                      </div>
+                      <div style={{ color: colors.faint, fontSize: 12 }}>{typeof entry.at === "string" ? ts(String(entry.at)) : "-"}</div>
+                    </div>
+                    <div style={{ color: colors.sub, fontSize: 12.5, marginTop: 6 }}>
+                      {entry.actor_name ? `By ${String(entry.actor_name)}` : "By system"}
+                      {entry.actor_email ? ` • ${String(entry.actor_email)}` : ""}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── Add Stakeholder Modal ──────────────────────────────────── */}
       {showDealModal && (
