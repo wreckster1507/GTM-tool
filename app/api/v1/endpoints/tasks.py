@@ -127,28 +127,31 @@ async def _build_workspace_task_reads(session: DBSession, tasks: list[Task]) -> 
 
     reads: list[TaskWorkspaceRead] = []
     for task in base_reads:
-        entity_name = "Unknown record"
+        entity_name = ""
         entity_subtitle = None
         entity_link = "/"
 
         if task.entity_type == "company":
             company = company_map.get(task.entity_id)
-            if company:
-                entity_name = company.name
-                entity_subtitle = company.domain
+            if not company:
+                continue
+            entity_name = company.name
+            entity_subtitle = company.domain
             entity_link = f"/account-sourcing/{task.entity_id}"
         elif task.entity_type == "contact":
             contact = contact_map.get(task.entity_id)
-            if contact:
-                entity_name = f"{contact.first_name} {contact.last_name}".strip()
-                entity_subtitle = contact.title or contact.email or contact.company_name
+            if not contact:
+                continue
+            entity_name = f"{contact.first_name} {contact.last_name}".strip() or contact.email or contact.company_name or "Unnamed prospect"
+            entity_subtitle = contact.title or contact.email or contact.company_name
             entity_link = f"/account-sourcing/contacts/{task.entity_id}"
         elif task.entity_type == "deal":
             deal = deal_map.get(task.entity_id)
-            if deal:
-                entity_name = deal.name
-                entity_subtitle = deal.stage.replace("_", " ")
-            entity_link = f"/deals/{task.entity_id}"
+            if not deal:
+                continue
+            entity_name = deal.name
+            entity_subtitle = deal.stage.replace("_", " ")
+            entity_link = f"/pipeline?deal={task.entity_id}"
 
         reads.append(
             TaskWorkspaceRead(
@@ -211,11 +214,6 @@ async def list_workspace_tasks(
     if entity_type:
         _validate_entity_type(entity_type)
 
-    ownership_filter = or_(
-        Task.assigned_to_id == current_user.id,
-        and_(Task.assigned_to_id.is_(None), Task.assigned_role == current_user.role),
-        and_(Task.created_by_id == current_user.id, Task.task_type == "manual"),
-    )
     status_rank = case(
         (Task.status == "open", 0),
         (Task.status == "completed", 1),
@@ -227,11 +225,14 @@ async def list_workspace_tasks(
         else_=2,
     )
 
-    stmt = (
-        select(Task)
-        .where(ownership_filter)
-        .order_by(status_rank, priority_rank, Task.updated_at.desc())
-    )
+    stmt = select(Task).order_by(status_rank, priority_rank, Task.updated_at.desc())
+    if current_user.role != "admin":
+        ownership_filter = or_(
+            Task.assigned_to_id == current_user.id,
+            and_(Task.assigned_to_id.is_(None), Task.assigned_role == current_user.role),
+            and_(Task.created_by_id == current_user.id, Task.task_type == "manual"),
+        )
+        stmt = stmt.where(ownership_filter)
     if not include_closed:
         stmt = stmt.where(Task.status == "open")
     if task_type:

@@ -271,9 +271,9 @@ function UploadPanel({
           >
             <Upload size={32} color="#ffffff" />
           </div>
-          <div style={{ fontWeight: 800, color: colors.text, fontSize: 32 }}>Import Target Accounts</div>
+          <div style={{ fontWeight: 800, color: colors.text, fontSize: 32 }}>Migrate Accounts Workbook</div>
           <div style={{ color: colors.sub, marginTop: 10, lineHeight: 1.6, fontSize: 15, maxWidth: 760, marginInline: "auto" }}>
-            Start with company names or a lightweight workbook, then let Beacon build presentable research briefs with fit, timing, proof points, risks, and outreach guidance.
+            Use this for account-led spreadsheets like your master ICP or target-account workbook. Beacon will import the companies first without forcing enrichment, then reps can enrich only the accounts they want to work.
           </div>
           <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
             <button
@@ -293,7 +293,7 @@ function UploadPanel({
               Download Example Template
             </button>
             <span style={{ color: colors.faint, fontSize: 12, alignSelf: "center" }}>
-              Recommended columns: `Company Name`, `Domain`, `Industry`, `AE`, `SDR`, `Classification`, `Contact`, `Title`, `Email`
+              Best for account-led files with columns like `Accounts`, `Region`, `AE`, `SDR`, `Headquarters`, `Classification`, and `Remarks`
             </span>
           </div>
           <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>

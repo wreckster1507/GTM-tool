@@ -13,7 +13,7 @@ from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdat
 from app.repositories.contact import ContactRepository
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
-    parse_tabular_file,
+    parse_prospect_upload_file,
     refresh_company_prospecting_fields,
     refresh_contact_sequence_plan,
     row_to_company_fields,
@@ -235,7 +235,7 @@ async def import_contacts_csv(
         raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")
 
     content = await file.read()
-    rows = parse_tabular_file(file.filename or "prospects.csv", content)
+    rows = parse_prospect_upload_file(file.filename or "prospects.csv", content)
     if not rows:
         raise HTTPException(status_code=400, detail="No rows found in the upload")
 

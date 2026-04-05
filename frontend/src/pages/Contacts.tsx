@@ -536,7 +536,7 @@ export default function Contacts() {
                   }}
                 >
                   {uploadingProspects ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                  Upload Prospects CSV
+                  Migrate Prospects
                   <input
                     type="file"
                     accept=".csv,.xlsx"
@@ -642,7 +642,7 @@ export default function Contacts() {
                   Prospect sourcing update
                 </div>
                 <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6, maxWidth: 860 }}>
-                  Beacon is temporarily not pulling contacts during company research. Upload your prospect CSV here to map stakeholders onto sourced companies. If a company is missing, Beacon will ask whether you want to add and enrich that account now.
+                  Beacon is temporarily not pulling contacts during company research. Use this to migrate prospects into Beacon and map them onto sourced companies. If a company is missing, Beacon will ask whether you want to add and enrich that account now.
                 </div>
               </div>
             </div>

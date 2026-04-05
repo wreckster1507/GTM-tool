@@ -248,7 +248,9 @@ export default function TasksPage() {
           <div>
             <h2 style={{ fontSize: 28, fontWeight: 800, color: colors.text, marginBottom: 8 }}>Tasks</h2>
             <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
-              Everything assigned to {user?.name || "you"} in one place. Beacon recommendations stay alongside manual follow-ups so reps can triage work quickly and then jump into the right company, prospect, or deal.
+              {user?.role === "admin"
+                ? "The full workspace task queue in one place. Beacon recommendations stay alongside manual follow-ups so you can review what the team should tackle next."
+                : `Everything assigned to ${user?.name || "you"} in one place. Beacon recommendations stay alongside manual follow-ups so reps can triage work quickly and then jump into the right company, prospect, or deal.`}
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

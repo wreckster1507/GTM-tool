@@ -1625,6 +1625,45 @@ def _normalize_row(headers: list[str], values: list[str]) -> dict[str, str]:
     return row
 
 
+def _header_score(values: list[str]) -> int:
+    normalized = [_normalize_header(value) for value in values if (value or "").strip()]
+    if not normalized:
+        return 0
+
+    matched_fields: set[str] = set()
+    for field, aliases in _ALIASES.items():
+        if any(alias in normalized for alias in aliases):
+            matched_fields.add(field)
+
+    score = len(matched_fields)
+    has_company = "name" in matched_fields or "domain" in matched_fields
+    has_contact = (
+        "contact_name" in matched_fields
+        or "contact_email" in matched_fields
+        or "contact_title" in matched_fields
+    )
+    if has_company:
+        score += 2
+    if has_contact:
+        score += 2
+    return score
+
+
+def _detect_header_row(sheet_rows: list[list[str]]) -> tuple[int, list[str]]:
+    best_index = 0
+    best_headers: list[str] = []
+    best_score = -1
+
+    for idx, values in enumerate(sheet_rows[:12]):
+        score = _header_score(values)
+        if score > best_score:
+            best_index = idx
+            best_headers = [_normalize_header(value) for value in values]
+            best_score = score
+
+    return best_index, best_headers
+
+
 def parse_csv(content: bytes) -> list[dict[str, str]]:
     """Parse CSV bytes into normalized dicts. Skip rows without name or domain."""
     text = content.decode("utf-8-sig")
@@ -1654,20 +1693,20 @@ def _read_xlsx_shared_strings(archive: zipfile.ZipFile) -> list[str]:
     return strings
 
 
-def _sheet_paths(archive: zipfile.ZipFile) -> list[str]:
+def _sheet_entries(archive: zipfile.ZipFile) -> list[tuple[str, str]]:
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     rel_map = {
         rel.attrib["Id"]: rel.attrib["Target"]
         for rel in rels.findall("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship")
     }
-    paths: list[str] = []
+    entries: list[tuple[str, str]] = []
     for sheet in workbook.findall("main:sheets/main:sheet", _XLSX_NS):
         rel_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
         target = rel_map.get(rel_id or "")
         if target:
-            paths.append(f"xl/{target.lstrip('/')}")
-    return paths
+            entries.append((sheet.attrib.get("name", ""), f"xl/{target.lstrip('/')}"))
+    return entries
 
 
 def _xlsx_column_index(cell_ref: str) -> int:
@@ -1678,42 +1717,52 @@ def _xlsx_column_index(cell_ref: str) -> int:
     return max(index - 1, 0)
 
 
+def _read_xlsx_sheet_rows(archive: zipfile.ZipFile, sheet_path: str, shared_strings: list[str]) -> list[list[str]]:
+    sheet = ET.fromstring(archive.read(sheet_path))
+    sheet_rows: list[list[str]] = []
+
+    for row in sheet.findall("main:sheetData/main:row", _XLSX_NS):
+        values: list[str] = []
+        for cell in row.findall("main:c", _XLSX_NS):
+            cell_ref = cell.attrib.get("r", "")
+            target_idx = _xlsx_column_index(cell_ref) if cell_ref else len(values)
+            while len(values) < target_idx:
+                values.append("")
+
+            cell_type = cell.attrib.get("t")
+            value_node = cell.find("main:v", _XLSX_NS)
+            if cell_type == "s" and value_node is not None and value_node.text is not None:
+                shared_idx = int(value_node.text)
+                values.append(shared_strings[shared_idx] if shared_idx < len(shared_strings) else "")
+            elif cell_type == "inlineStr":
+                text_node = cell.find("main:is/main:t", _XLSX_NS)
+                values.append(text_node.text if text_node is not None else "")
+            else:
+                values.append(value_node.text if value_node is not None and value_node.text is not None else "")
+        sheet_rows.append(values)
+
+    return sheet_rows
+
+
 def parse_xlsx(content: bytes) -> list[dict[str, str]]:
     """Parse all sheets of an XLSX workbook into normalized dict rows."""
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        sheet_paths = _sheet_paths(archive)
-        if not sheet_paths:
+        sheet_entries = _sheet_entries(archive)
+        if not sheet_entries:
             return []
 
         shared_strings = _read_xlsx_shared_strings(archive)
         rows: list[dict[str, str]] = []
-        for sheet_path in sheet_paths:
-            sheet = ET.fromstring(archive.read(sheet_path))
-            headers: list[str] = []
+        for _sheet_name, sheet_path in sheet_entries:
+            sheet_rows = _read_xlsx_sheet_rows(archive, sheet_path, shared_strings)
+            if not sheet_rows:
+                continue
 
-            for idx, row in enumerate(sheet.findall("main:sheetData/main:row", _XLSX_NS)):
-                values: list[str] = []
-                for cell in row.findall("main:c", _XLSX_NS):
-                    cell_ref = cell.attrib.get("r", "")
-                    target_idx = _xlsx_column_index(cell_ref) if cell_ref else len(values)
-                    while len(values) < target_idx:
-                        values.append("")
+            header_index, headers = _detect_header_row(sheet_rows)
+            if not headers:
+                continue
 
-                    cell_type = cell.attrib.get("t")
-                    value_node = cell.find("main:v", _XLSX_NS)
-                    if cell_type == "s" and value_node is not None and value_node.text is not None:
-                        shared_idx = int(value_node.text)
-                        values.append(shared_strings[shared_idx] if shared_idx < len(shared_strings) else "")
-                    elif cell_type == "inlineStr":
-                        text_node = cell.find("main:is/main:t", _XLSX_NS)
-                        values.append(text_node.text if text_node is not None else "")
-                    else:
-                        values.append(value_node.text if value_node is not None and value_node.text is not None else "")
-
-                if idx == 0:
-                    headers = [_normalize_header(value) for value in values]
-                    continue
-
+            for values in sheet_rows[header_index + 1:]:
                 if not any((value or "").strip() for value in values):
                     continue
 
@@ -1726,10 +1775,65 @@ def parse_xlsx(content: bytes) -> list[dict[str, str]]:
         return rows
 
 
+def parse_prospect_xlsx(content: bytes) -> list[dict[str, str]]:
+    """
+    Parse the fixed Beacon prospect workbook structure:
+    - sheet name: Prospecting
+    - row 1: grouped section labels
+    - row 2: actual headers
+    - row 3+: prospect rows
+    """
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        sheet_entries = _sheet_entries(archive)
+        if not sheet_entries:
+            return []
+
+        prospecting_sheet = next(
+            ((name, path) for name, path in sheet_entries if name.strip().lower() == "prospecting"),
+            None,
+        )
+        if not prospecting_sheet:
+            return []
+
+        _, sheet_path = prospecting_sheet
+        shared_strings = _read_xlsx_shared_strings(archive)
+        sheet_rows = _read_xlsx_sheet_rows(archive, sheet_path, shared_strings)
+        if len(sheet_rows) < 3:
+            return []
+
+        headers = [_normalize_header(value) for value in sheet_rows[1]]
+        rows: list[dict[str, str]] = []
+        for values in sheet_rows[2:]:
+            if not any((value or "").strip() for value in values):
+                continue
+
+            cleaned = _normalize_row(headers, values)
+            has_company = any(cleaned.get(alias) for alias in _ALIASES["name"])
+            has_contact = any(
+                cleaned.get(alias)
+                for alias in (
+                    _ALIASES["contact_name"]
+                    + _ALIASES["contact_email"]
+                    + _ALIASES["contact_title"]
+                )
+            )
+            if has_company or has_contact:
+                rows.append(cleaned)
+
+        return rows
+
+
 def parse_tabular_file(filename: str, content: bytes) -> list[dict[str, str]]:
     lower_name = (filename or "").lower()
     if lower_name.endswith(".xlsx"):
         return parse_xlsx(content)
+    return parse_csv(content)
+
+
+def parse_prospect_upload_file(filename: str, content: bytes) -> list[dict[str, str]]:
+    lower_name = (filename or "").lower()
+    if lower_name.endswith(".xlsx"):
+        return parse_prospect_xlsx(content)
     return parse_csv(content)
 
 

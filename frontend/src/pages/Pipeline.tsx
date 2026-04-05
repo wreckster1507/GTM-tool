@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
-import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, UserCircle2 } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, Upload, UserCircle2 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, User } from "../types";
@@ -672,6 +672,7 @@ function ProspectDetailDrawer({
 
 export default function Pipeline() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin } = useAuth();
   const [tab, setTab] = useState<PipelineTab>("deal");
   const [dealBoard, setDealBoard] = useState<Record<string, Deal[]>>({});
@@ -691,6 +692,7 @@ export default function Pipeline() {
   const [selectedProspect, setSelectedProspect] = useState<Contact | null>(null);
   const [prospectActivities, setProspectActivities] = useState<Activity[]>([]);
   const [loadingProspectActivities, setLoadingProspectActivities] = useState(false);
+  const [migratingProspects, setMigratingProspects] = useState(false);
   const [convertingProspect, setConvertingProspect] = useState(false);
   const [pendingConvertProspect, setPendingConvertProspect] = useState<Contact | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
@@ -704,6 +706,7 @@ export default function Pipeline() {
   const [importingCrm, setImportingCrm] = useState(false);
   const [crmImportResult, setCrmImportResult] = useState<CrmImportResponse | null>(null);
   const [crmImportError, setCrmImportError] = useState("");
+  const prospectImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
   const allDeals = useMemo(() => Object.values(dealBoard).flat(), [dealBoard]);
@@ -917,10 +920,57 @@ export default function Pipeline() {
       return next;
     });
     setSelectedDeal(null);
+    if (searchParams.get("deal") === dealId) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("deal");
+        return next;
+      }, { replace: true });
+    }
   };
 
   const handleDealCreated = (deal: Deal) => setDealBoard((current) => ({ ...current, [deal.stage]: [...(current[deal.stage] ?? []), deal] }));
   const clearDragState = () => setDragItem(null);
+
+  useEffect(() => {
+    const requestedDealId = searchParams.get("deal");
+    if (!requestedDealId) return;
+
+    const existing =
+      Object.values(dealBoard)
+        .flat()
+        .find((deal) => deal.id === requestedDealId) ?? null;
+
+    if (existing) {
+      if (!selectedDeal || selectedDeal.id !== existing.id) {
+        setTab("deal");
+        setSelectedDeal(existing);
+      }
+      return;
+    }
+
+    if (currentBoardLoading) return;
+
+    let cancelled = false;
+    void dealsApi.get(requestedDealId)
+      .then((deal) => {
+        if (cancelled) return;
+        setTab("deal");
+        setSelectedDeal(deal);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.delete("deal");
+          return next;
+        }, { replace: true });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, dealBoard, currentBoardLoading, selectedDeal, setSearchParams]);
 
   const handleDealDrop = async (targetStage: string) => {
     if (!dragItem || dragItem.kind !== "deal") return;
@@ -1018,6 +1068,24 @@ export default function Pipeline() {
     }
   };
 
+  const handleProspectMigration = async (file: File) => {
+    setMigratingProspects(true);
+    try {
+      const result = await contactsApi.importCsv(file);
+      await loadBoard();
+      const missingMessage = result.missing_company_count
+        ? `\nMissing companies: ${result.missing_company_count} (left untouched so you can enrich only when needed)`
+        : "";
+      window.alert(
+        `Prospect migration complete.\nImported rows: ${result.imported_rows}\nCreated: ${result.created_count}\nUpdated: ${result.updated_count}\nSkipped: ${result.skipped_count}${missingMessage}`,
+      );
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to migrate prospects");
+    } finally {
+      setMigratingProspects(false);
+    }
+  };
+
   return (
     <>
       <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", height: "100%", minHeight: 0, gap: 0 }}>
@@ -1085,7 +1153,34 @@ export default function Pipeline() {
               <button className="crm-button primary" onClick={() => setCreateDealStage(effectiveDealStages.find((stage) => stage.group === "active")?.id ?? "reprospect")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Plus size={14} />New Deal</button>
             </div>
           ) : (
-            <button className="crm-button primary" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Target size={14} />Open Prospecting</button>
+            <div style={{ display: "grid", gap: 10 }}>
+              <button
+                className="crm-button primary"
+                disabled={migratingProspects}
+                onClick={() => prospectImportInputRef.current?.click()}
+                style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor, opacity: migratingProspects ? 0.75 : 1 }}
+              >
+                <Upload size={14} />
+                {migratingProspects ? "Migrating..." : "Migrate Prospects"}
+              </button>
+              <input
+                ref={prospectImportInputRef}
+                type="file"
+                accept=".csv,.xlsx"
+                style={{ display: "none" }}
+                disabled={migratingProspects}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    void handleProspectMigration(file);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
+              <button className="crm-button soft" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Target size={14} />Open Prospecting
+              </button>
+            </div>
           )}
         </div>
 
@@ -1116,7 +1211,14 @@ export default function Pipeline() {
                           <LoadingCard key={`${stage.id}-skeleton-${skeletonIndex}`} kind={tab === "deal" ? "deal" : "prospect"} />
                         ))
                       ) : tab === "deal" ? (
-                        dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => setSelectedDeal(deal)} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
+                        dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => {
+                          setSelectedDeal(deal);
+                          setSearchParams((current) => {
+                            const next = new URLSearchParams(current);
+                            next.set("deal", deal.id);
+                            return next;
+                          }, { replace: true });
+                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
                         prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
@@ -1130,7 +1232,14 @@ export default function Pipeline() {
       </div>
 
       {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} stages={effectiveDealStages} />}
-      {selectedDeal && <DealDetailDrawer deal={selectedDeal} companies={companies} users={users} stages={effectiveDealStages} onClose={() => setSelectedDeal(null)} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
+      {selectedDeal && <DealDetailDrawer deal={selectedDeal} companies={companies} users={users} stages={effectiveDealStages} onClose={() => {
+        setSelectedDeal(null);
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.delete("deal");
+          return next;
+        }, { replace: true });
+      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
       {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} onClose={() => setSelectedProspect(null)} />}
       {pendingConvertProspect && (
         <>
