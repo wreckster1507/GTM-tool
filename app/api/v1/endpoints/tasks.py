@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import and_, case, or_, select
 
 from app.core.dependencies import CurrentUser, DBSession
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
@@ -48,6 +48,12 @@ def _validate_status(status: str) -> None:
 def _validate_assigned_role(role: str) -> None:
     if role not in TASK_ASSIGNED_ROLES:
         raise ValidationError(f"assigned_role must be one of: {sorted(TASK_ASSIGNED_ROLES)}")
+
+
+def _can_delete_task(task: Task, current_user: User) -> bool:
+    if current_user.role == "admin":
+        return True
+    return bool(task.created_by_id and task.created_by_id == current_user.id)
 
 
 async def _build_task_reads(session: DBSession, tasks: list[Task]) -> list[TaskRead]:
@@ -329,3 +335,20 @@ async def accept_task(task_id: UUID, session: DBSession, current_user: CurrentUs
     await session.refresh(task)
     reads = await _build_task_reads(session, [task])
     return reads[0]
+
+
+@router.delete("/{task_id}", status_code=204)
+async def delete_task(task_id: UUID, session: DBSession, current_user: CurrentUser):
+    task = await session.get(Task, task_id)
+    if not task:
+        raise NotFoundError("Task not found")
+    if not _can_delete_task(task, current_user):
+        raise ForbiddenError("Only admins or the user who created this task can delete it")
+
+    comments = (
+        await session.execute(select(TaskComment).where(TaskComment.task_id == task_id))
+    ).scalars().all()
+    for comment in comments:
+        await session.delete(comment)
+    await session.delete(task)
+    await session.commit()

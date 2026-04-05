@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
+  GripVertical,
   Link2,
   Mail,
+  Palette,
   Plus,
   RefreshCw,
   Shield,
@@ -14,9 +18,9 @@ import {
 } from "lucide-react";
 import { settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import type { GmailSyncSettings, OutreachContentSettings, OutreachTemplateStep } from "../types";
+import type { DealStageSettings, GmailSyncSettings, OutreachContentSettings, OutreachTemplateStep } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -45,12 +49,17 @@ function createTemplate(stepNumber: number): OutreachTemplateStep {
   };
 }
 
+function slugifyStageId(label: string) {
+  return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "new_stage";
+}
+
 export default function SettingsPage() {
   const { isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>("email-sync");
   const [gmail, setGmail] = useState<GmailSyncSettings | null>(null);
   const [inbox, setInbox] = useState("zippy@beacon.li");
   const [outreachContent, setOutreachContent] = useState<OutreachContentSettings | null>(null);
+  const [dealStages, setDealStages] = useState<DealStageSettings | null>(null);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingInbox, setSavingInbox] = useState(false);
@@ -58,6 +67,7 @@ export default function SettingsPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [savingOutreach, setSavingOutreach] = useState(false);
+  const [savingStages, setSavingStages] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,15 +85,17 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, outreachContentData, outreachTiming] = await Promise.all([
+      const [gmailData, outreachContentData, outreachTiming, dealStageData] = await Promise.all([
         settingsApi.getGmailSync(),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
+        settingsApi.getDealStages(),
       ]);
       setGmail(gmailData);
       setInbox(gmailData.inbox || "zippy@beacon.li");
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
+      setDealStages(dealStageData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -245,6 +257,78 @@ export default function SettingsPage() {
     }
   };
 
+  const updateStage = (index: number, field: "label" | "group" | "color", value: string) => {
+    setDealStages((current) => {
+      if (!current) return current;
+      const nextStages = current.stages.map((stage, stageIndex) =>
+        stageIndex === index ? { ...stage, [field]: value } : stage
+      );
+      return { stages: nextStages };
+    });
+  };
+
+  const moveStage = (index: number, direction: -1 | 1) => {
+    setDealStages((current) => {
+      if (!current) return current;
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.stages.length) return current;
+      const nextStages = [...current.stages];
+      const [item] = nextStages.splice(index, 1);
+      nextStages.splice(nextIndex, 0, item);
+      return { stages: nextStages };
+    });
+  };
+
+  const addStage = () => {
+    setDealStages((current) => {
+      const existing = current?.stages ?? [];
+      const baseLabel = `New Stage ${existing.length + 1}`;
+      let nextId = slugifyStageId(baseLabel);
+      let suffix = 2;
+      while (existing.some((stage) => stage.id === nextId)) {
+        nextId = `${slugifyStageId(baseLabel)}_${suffix}`;
+        suffix += 1;
+      }
+      return {
+        stages: [...existing, { id: nextId, label: baseLabel, group: "active", color: "#64748b" }],
+      };
+    });
+  };
+
+  const removeStage = (index: number) => {
+    setDealStages((current) => {
+      if (!current || current.stages.length <= 1) return current;
+      return { stages: current.stages.filter((_, stageIndex) => stageIndex !== index) };
+    });
+  };
+
+  const handleSaveStages = async () => {
+    if (!dealStages) return;
+    setSavingStages(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const normalized = {
+        stages: dealStages.stages.map((stage, index) => {
+          const label = stage.label.trim() || `Stage ${index + 1}`;
+          return {
+            id: stage.id || slugifyStageId(label),
+            label,
+            group: (stage.group === "closed" ? "closed" : "active") as "closed" | "active",
+            color: stage.color || "#64748b",
+          };
+        }),
+      };
+      const saved = await settingsApi.updateDealStages(normalized);
+      setDealStages(saved);
+      setMessage("Pipeline slimlines saved. The deal board now follows this shared lane configuration.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save deal stages");
+    } finally {
+      setSavingStages(false);
+    }
+  };
+
   const tabButton = (id: SettingsTab, label: string, icon: ReactNode) => (
     <button
       key={id}
@@ -272,6 +356,7 @@ export default function SettingsPage() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {tabButton("email-sync", "Email Sync", <Mail size={15} />)}
             {tabButton("outreach-ai", "Outreach AI", <Sparkles size={15} />)}
+            {tabButton("pipeline", "Pipeline", <GripVertical size={15} />)}
           </div>
         </div>
 
@@ -416,7 +501,7 @@ export default function SettingsPage() {
               </div>
             </section>
           </>
-        ) : (
+        ) : activeTab === "outreach-ai" ? (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
               <div>
@@ -620,6 +705,95 @@ export default function SettingsPage() {
               </div>
             </div>
           </>
+        ) : (
+          <div style={{ display: "grid", gap: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#eef5ff", color: "#175089", borderColor: "#d8e6fb" }}>
+                  <GripVertical size={14} />
+                  Pipeline
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Deal slimlines</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Control the shared deal board lanes here. Admins can rename, reorder, add, or remove slimlines, and the Pipeline page will use this exact layout.
+                </p>
+              </div>
+              {isAdmin && (
+                <button className="crm-button soft" type="button" onClick={addStage} disabled={!dealStages}>
+                  <Plus size={15} />
+                  Add slimline
+                </button>
+              )}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+              {(dealStages?.stages ?? []).map((stage, index) => (
+                <div key={stage.id} style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: stage.color }} />
+                      <strong style={{ color: "#182042" }}>Slimline {index + 1}</strong>
+                      <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>{stage.id}</span>
+                    </div>
+                    {isAdmin && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button className="crm-button soft" type="button" onClick={() => moveStage(index, -1)} disabled={index === 0}><ArrowUp size={15} />Up</button>
+                        <button className="crm-button soft" type="button" onClick={() => moveStage(index, 1)} disabled={index === (dealStages?.stages.length ?? 0) - 1}><ArrowDown size={15} />Down</button>
+                        <button className="crm-button soft" type="button" onClick={() => removeStage(index)} disabled={(dealStages?.stages.length ?? 0) <= 1}><Trash2 size={15} />Delete</button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 180px 160px", gap: 14 }}>
+                    <div>
+                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Slimline name</div>
+                      <input
+                        value={stage.label}
+                        onChange={(event) => updateStage(index, "label", event.target.value)}
+                        disabled={!isAdmin}
+                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Group</div>
+                      <select
+                        value={stage.group}
+                        onChange={(event) => updateStage(index, "group", event.target.value)}
+                        disabled={!isAdmin}
+                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                      >
+                        <option value="active">Active</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Color</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <input type="color" value={stage.color} onChange={(event) => updateStage(index, "color", event.target.value)} disabled={!isAdmin} style={{ width: 52, height: 44, border: "1px solid #d8e2ef", borderRadius: 10, background: "#fff" }} />
+                        <span className="crm-chip" style={{ background: "#f8fafc", color: "#55657a", borderColor: "#e7eaf5" }}><Palette size={13} />{stage.color}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                    These slimlines define the shared deal board order and names across Beacon, including the ClickUp CRM import flow.
+                  </p>
+                  <button className="crm-button primary" type="button" onClick={handleSaveStages} disabled={savingStages || !dealStages}>
+                    {savingStages ? <RefreshCw size={15} className="animate-spin" /> : <Shield size={15} />}
+                    Save pipeline slimlines
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 13 }}>
+                  Only admins can update the shared deal slimlines. Everyone else sees the same board layout in Pipeline.
+                </p>
+              )}
+            </div>
+          </div>
         )}
       </section>
     </div>

@@ -106,5 +106,17 @@ class Settings(BaseSettings):
     AIRCALL_WEBHOOK_URL: str = ""
     AIRCALL_DEFAULT_NUMBER: str = ""  # E.164 digits of the default outbound number
 
+    # tl;dv meeting intelligence
+    TLDV_API_BASE: str = "https://pasta.tldv.io/v1alpha1"
+    TLDV_API_KEY: str = ""
+    TLDV_SYNC_LOOKBACK_DAYS: int = 365
+
+    # ClickUp migration
+    CLICKUP_API_BASE: str = "https://api.clickup.com/api/v2"
+    CLICKUP_API_TOKEN: str = ""
+    CLICKUP_TEAM_ID: str = ""
+    CLICKUP_SPACE_ID: str = ""
+    CLICKUP_DEALS_LIST_ID: str = ""
+
 
 settings = Settings()

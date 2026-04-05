@@ -14,6 +14,8 @@ Instantly webhook events handled:
   lead_not_interested → update contact label, log activity
   lead_meeting_booked → update sequence_status to "meeting_booked", log activity
 """
+import asyncio
+import hashlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -25,10 +27,14 @@ from sqlmodel import select
 logger = logging.getLogger(__name__)
 
 from app.core.dependencies import DBSession
+from app.clients.aircall import AircallClient, AircallError
+from app.config import settings
 from app.models.activity import Activity
 from app.models.contact import Contact
-from app.models.deal import Deal
+from app.models.deal import Deal, DealContact
 from app.models.outreach import OutreachSequence
+from app.services.tasks import refresh_system_tasks_for_entity
+from app.services.tldv_sync import sync_tldv_meeting
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -99,6 +105,422 @@ async def _create_activity(
     await session.commit()
     await session.refresh(activity)
     return activity
+
+
+def _clean_phone(value: str | None) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+async def _find_contact_by_phone(session, phone: str | None) -> Optional[Contact]:
+    clean = _clean_phone(phone)
+    if not clean:
+        return None
+
+    result = await session.execute(
+        select(Contact).where(Contact.phone.isnot(None)).limit(100)
+    )
+    candidates = result.scalars().all()
+    for candidate in candidates:
+        candidate_phone = _clean_phone(candidate.phone)
+        if not candidate_phone:
+            continue
+        if candidate_phone == clean or candidate_phone.endswith(clean[-9:]) or clean.endswith(candidate_phone[-9:]):
+            return candidate
+    return None
+
+
+async def _find_best_deal_for_contact(session, contact_id: Optional[UUID]) -> Optional[Deal]:
+    if not contact_id:
+        return None
+
+    result = await session.execute(
+        select(Deal)
+        .join(DealContact, DealContact.deal_id == Deal.id)
+        .where(DealContact.contact_id == contact_id)
+        .order_by(
+            Deal.stage.not_in(["closed_won", "closed_lost"]).desc(),
+            Deal.last_activity_at.desc().nullslast(),
+            Deal.updated_at.desc(),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+_AIRCALL_CI_EVENTS = {
+    "summary.created",
+    "topics.created",
+    "transcription.created",
+    "action_item.created",
+    "sentiment.created",
+}
+_AIRCALL_CALL_ENRICH_EVENTS = {
+    "call.ended",
+    "call.commented",
+    "call.tagged",
+    "call.voicemail_left",
+    "call.comm_assets_generated",
+}
+_AIRCALL_NON_FATAL_STATUS_CODES = {403, 404}
+
+
+def _hash_signature(*parts: Any) -> str:
+    raw = "|".join(str(part or "").strip() for part in parts if str(part or "").strip())
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12] if raw else ""
+
+
+def _flatten_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = [_flatten_text(item) for item in value]
+        return " ".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        parts: list[str] = []
+        if isinstance(value.get("utterances"), list):
+            utterance_parts = [
+                str(item.get("text") or "").strip()
+                for item in value.get("utterances") or []
+                if isinstance(item, dict) and str(item.get("text") or "").strip()
+            ]
+            if utterance_parts:
+                parts.append(" ".join(utterance_parts))
+        for key in (
+            "content",
+            "text",
+            "summary",
+            "topic",
+            "label",
+            "feedback",
+            "name",
+        ):
+            part = _flatten_text(value.get(key))
+            if part:
+                parts.append(part)
+        if isinstance(value.get("summary_template_results"), list):
+            template_parts = [
+                _flatten_text(item.get("content"))
+                for item in value.get("summary_template_results") or []
+                if isinstance(item, dict)
+            ]
+            parts.extend(part for part in template_parts if part)
+        deduped = list(dict.fromkeys(part for part in parts if part))
+        return " ".join(deduped).strip()
+    return str(value).strip()
+
+
+def _normalize_aircall_summary(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    summary_obj = payload.get("summary") if isinstance(payload.get("summary"), dict) else payload
+    parts = []
+    content = _flatten_text(summary_obj.get("content")) if isinstance(summary_obj, dict) else ""
+    if content:
+        parts.append(content)
+    if isinstance(summary_obj, dict):
+        for item in summary_obj.get("summary_template_results") or []:
+            if not isinstance(item, dict):
+                continue
+            item_name = str(item.get("name") or "").strip()
+            item_content = _flatten_text(item.get("content"))
+            if item_name and item_content:
+                parts.append(f"{item_name}: {item_content}")
+            elif item_content:
+                parts.append(item_content)
+    deduped = list(dict.fromkeys(part for part in parts if part))
+    return " ".join(deduped).strip() or None
+
+
+def _normalize_aircall_topics(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    topic_obj = payload.get("topic") if isinstance(payload.get("topic"), dict) else payload
+    raw_topics = []
+    if isinstance(topic_obj, dict):
+        raw_topics = topic_obj.get("content") or topic_obj.get("topics") or []
+    elif isinstance(payload.get("topics"), list):
+        raw_topics = payload.get("topics") or []
+    normalized: list[str] = []
+    for item in raw_topics:
+        if isinstance(item, dict):
+            value = item.get("name") or item.get("label") or item.get("content") or item.get("topic")
+        else:
+            value = item
+        text = _flatten_text(value)
+        if text:
+            normalized.append(text)
+    return list(dict.fromkeys(normalized))
+
+
+def _normalize_aircall_action_items(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    raw_items = payload.get("action_items") or payload.get("items") or payload.get("content") or []
+    if isinstance(raw_items, dict):
+        raw_items = [raw_items]
+    if isinstance(raw_items, str):
+        raw_items = [raw_items]
+
+    normalized: list[str] = []
+    for item in raw_items:
+        if isinstance(item, dict):
+            value = item.get("content") or item.get("text") or item.get("title")
+        else:
+            value = item
+        text = _flatten_text(value)
+        if text:
+            normalized.append(text)
+    return list(dict.fromkeys(normalized))
+
+
+def _normalize_aircall_transcription(payload: Any) -> tuple[str | None, list[dict[str, Any]]]:
+    if not isinstance(payload, dict):
+        return None, []
+    transcription_obj = payload.get("transcription") if isinstance(payload.get("transcription"), dict) else payload
+    content = transcription_obj.get("content") if isinstance(transcription_obj, dict) else None
+    utterances = []
+    if isinstance(content, dict):
+        for item in content.get("utterances") or []:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            utterances.append(
+                {
+                    "text": text,
+                    "participant_type": item.get("participant_type"),
+                    "user_id": item.get("user_id"),
+                    "phone_number": item.get("phone_number"),
+                    "start_time": item.get("start_time"),
+                    "end_time": item.get("end_time"),
+                }
+            )
+    transcript_text = _flatten_text(content or transcription_obj.get("content"))
+    return transcript_text or None, utterances
+
+
+def _normalize_aircall_sentiments(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    raw_sentiments = payload.get("sentiments") or payload.get("content") or payload.get("sentiment") or []
+    if isinstance(raw_sentiments, dict):
+        raw_sentiments = [raw_sentiments]
+    if isinstance(raw_sentiments, str):
+        raw_sentiments = [raw_sentiments]
+
+    normalized: list[str] = []
+    for item in raw_sentiments:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("name") or item.get("sentiment") or "").strip()
+            score = item.get("score")
+            if label and score is not None:
+                normalized.append(f"{label}:{score}")
+            elif label:
+                normalized.append(label)
+            else:
+                text = _flatten_text(item)
+                if text:
+                    normalized.append(text)
+        else:
+            text = _flatten_text(item)
+            if text:
+                normalized.append(text)
+    return list(dict.fromkeys(normalized))
+
+
+def _build_aircall_ci_content(
+    *,
+    summary_text: str | None,
+    topics: list[str],
+    action_items: list[str],
+    transcript_text: str | None,
+    sentiments: list[str],
+    recording_url: str | None,
+    comment_text: str | None,
+) -> str:
+    lines = ["Aircall conversation intelligence is ready."]
+    if summary_text:
+        lines.append(f"Summary: {summary_text}")
+    if topics:
+        lines.append(f"Topics: {', '.join(topics[:6])}")
+    if action_items:
+        lines.append(f"Action items: {'; '.join(action_items[:4])}")
+    if sentiments:
+        lines.append(f"Sentiment: {', '.join(sentiments[:3])}")
+    if comment_text:
+        lines.append(f"Latest note: {comment_text[:180]}")
+    if transcript_text:
+        lines.append(f"Transcript: {transcript_text[:280]}")
+    if recording_url:
+        lines.append("Recording available.")
+    return "\n".join(lines)
+
+
+def _build_aircall_external_id(
+    *,
+    event: str,
+    call_id: str | None,
+    comment_text: str,
+    tags: list[str],
+    ci_bundle: dict[str, Any],
+) -> str | None:
+    if not call_id:
+        return None
+    if event in _AIRCALL_CI_EVENTS or event == "call.comm_assets_generated":
+        return f"aircall:ci:{call_id}"
+    if event == "call.commented":
+        signature = _hash_signature(comment_text, *(ci_bundle.get("action_items") or []))
+        return f"aircall:{event}:{call_id}:{signature or 'latest'}"
+    if event == "call.tagged":
+        signature = _hash_signature(*tags)
+        return f"aircall:{event}:{call_id}:{signature or 'latest'}"
+    return f"aircall:{event}:{call_id}"
+
+
+async def _get_activity_by_external_id(
+    session,
+    *,
+    external_source: str,
+    external_source_id: str | None,
+) -> Activity | None:
+    if not external_source_id:
+        return None
+    result = await session.execute(
+        select(Activity)
+        .where(
+            Activity.external_source == external_source,
+            Activity.external_source_id == external_source_id,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _safe_aircall_fetch(label: str, call_id: int, coro) -> Any:
+    try:
+        return await coro
+    except AircallError as exc:
+        if exc.status_code not in _AIRCALL_NON_FATAL_STATUS_CODES:
+            logger.warning("Aircall %s fetch failed for call_id=%s: %s", label, call_id, exc)
+        return None
+    except Exception as exc:  # pragma: no cover - defensive for provider payloads
+        logger.warning("Aircall %s fetch crashed for call_id=%s: %s", label, call_id, exc)
+        return None
+
+
+async def _fetch_aircall_bundle(client: AircallClient, call_id: int, event: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    fetched_call: dict[str, Any] | None = None
+    ci_bundle: dict[str, Any] = {}
+
+    should_fetch_call = event in _AIRCALL_CALL_ENRICH_EVENTS or event in _AIRCALL_CI_EVENTS
+    should_fetch_ci = event in _AIRCALL_CI_EVENTS or event == "call.comm_assets_generated"
+
+    labels: list[str] = []
+    coroutines = []
+    if should_fetch_call:
+        labels.append("call")
+        coroutines.append(_safe_aircall_fetch("call", call_id, client.get_call(call_id)))
+    if should_fetch_ci:
+        labels.extend(["summary", "topics", "transcription", "action_items", "sentiments"])
+        coroutines.extend(
+            [
+                _safe_aircall_fetch("summary", call_id, client.get_call_summary(call_id)),
+                _safe_aircall_fetch("topics", call_id, client.get_call_topics(call_id)),
+                _safe_aircall_fetch("transcription", call_id, client.get_call_transcription(call_id)),
+                _safe_aircall_fetch("action_items", call_id, client.get_call_action_items(call_id)),
+                _safe_aircall_fetch("sentiments", call_id, client.get_call_sentiments(call_id)),
+            ]
+        )
+
+    if not coroutines:
+        return None, {}
+
+    results = await asyncio.gather(*coroutines)
+    result_map = dict(zip(labels, results))
+
+    call_payload = result_map.get("call")
+    if isinstance(call_payload, dict):
+        fetched_call = call_payload.get("call") if isinstance(call_payload.get("call"), dict) else call_payload
+
+    summary_text = _normalize_aircall_summary(result_map.get("summary"))
+    topics = _normalize_aircall_topics(result_map.get("topics"))
+    transcript_text, utterances = _normalize_aircall_transcription(result_map.get("transcription"))
+    action_items = _normalize_aircall_action_items(result_map.get("action_items"))
+    sentiments = _normalize_aircall_sentiments(result_map.get("sentiments"))
+
+    if summary_text or topics or transcript_text or action_items or sentiments:
+        ci_bundle = {
+            "summary": summary_text,
+            "topics": topics,
+            "transcription": transcript_text,
+            "utterances": utterances,
+            "action_items": action_items,
+            "sentiments": sentiments,
+            "raw": {
+                "summary": result_map.get("summary"),
+                "topics": result_map.get("topics"),
+                "transcription": result_map.get("transcription"),
+                "action_items": result_map.get("action_items"),
+                "sentiments": result_map.get("sentiments"),
+            },
+        }
+
+    return fetched_call, ci_bundle
+
+
+async def _summarize_aircall_signal(*, transcript_text: str | None, comment_text: str | None, summary_text: str | None) -> str | None:
+    if summary_text:
+        return summary_text
+    source_text = " ".join(part for part in [transcript_text or "", comment_text or ""] if part).strip()
+    if len(source_text) < 40 or not settings.claude_api_key:
+        return None
+
+    try:
+        import anthropic
+
+        client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Summarize this sales call in one short sentence (max 18 words). "
+                    "Focus on buyer intent, risk, or next step.\n\n"
+                    f"{source_text[:2500]}"
+                ),
+            }],
+        )
+        return response.content[0].text.strip()
+    except Exception as exc:  # pragma: no cover - external API fallback
+        logger.warning("Aircall call summary failed: %s", exc)
+        return None
+
+
+def _infer_aircall_outcome(
+    *,
+    event: str,
+    missed_reason: str | None,
+    voicemail_url: str | None,
+    answered_at: Any,
+    duration: Any,
+) -> str | None:
+    if event in {"call.missed"}:
+        return "missed"
+    if event in {"call.voicemail_left"}:
+        return "voicemail"
+    if missed_reason:
+        return "missed"
+    if voicemail_url and event in {"call.comm_assets_generated", "transcription.created", "summary.created", "topics.created", "action_item.created", "sentiment.created"}:
+        return "voicemail"
+    if event in {"call.answered"}:
+        return "answered"
+    if answered_at or (duration or 0) > 0:
+        return "answered"
+    return None
 
 
 # ── Instantly webhook ──────────────────────────────────────────────────────────
@@ -309,6 +731,31 @@ async def fireflies_webhook(request: Request, session: DBSession) -> dict:
     return {"status": "ok", "activity_id": str(activity.id)}
 
 
+# ── tl;dv webhook ─────────────────────────────────────────────────────────────
+
+@router.post("/tldv")
+async def tldv_webhook(request: Request, session: DBSession) -> dict:
+    payload: Dict[str, Any] = await request.json()
+    event = str(payload.get("event") or "").strip()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    meeting_id = str(data.get("meetingId") or data.get("id") or "").strip()
+
+    if event not in {"MeetingReady", "TranscriptReady"} or not meeting_id:
+        return {"status": "ignored", "event": event, "meeting_id": meeting_id or None}
+
+    result = await sync_tldv_meeting(
+        session,
+        meeting_id=meeting_id,
+        preloaded_meeting=data if event == "MeetingReady" else None,
+        preloaded_transcript=data if event == "TranscriptReady" else None,
+    )
+    return {
+        "status": "ok",
+        "event": event,
+        **result,
+    }
+
+
 # ── Aircall webhook ────────────────────────────────────────────────────────────
 
 @router.post("/aircall")
@@ -329,129 +776,225 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
     """
     payload: Dict[str, Any] = await request.json()
 
-    event = payload.get("event", "")
-    data: Dict[str, Any] = payload.get("data", {})
+    event = str(payload.get("event", "") or "")
+    data: Dict[str, Any] = payload.get("data", {}) or {}
+    call_data: Dict[str, Any] = data.get("call") if isinstance(data.get("call"), dict) else data
 
-    aircall_call_id = str(data.get("id", "")) if data.get("id") else None
-    direction = data.get("direction", "outbound")
-    raw_digits = data.get("raw_digits") or data.get("to", "") or ""
-    duration = data.get("duration")  # seconds, present on call.ended
-    recording_url = data.get("recording") or data.get("recording_short_url") or None
-    voicemail_url = data.get("voicemail") or data.get("voicemail_short_url") or None
+    aircall_call_id = str(
+        call_data.get("id")
+        or data.get("call_id")
+        or (data.get("call", {}) or {}).get("id")
+        or ""
+    ) or None
+    direction = call_data.get("direction", "outbound")
+    raw_digits = (
+        call_data.get("raw_digits")
+        or call_data.get("to")
+        or call_data.get("from")
+        or data.get("phone_number")
+        or ""
+    )
+    duration = call_data.get("duration") or data.get("duration")
+    answered_at = call_data.get("answered_at") or data.get("answered_at")
+    missed_reason = call_data.get("missed_call_reason") or data.get("missed_call_reason")
+    recording_url = (
+        call_data.get("recording")
+        or call_data.get("recording_short_url")
+        or call_data.get("asset")
+        or data.get("recording")
+        or None
+    )
+    voicemail_url = call_data.get("voicemail") or call_data.get("voicemail_short_url") or data.get("voicemail") or None
 
-    # Agent info
-    agent = data.get("user") or {}
+    agent = call_data.get("user") or data.get("user") or {}
     agent_name = agent.get("name") or agent.get("email") or "Agent"
     agent_email = agent.get("email") or ""
 
-    # Number dialled / received on
-    number_obj = data.get("number") or {}
+    number_obj = call_data.get("number") or data.get("number") or {}
     number_digits = number_obj.get("digits", "")
     number_name = number_obj.get("name", "")
 
-    # Comment (for call.commented event)
     comment_text = ""
-    comments = data.get("comments") or []
+    comments = call_data.get("comments") or data.get("comments") or []
     if comments:
-        comment_text = comments[-1].get("content", "")
+        comment_text = str(comments[-1].get("content") or "").strip()
+    tags = [str(tag.get("name") or "").strip() for tag in (call_data.get("tags") or data.get("tags") or []) if str(tag.get("name") or "").strip()]
 
-    # ── Match to a CRM contact by phone number ─────────────────────────────────
-    contact = None
-    if raw_digits:
-        # Try to find contact by phone — strip non-digits for loose match
-        clean = raw_digits.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-        result = await session.execute(
-            select(Contact).where(
-                Contact.phone.isnot(None)
-            ).limit(50)
+    fetched_call: Dict[str, Any] | None = None
+    ci_bundle: dict[str, Any] = {}
+    if aircall_call_id:
+        try:
+            fetched_call, ci_bundle = await _fetch_aircall_bundle(AircallClient(), int(aircall_call_id), event)
+        except ValueError:
+            logger.warning("Aircall call id %s could not be parsed as an integer", aircall_call_id)
+
+    if fetched_call:
+        duration = fetched_call.get("duration") or duration
+        answered_at = fetched_call.get("answered_at") or answered_at
+        missed_reason = fetched_call.get("missed_call_reason") or missed_reason
+        recording_url = (
+            fetched_call.get("recording")
+            or fetched_call.get("recording_short_url")
+            or fetched_call.get("asset")
+            or recording_url
         )
-        candidates = result.scalars().all()
-        for c in candidates:
-            c_clean = (c.phone or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-            if c_clean and (c_clean == clean or c_clean.endswith(clean[-9:]) or clean.endswith(c_clean[-9:])):
-                contact = c
-                break
+        voicemail_url = fetched_call.get("voicemail") or fetched_call.get("voicemail_short_url") or voicemail_url
+        if not raw_digits:
+            raw_digits = fetched_call.get("raw_digits") or fetched_call.get("to") or fetched_call.get("from") or raw_digits
+        if not comment_text:
+            fetched_comments = fetched_call.get("comments") or []
+            if fetched_comments:
+                comment_text = str(fetched_comments[-1].get("content") or "").strip()
+        if not tags:
+            tags = [str(tag.get("name") or "").strip() for tag in (fetched_call.get("tags") or []) if str(tag.get("name") or "").strip()]
+        if not agent_email:
+            fetched_user = fetched_call.get("user") if isinstance(fetched_call.get("user"), dict) else {}
+            agent_email = str(fetched_user.get("email") or "").strip()
+        if agent_name == "Agent":
+            fetched_user = fetched_call.get("user") if isinstance(fetched_call.get("user"), dict) else {}
+            agent_name = fetched_user.get("name") or fetched_user.get("email") or agent_name
 
+    contact = await _find_contact_by_phone(session, raw_digits)
     contact_id = contact.id if contact else None
+    deal = await _find_best_deal_for_contact(session, contact_id)
+    deal_id = deal.id if deal else None
 
-    # ── Route by event ─────────────────────────────────────────────────────────
-    call_outcome: Optional[str] = None
+    conversation_summary = ci_bundle.get("summary") if isinstance(ci_bundle, dict) else None
+    transcript_text = ci_bundle.get("transcription") if isinstance(ci_bundle, dict) else None
+    action_items = ci_bundle.get("action_items") if isinstance(ci_bundle, dict) else []
+    topics = ci_bundle.get("topics") if isinstance(ci_bundle, dict) else []
+    sentiments = ci_bundle.get("sentiments") if isinstance(ci_bundle, dict) else []
+
+    call_outcome = _infer_aircall_outcome(
+        event=event,
+        missed_reason=missed_reason,
+        voicemail_url=voicemail_url,
+        answered_at=answered_at,
+        duration=duration,
+    )
     activity_type = "call"
     source = "aircall"
+    ai_summary: Optional[str] = None
 
-    if event == "call.created":
+    if event in _AIRCALL_CI_EVENTS or event == "call.comm_assets_generated":
+        ai_summary = await _summarize_aircall_signal(
+            transcript_text=transcript_text,
+            comment_text=comment_text,
+            summary_text=conversation_summary,
+        )
+        content = _build_aircall_ci_content(
+            summary_text=conversation_summary or ai_summary,
+            topics=topics or [],
+            action_items=action_items or [],
+            transcript_text=transcript_text,
+            sentiments=sentiments or [],
+            recording_url=recording_url,
+            comment_text=comment_text or None,
+        )
+        activity_type = "transcript"
+    elif event == "call.created":
         label = "inbound" if direction == "inbound" else "outbound"
         content = f"📞 {label.capitalize()} call {'' if direction == 'inbound' else 'to '}{raw_digits} via {number_name or number_digits}"
         if agent_name:
             content += f" — {agent_name}"
-
     elif event == "call.answered":
         content = f"✅ Call answered — {agent_name} connected with {raw_digits}"
-        call_outcome = "answered"
-
     elif event == "call.ended":
         mins = (duration or 0) // 60
         secs = (duration or 0) % 60
         duration_str = f"{mins}m {secs}s" if mins else f"{secs}s"
-        missed_reason = data.get("missed_call_reason")
-
-        if missed_reason:
-            call_outcome = "missed"
-            content = f"📵 Missed call from {raw_digits} ({missed_reason})"
+        if call_outcome == "missed":
+            content = f"📵 Missed call from {raw_digits}"
+            if missed_reason:
+                content += f" ({missed_reason})"
+        elif call_outcome == "voicemail":
+            content = f"📬 Voicemail left by {raw_digits}"
         else:
-            call_outcome = "answered"
             content = f"📞 Call ended — {duration_str} with {raw_digits}"
             if agent_name:
                 content += f" ({agent_name})"
             if recording_url:
                 content += " · Recording available"
-
+            if comment_text:
+                content += f" · Note: {comment_text[:160]}"
+            if tags:
+                content += f" · Tags: {', '.join(tags)}"
+            ai_summary = await _summarize_aircall_signal(
+                transcript_text=transcript_text,
+                comment_text=comment_text,
+                summary_text=conversation_summary,
+            )
     elif event == "call.voicemail_left":
-        call_outcome = "voicemail"
         content = f"📬 Voicemail left by {raw_digits}"
         if voicemail_url:
             recording_url = voicemail_url
             content += " · Voicemail recording available"
-
     elif event == "call.missed":
-        call_outcome = "missed"
         content = f"📵 Missed call from {raw_digits}"
         if agent_name:
             content += f" (assigned to {agent_name})"
-
     elif event == "call.commented":
-        content = f"💬 Call note by {agent_name}: {comment_text}"
+        content = f"💬 Call note by {agent_name}: {comment_text}" if comment_text else f"💬 Call note added by {agent_name}"
         activity_type = "note"
-
+        ai_summary = await _summarize_aircall_signal(
+            transcript_text=None,
+            comment_text=comment_text,
+            summary_text=conversation_summary,
+        )
     elif event == "call.tagged":
-        tags = [t.get("name") for t in (data.get("tags") or []) if t.get("name")]
         content = f"🏷 Call tagged: {', '.join(tags)}" if tags else "Call tagged"
-
     else:
-        # Log unknown events for observability
         content = f"Aircall event [{event}] — {raw_digits or 'unknown number'}"
 
-    # ── Create activity ────────────────────────────────────────────────────────
-    activity = Activity(
-        type=activity_type,
-        source=source,
-        content=content,
-        event_metadata=payload,
-        contact_id=contact_id,
+    enriched_payload = dict(payload)
+    if fetched_call:
+        enriched_payload["fetched_call"] = fetched_call
+    if ci_bundle:
+        enriched_payload["conversation_intelligence"] = ci_bundle
+
+    external_source_id = _build_aircall_external_id(
+        event=event,
         call_id=aircall_call_id,
-        call_duration=duration,
-        call_outcome=call_outcome,
-        recording_url=recording_url,
-        aircall_user_name=agent_name or None,
+        comment_text=comment_text,
+        tags=tags,
+        ci_bundle=ci_bundle,
     )
+    existing_activity = await _get_activity_by_external_id(
+        session,
+        external_source="aircall",
+        external_source_id=external_source_id,
+    )
+    activity = existing_activity or Activity(
+        source=source,
+        external_source="aircall",
+        external_source_id=external_source_id,
+    )
+    activity.type = activity_type
+    activity.medium = "call"
+    activity.content = content
+    activity.ai_summary = ai_summary
+    activity.event_metadata = enriched_payload
+    activity.deal_id = deal_id
+    activity.contact_id = contact_id
+    activity.call_id = aircall_call_id
+    activity.call_duration = duration
+    activity.call_outcome = call_outcome
+    activity.recording_url = recording_url
+    activity.aircall_user_name = agent_name or None
     session.add(activity)
     await session.commit()
     await session.refresh(activity)
+    if contact_id:
+        await refresh_system_tasks_for_entity(session, "contact", contact_id)
+    if deal_id:
+        await refresh_system_tasks_for_entity(session, "deal", deal_id)
+    await session.commit()
 
     logger.info(
-        "Aircall webhook: event=%s call_id=%s contact=%s outcome=%s",
+        "Aircall webhook: event=%s call_id=%s contact=%s deal=%s outcome=%s",
         event, aircall_call_id,
         str(contact_id) if contact_id else "unmatched",
+        str(deal_id) if deal_id else "unmatched",
         call_outcome,
     )
 
@@ -460,6 +1003,7 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
         "event": event,
         "activity_id": str(activity.id),
         "contact_id": str(contact_id) if contact_id else None,
+        "deal_id": str(deal_id) if deal_id else None,
         "matched": contact_id is not None,
     }
 

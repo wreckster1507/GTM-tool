@@ -283,6 +283,30 @@ export interface TaskWorkspaceItem extends TaskItem {
   entity_link: string;
 }
 
+export interface CrmImportResponse {
+  replace: {
+    deals_deleted: number;
+    deal_contacts_deleted: number;
+    deal_tasks_deleted: number;
+    activities_deleted: number;
+    companies_deleted: number;
+  };
+  import: {
+    top_level_tasks_seen: number;
+    subtasks_seen: number;
+    companies_created: number;
+    companies_reused: number;
+    deals_created: number;
+    deals_updated: number;
+    tasks_created: number;
+    tasks_updated: number;
+    activities_created: number;
+    activities_reused: number;
+    unmatched_assignees: string[];
+    fields_loaded: number;
+  };
+}
+
 export interface ProspectImportMissingCompany {
   name: string;
   domain?: string;
@@ -435,6 +459,17 @@ export interface GmailSyncSettings {
   interval_seconds: number;
   last_sync_epoch?: number | null;
   last_error?: string | null;
+}
+
+export interface DealStageSetting {
+  id: string;
+  label: string;
+  group: "active" | "closed";
+  color: string;
+}
+
+export interface DealStageSettings {
+  stages: DealStageSetting[];
 }
 
 export interface OutreachTemplateStep {

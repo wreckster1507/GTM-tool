@@ -15,8 +15,9 @@ from fastapi.responses import RedirectResponse
 from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, UnauthorizedError
-from app.models.deal import DEAL_STAGES
 from app.models.settings import (
+    DealStageSettingsRead,
+    DealStageSettingsUpdate,
     DealFunnelSettingsRead,
     DealFunnelSettingsUpdate,
     GmailConnectUrlRead,
@@ -30,6 +31,12 @@ from app.models.settings import (
     PipelineSummarySettingsUpdate,
     StageBucketSettings,
     WorkspaceSettings,
+)
+from app.services.deal_stages import (
+    DEFAULT_DEAL_STAGE_SETTINGS,
+    filter_funnel_config_to_stage_ids,
+    get_configured_deal_stage_ids,
+    normalize_deal_stage_settings,
 )
 from app.services.gmail_oauth import build_gmail_connect_url, create_gmail_oauth_state, decode_gmail_oauth_state, exchange_gmail_code
 
@@ -108,8 +115,14 @@ async def _get_or_create(session) -> WorkspaceSettings:
             outreach_step_delays=_DEFAULTS,
             outreach_content_settings=_DEFAULT_OUTREACH_CONTENT,
             deal_funnel_config=_DEFAULT_DEAL_FUNNEL,
+            deal_stage_settings=[dict(item) for item in DEFAULT_DEAL_STAGE_SETTINGS],
             prospect_funnel_config=_DEFAULT_PROSPECT_FUNNEL,
         )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    elif not row.deal_stage_settings:
+        row.deal_stage_settings = [dict(item) for item in DEFAULT_DEAL_STAGE_SETTINGS]
         session.add(row)
         await session.commit()
         await session.refresh(row)
@@ -169,8 +182,10 @@ def _normalized_deal_funnel_config(value: dict | None) -> DealFunnelSettingsRead
 
 
 def _normalized_pipeline_summary_settings(row: WorkspaceSettings) -> PipelineSummarySettingsRead:
+    allowed_deal_stage_ids = [stage["id"] for stage in normalize_deal_stage_settings(row.deal_stage_settings)]
+    normalized_deal_funnel = filter_funnel_config_to_stage_ids(row.deal_funnel_config, allowed_deal_stage_ids, _DEFAULT_DEAL_FUNNEL)
     return PipelineSummarySettingsRead(
-        deal=_normalized_bucket_config(row.deal_funnel_config, _DEFAULT_DEAL_FUNNEL),
+        deal=_normalized_bucket_config(normalized_deal_funnel, _DEFAULT_DEAL_FUNNEL),
         prospect=_normalized_bucket_config(row.prospect_funnel_config, _DEFAULT_PROSPECT_FUNNEL),
     )
 
@@ -180,6 +195,28 @@ def _validate_funnel_stage_ids(stage_ids: list[str], allowed_stages: set[str] | 
     invalid = [stage for stage in stage_ids if stage not in allowed]
     if invalid:
         raise HTTPException(status_code=422, detail=f"Unknown {scope} stages in funnel settings: {', '.join(sorted(set(invalid)))}")
+
+
+@router.get("/deal-stages", response_model=DealStageSettingsRead)
+async def get_deal_stage_settings(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return DealStageSettingsRead(stages=normalize_deal_stage_settings(row.deal_stage_settings))
+
+
+@router.patch("/deal-stages", response_model=DealStageSettingsRead)
+async def update_deal_stage_settings(body: DealStageSettingsUpdate, session: DBSession, _admin: AdminUser):
+    stages = normalize_deal_stage_settings([stage.model_dump() for stage in body.stages])
+    if not stages:
+        raise HTTPException(status_code=422, detail="At least one deal stage is required")
+
+    stage_ids = [stage["id"] for stage in stages]
+    row = await _get_or_create(session)
+    row.deal_stage_settings = stages
+    row.deal_funnel_config = filter_funnel_config_to_stage_ids(row.deal_funnel_config, stage_ids, _DEFAULT_DEAL_FUNNEL)
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return DealStageSettingsRead(stages=normalize_deal_stage_settings(row.deal_stage_settings))
 
 
 async def _gmail_status(session: DBSession) -> GmailSettingsRead:
@@ -291,9 +328,10 @@ async def get_deal_funnel_settings(session: DBSession, _user: CurrentUser):
 
 @router.patch("/deal-funnel", response_model=DealFunnelSettingsRead)
 async def update_deal_funnel_settings(body: DealFunnelSettingsUpdate, session: DBSession, _admin: AdminUser):
-    _validate_funnel_stage_ids(body.tofu, DEAL_STAGES, "deal")
-    _validate_funnel_stage_ids(body.mofu, DEAL_STAGES, "deal")
-    _validate_funnel_stage_ids(body.bofu, DEAL_STAGES, "deal")
+    allowed_deal_stage_ids = await get_configured_deal_stage_ids(session)
+    _validate_funnel_stage_ids(body.tofu, allowed_deal_stage_ids, "deal")
+    _validate_funnel_stage_ids(body.mofu, allowed_deal_stage_ids, "deal")
+    _validate_funnel_stage_ids(body.bofu, allowed_deal_stage_ids, "deal")
 
     row = await _get_or_create(session)
     row.deal_funnel_config = {
@@ -319,8 +357,9 @@ async def update_pipeline_summary_settings(
     session: DBSession,
     _admin: AdminUser,
 ):
+    allowed_deal_stage_ids = await get_configured_deal_stage_ids(session)
     for bucket in (body.deal.tofu, body.deal.mofu, body.deal.bofu):
-        _validate_funnel_stage_ids(bucket, DEAL_STAGES, "deal")
+        _validate_funnel_stage_ids(bucket, allowed_deal_stage_ids, "deal")
     for bucket in (body.prospect.tofu, body.prospect.mofu, body.prospect.bofu):
         _validate_funnel_stage_ids(bucket, _PROSPECT_STAGES, "prospect")
 

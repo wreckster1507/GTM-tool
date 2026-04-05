@@ -8,7 +8,7 @@
  * the rep manually opens it. It can be minimised to a small tab.
  */
 import { useEffect, useRef, useState } from "react";
-import { Phone, X, Minus, PhoneCall, PhoneOff, PhoneMissed } from "lucide-react";
+import { GripVertical, Phone, X, Minus, PhoneCall, PhoneOff, PhoneMissed } from "lucide-react";
 import AircallPhone from "aircall-everywhere";
 
 // Extend window type for the global dial trigger
@@ -32,6 +32,7 @@ export default function AircallPhonePanel() {
   const [open, setOpen] = useState(false);
   const [minimised, setMinimised] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
+  const [verticalOffset, setVerticalOffset] = useState(0);
   const [callState, setCallState] = useState<CallState>({
     active: false,
     duration: 0,
@@ -40,6 +41,15 @@ export default function AircallPhonePanel() {
 
   const phoneRef = useRef<AircallPhone | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dragStateRef = useRef<{ startY: number; startOffset: number } | null>(null);
+  const dragMovedRef = useRef(false);
+  const suppressOpenClickRef = useRef(false);
+
+  const clampVerticalOffset = (nextOffset: number) => {
+    if (typeof window === "undefined") return 0;
+    const maxUp = Math.max(window.innerHeight - 160, 0);
+    return Math.max(-maxUp, Math.min(0, nextOffset));
+  };
 
   // ── Init SDK once ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -155,6 +165,59 @@ export default function AircallPhonePanel() {
     };
   }, []);
 
+  useEffect(() => {
+    const saved = window.localStorage.getItem("crm.aircall.verticalOffset");
+    if (saved) {
+      const parsed = Number(saved);
+      if (!Number.isNaN(parsed)) {
+        setVerticalOffset(clampVerticalOffset(parsed));
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("crm.aircall.verticalOffset", String(verticalOffset));
+  }, [verticalOffset]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setVerticalOffset((current) => clampVerticalOffset(current));
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag) return;
+      const deltaY = event.clientY - drag.startY;
+      if (Math.abs(deltaY) > 3) {
+        dragMovedRef.current = true;
+      }
+      setVerticalOffset(clampVerticalOffset(drag.startOffset + deltaY));
+    };
+
+    const handlePointerUp = () => {
+      if (!dragStateRef.current) return;
+      suppressOpenClickRef.current = dragMovedRef.current;
+      dragStateRef.current = null;
+      dragMovedRef.current = false;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, []);
+
+  const beginDrag = (clientY: number) => {
+    dragStateRef.current = { startY: clientY, startOffset: verticalOffset };
+    dragMovedRef.current = false;
+  };
+
   const formatDuration = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, "0");
     const s = (secs % 60).toString().padStart(2, "0");
@@ -197,7 +260,15 @@ export default function AircallPhonePanel() {
       {/* ── Floating trigger button (visible when panel is closed) ── */}
       {!open && (
         <button
-          onClick={() => { setOpen(true); setMinimised(false); }}
+          onClick={() => {
+            if (suppressOpenClickRef.current) {
+              suppressOpenClickRef.current = false;
+              return;
+            }
+            setOpen(true);
+            setMinimised(false);
+          }}
+          onPointerDown={(event) => beginDrag(event.clientY)}
           style={{
             position: "fixed", bottom: panelBottom, right: 24, zIndex: 900,
             width: 194,
@@ -213,6 +284,8 @@ export default function AircallPhonePanel() {
             transition: "all 0.2s ease",
             textAlign: "left",
             backdropFilter: "blur(12px)",
+            transform: `translateY(${verticalOffset}px)`,
+            touchAction: "none",
           }}
           title="Open Aircall phone"
         >
@@ -246,6 +319,9 @@ export default function AircallPhonePanel() {
               {statusLabel}
             </span>
           </span>
+          <span style={{ marginLeft: "auto", color: "#9aa8b6", display: "inline-flex", alignItems: "center" }}>
+            <GripVertical size={16} />
+          </span>
           {callState.active && (
             <span style={{
               position: "absolute", top: 10, right: 10,
@@ -271,6 +347,7 @@ export default function AircallPhonePanel() {
           transition: "width 0.2s ease, transform 0.2s ease",
           display: "flex", flexDirection: "column",
           backdropFilter: "blur(14px)",
+          transform: `translateY(${verticalOffset}px)`,
         }}>
           {/* Header — z-index ensures it stays clickable above iframe */}
           <div style={{
@@ -283,7 +360,11 @@ export default function AircallPhonePanel() {
             flexShrink: 0,
             borderBottom: "1px solid #e3edf6",
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              onPointerDown={(event) => beginDrag(event.clientY)}
+              style={{ display: "flex", alignItems: "center", gap: 10, cursor: "grab", flex: 1, minWidth: 0, touchAction: "none" }}
+              title="Drag Aircall widget"
+            >
               <div style={{
                 width: 36, height: 36, borderRadius: 14,
                 background: callState.active
@@ -310,6 +391,9 @@ export default function AircallPhonePanel() {
                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, display: "inline-block" }} />
                   {statusLabel}
                 </div>
+              </div>
+              <div style={{ marginLeft: "auto", color: "#95a3b2", display: "inline-flex", alignItems: "center", paddingRight: 10 }}>
+                <GripVertical size={16} />
               </div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>

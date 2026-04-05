@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Clock3, MessageSquare, Plus, Sparkles, X } from "lucide-react";
+import { CheckCircle2, Clock3, MessageSquare, Plus, Sparkles, Trash2, X } from "lucide-react";
 
 import { authApi, tasksApi } from "../../lib/api";
+import { useAuth } from "../../lib/AuthContext";
 import type { TaskItem, User as UserType } from "../../types";
 import { formatDate } from "../../lib/utils";
 
@@ -23,8 +24,10 @@ const colors = {
 };
 
 const PRIORITY_STYLE = {
+  urgent: { bg: colors.redSoft, border: "#ffb8c2", color: colors.red },
   high: { bg: colors.redSoft, border: "#ffd0d8", color: colors.red },
   medium: { bg: colors.amberSoft, border: "#ffe3b3", color: colors.amber },
+  normal: { bg: "#eef2f7", border: colors.border, color: colors.sub },
   low: { bg: "#eef2f7", border: colors.border, color: colors.sub },
 } as const;
 
@@ -47,6 +50,8 @@ function TaskCard({
   onComplete,
   onDismiss,
   onAccept,
+  onDelete,
+  canDelete,
 }: {
   task: TaskItem;
   commentDraft: string;
@@ -55,8 +60,10 @@ function TaskCard({
   onComplete: () => void;
   onDismiss: () => void;
   onAccept: () => void;
+  onDelete: () => void;
+  canDelete: boolean;
 }) {
-  const priorityStyle = PRIORITY_STYLE[task.priority];
+  const priorityStyle = PRIORITY_STYLE[task.priority as keyof typeof PRIORITY_STYLE] ?? PRIORITY_STYLE.normal;
   const typeStyle = TYPE_STYLE[task.task_type];
   const isOpen = task.status === "open";
   const ownerText = task.assigned_role
@@ -88,6 +95,16 @@ function TaskCard({
           {task.due_at ? <div>Due {formatDate(task.due_at)}</div> : null}
           <div>{ownerText}</div>
           <div>{task.created_by_name ? `Created by ${task.created_by_name}` : task.source || "Beacon"}</div>
+          {canDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              style={{ marginTop: 4, borderRadius: 8, border: `1px solid #ffd0d8`, background: "#fff5f7", color: colors.red, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <Trash2 size={13} />
+              Delete
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -172,6 +189,7 @@ export default function TaskCenterModal({
   onChanged?: () => void;
   mode?: "modal" | "inline";
 }) {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -267,6 +285,13 @@ export default function TaskCenterModal({
 
   const acceptTask = async (taskId: string) => {
     await tasksApi.accept(taskId);
+    onChanged?.();
+    await load();
+  };
+
+  const deleteTask = async (task: TaskItem) => {
+    if (!window.confirm(`Delete "${task.title}"?`)) return;
+    await tasksApi.remove(task.id);
     onChanged?.();
     await load();
   };
@@ -380,6 +405,8 @@ export default function TaskCenterModal({
                     onComplete={() => patchTask(task.id, { status: "completed" })}
                     onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                     onAccept={() => acceptTask(task.id)}
+                    onDelete={() => deleteTask(task)}
+                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
                   />
                 ))
               )}
@@ -405,6 +432,8 @@ export default function TaskCenterModal({
                     onComplete={() => patchTask(task.id, { status: "completed" })}
                     onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                     onAccept={() => acceptTask(task.id)}
+                    onDelete={() => deleteTask(task)}
+                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
                   />
                 ))
               )}
@@ -426,6 +455,8 @@ export default function TaskCenterModal({
                     onComplete={() => patchTask(task.id, { status: "completed" })}
                     onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                     onAccept={() => acceptTask(task.id)}
+                    onDelete={() => deleteTask(task)}
+                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
                   />
                 ))}
               </div>

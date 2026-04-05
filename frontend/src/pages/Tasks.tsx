@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Sparkles } from "lucide-react";
+import { CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Sparkles, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { tasksApi } from "../lib/api";
@@ -25,8 +25,10 @@ const colors = {
 };
 
 const PRIORITY_STYLE = {
+  urgent: { bg: colors.redSoft, border: "#ffb8c2", color: colors.red },
   high: { bg: colors.redSoft, border: "#ffd0d8", color: colors.red },
   medium: { bg: colors.amberSoft, border: "#ffe3b3", color: colors.amber },
+  normal: { bg: "#eef2f7", border: colors.border, color: colors.sub },
   low: { bg: "#eef2f7", border: colors.border, color: colors.sub },
 } as const;
 
@@ -53,6 +55,8 @@ function TaskWorkspaceCard({
   onAccept,
   onComplete,
   onDismiss,
+  onDelete,
+  canDelete,
 }: {
   task: TaskWorkspaceItem;
   commentDraft: string;
@@ -61,8 +65,10 @@ function TaskWorkspaceCard({
   onAccept: () => void;
   onComplete: () => void;
   onDismiss: () => void;
+  onDelete: () => void;
+  canDelete: boolean;
 }) {
-  const priorityStyle = PRIORITY_STYLE[task.priority];
+  const priorityStyle = PRIORITY_STYLE[task.priority as keyof typeof PRIORITY_STYLE] ?? PRIORITY_STYLE.normal;
   const typeStyle = TYPE_STYLE[task.task_type];
   const isOpen = task.status === "open";
 
@@ -99,6 +105,16 @@ function TaskWorkspaceCard({
           {task.due_at ? <div>Due {formatDate(task.due_at)}</div> : null}
           <div>{task.assigned_role ? `${ROLE_LABEL[task.assigned_role]}${task.assigned_to_name ? ` · ${task.assigned_to_name}` : ""}` : (task.assigned_to_name || "Unassigned")}</div>
           <div>{task.created_by_name ? `Created by ${task.created_by_name}` : (task.source || "Beacon")}</div>
+          {canDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              style={{ marginTop: 4, borderRadius: 8, border: `1px solid #ffd0d8`, background: "#fff5f7", color: colors.red, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <Trash2 size={13} />
+              Delete
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -219,6 +235,12 @@ export default function TasksPage() {
     await load();
   };
 
+  const deleteTask = async (task: TaskWorkspaceItem) => {
+    if (!window.confirm(`Delete "${task.title}"?`)) return;
+    await tasksApi.remove(task.id);
+    await load();
+  };
+
   return (
     <div className="crm-page" style={{ display: "grid", gap: 18 }}>
       <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 16 }}>
@@ -305,6 +327,8 @@ export default function TasksPage() {
               onAccept={() => acceptTask(task.id)}
               onComplete={() => patchTask(task.id, { status: "completed" })}
               onDismiss={() => patchTask(task.id, { status: "dismissed" })}
+              onDelete={() => deleteTask(task)}
+              canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
             />
           ))
         )}

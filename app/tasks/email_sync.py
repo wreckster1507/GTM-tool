@@ -57,6 +57,30 @@ def _extract_deal_aliases(addresses: set[str], inbox: str) -> list[str]:
     return list(dict.fromkeys(aliases))
 
 
+def _normalize_domain(value: str | None) -> str:
+    domain = (value or "").strip().lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain
+
+
+def _infer_name_from_email(addr: str) -> tuple[str, str]:
+    local = (addr.split("@", 1)[0] if "@" in addr else addr).strip()
+    parts = [part for part in local.replace("_", ".").replace("-", ".").split(".") if part]
+    if not parts:
+        return "Unknown", "Contact"
+    if len(parts) == 1:
+        return parts[0].title(), "Contact"
+    return parts[0].title(), " ".join(part.title() for part in parts[1:])
+
+
+def _build_display_name(addr: str, explicit_name: str | None = None) -> str:
+    if explicit_name and explicit_name.strip():
+        return explicit_name.strip()
+    first, last = _infer_name_from_email(addr)
+    return f"{first} {last}".strip()
+
+
 @celery_app.task(
     name="app.tasks.email_sync.sync_gmail_inbox",
     bind=True,
@@ -86,9 +110,11 @@ async def _async_sync() -> dict:
 
     from app.clients.gmail_inbox import GmailInboxClient
     from app.models.activity import Activity
+    from app.models.company import Company
     from app.models.contact import Contact
     from app.models.deal import Deal, DealContact
     from app.models.settings import WorkspaceSettings
+    from app.services.tasks import refresh_system_tasks_for_entity
 
     # Fresh engine per task
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
@@ -136,6 +162,7 @@ async def _async_sync() -> dict:
             return {"status": "completed", "emails_found": 0, "activities_created": 0}
 
         activities_created = 0
+        touched_deal_ids: set = set()
 
         async with SessionLocal() as session:
             for msg in messages:
@@ -171,7 +198,7 @@ async def _async_sync() -> dict:
 
                 # Find matching contacts
                 contact_result = await session.execute(
-                    select(Contact.id, Contact.email).where(
+                    select(Contact.id, Contact.email, Contact.company_id).where(
                         Contact.email.in_(list(all_addrs))
                     )
                 )
@@ -181,6 +208,7 @@ async def _async_sync() -> dict:
                     continue
 
                 contact_ids = [c.id for c in matched_contacts]
+                matched_contact_emails = {str(c.email or "").strip().lower() for c in matched_contacts if c.email}
 
                 # Find deals linked to these contacts
                 if not deal_ids and contact_ids:
@@ -208,6 +236,54 @@ async def _async_sync() -> dict:
 
                 # Create activity for each linked deal (with dedup)
                 for deal_id in deal_ids:
+                    deal = await session.get(Deal, deal_id)
+                    company = await session.get(Company, deal.company_id) if deal and deal.company_id else None
+                    company_domain = _normalize_domain(company.domain if company else None)
+                    linked_contact_rows = (
+                        await session.execute(
+                            select(Contact.id, Contact.email)
+                            .join(DealContact, DealContact.contact_id == Contact.id)
+                            .where(DealContact.deal_id == deal_id)
+                        )
+                    ).all()
+                    linked_contact_ids = {row.id for row in linked_contact_rows}
+                    linked_contact_emails = {
+                        str(row.email or "").strip().lower() for row in linked_contact_rows if row.email
+                    }
+                    suggested_existing_contacts = []
+                    for contact in matched_contacts:
+                        if matched_via != "alias":
+                            continue
+                        if contact.id in linked_contact_ids:
+                            continue
+                        suggested_existing_contacts.append({
+                            "contact_id": str(contact.id),
+                            "email": str(contact.email or "").strip().lower(),
+                        })
+
+                    suggested_new_participants = []
+                    if matched_via == "alias" and company_domain and not company_domain.endswith(".unknown"):
+                        for addr in sorted(all_addrs):
+                            normalized_addr = (addr or "").strip().lower()
+                            if not normalized_addr or "@" not in normalized_addr:
+                                continue
+                            if normalized_addr in linked_contact_emails or normalized_addr in matched_contact_emails:
+                                continue
+                            addr_domain = _normalize_domain(normalized_addr.split("@", 1)[1])
+                            if addr_domain != company_domain:
+                                continue
+                            display_name = _build_display_name(
+                                normalized_addr,
+                                msg.from_name if normalized_addr == msg.from_addr else None,
+                            )
+                            first_name, last_name = _infer_name_from_email(normalized_addr)
+                            suggested_new_participants.append({
+                                "email": normalized_addr,
+                                "display_name": display_name,
+                                "first_name": first_name,
+                                "last_name": last_name,
+                            })
+
                     # Check for existing activity with same message_id + deal_id
                     existing = await session.execute(
                         select(Activity.id).where(
@@ -236,10 +312,13 @@ async def _async_sync() -> dict:
                             "matched_via": matched_via,
                             "matched_aliases": matched_aliases or None,
                             "gmail_thread_id": msg.thread_id or None,
+                            "suggested_existing_contacts": suggested_existing_contacts or None,
+                            "suggested_new_participants": suggested_new_participants or None,
                         },
                     )
                     session.add(activity)
                     activities_created += 1
+                    touched_deal_ids.add(deal_id)
 
             settings_row = await session.get(WorkspaceSettings, 1)
             if settings_row:
@@ -248,6 +327,10 @@ async def _async_sync() -> dict:
                 settings_row.gmail_last_error = None
                 session.add(settings_row)
 
+            await session.commit()
+
+            for deal_id in touched_deal_ids:
+                await refresh_system_tasks_for_entity(session, "deal", deal_id)
             await session.commit()
 
         # Update cursor

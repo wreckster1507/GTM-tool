@@ -1,36 +1,37 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, UserCircle2 } from "lucide-react";
-import { activitiesApi, authApi, companiesApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
+import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import type { Activity, Company, Contact, Deal, PipelineSummarySettings, User } from "../types";
+import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 
 type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
 type DragItem = { kind: "deal"; id: string; fromStage: string } | { kind: "prospect"; id: string; fromStage: ProspectStageId };
-type StageMeta = { id: string; label: string; group: "active" | "closed" };
+type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
 type FunnelKey = "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
 
-const DEAL_STAGES: StageMeta[] = [
-  { id: "open", label: "Open", group: "active" },
-  { id: "demo_scheduled", label: "Demo Scheduled", group: "active" },
-  { id: "demo_done", label: "Demo Done", group: "active" },
-  { id: "qualified_lead", label: "Qualified Lead", group: "active" },
-  { id: "poc_agreed", label: "POC Agreed", group: "active" },
-  { id: "poc_wip", label: "POC WIP", group: "active" },
-  { id: "poc_done", label: "POC Done", group: "active" },
-  { id: "commercial_negotiation", label: "Negotiation", group: "active" },
-  { id: "msa_review", label: "MSA", group: "active" },
-  { id: "workshop", label: "Workshop", group: "active" },
-  { id: "closed_won", label: "Closed Won", group: "closed" },
-  { id: "closed_lost", label: "Closed Lost", group: "closed" },
-  { id: "not_a_fit", label: "Not a Fit", group: "closed" },
-  { id: "on_hold", label: "On Hold", group: "closed" },
-  { id: "nurture", label: "Nurture", group: "closed" },
-  { id: "churned", label: "Churned", group: "closed" },
+const DEFAULT_DEAL_STAGES: StageMeta[] = [
+  { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
+  { id: "demo_scheduled", label: "4.DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
+  { id: "demo_done", label: "5.DEMO DONE", group: "active", color: "#1d4ed8" },
+  { id: "qualified_lead", label: "6.QUALIFIED LEAD", group: "active", color: "#6d5efc" },
+  { id: "poc_agreed", label: "7.POC AGREED", group: "active", color: "#0ea5e9" },
+  { id: "poc_wip", label: "8.POC WIP", group: "active", color: "#06b6d4" },
+  { id: "poc_done", label: "9.POC DONE", group: "active", color: "#14b8a6" },
+  { id: "commercial_negotiation", label: "10.COMMERCIAL NEGOTIATION", group: "active", color: "#f59e0b" },
+  { id: "msa_review", label: "11.WORKSHOP/MSA", group: "active", color: "#a855f7" },
+  { id: "closed_won", label: "12.CLOSED WON", group: "closed", color: "#22c55e" },
+  { id: "churned", label: "CHURNED", group: "closed", color: "#ef4444" },
+  { id: "not_a_fit", label: "NOT FIT", group: "closed", color: "#9ca3af" },
+  { id: "cold", label: "COLD", group: "closed", color: "#94a3b8" },
+  { id: "closed_lost", label: "CLOSED LOST", group: "closed", color: "#7c8da4" },
+  { id: "on_hold", label: "ON HOLD - REVISIT LATER", group: "closed", color: "#7c3aed" },
+  { id: "nurture", label: "NURTURE - FUTURE FIT", group: "closed", color: "#2dd4bf" },
+  { id: "closed", label: "CLOSED", group: "closed", color: "#64748b" },
 ];
 
 const PROSPECT_STAGES: Array<StageMeta & { id: ProspectStageId }> = [
@@ -44,7 +45,7 @@ const PROSPECT_STAGES: Array<StageMeta & { id: ProspectStageId }> = [
 
 const PRIORITY_COLOR: Record<string, string> = { urgent: "#dc2626", high: "#f59e0b", normal: "#94a3b8", low: "#cbd5e1" };
 const STAGE_COLOR: Record<string, string> = {
-  open: "#3b82f6", demo_scheduled: "#6366f1", demo_done: "#8b5cf6", qualified_lead: "#2563eb",
+  reprospect: "#8b5cf6", demo_scheduled: "#6366f1", demo_done: "#8b5cf6", qualified_lead: "#2563eb",
   poc_agreed: "#0ea5e9", poc_wip: "#06b6d4", poc_done: "#14b8a6", commercial_negotiation: "#f59e0b",
   msa_review: "#a855f7", workshop: "#f97316", closed_won: "#22c55e", closed_lost: "#94a3b8",
   not_a_fit: "#9ca3af", on_hold: "#a78bfa", nurture: "#67e8f9", churned: "#ef4444",
@@ -265,7 +266,7 @@ function FunnelSettingsModal({
   );
 }
 
-function CreateDealModal({ defaultStage, companies, users, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
+function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
   const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority: "normal", assigned_to_id: "", geography: "", tags: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -317,7 +318,7 @@ function CreateDealModal({ defaultStage, companies, users, onClose, onCreated }:
             </select>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.stage} onChange={(event) => setForm((current) => ({ ...current, stage: event.target.value }))}>
-                {DEAL_STAGES.map((stage) => <option key={stage.id} value={stage.id}>{stage.label}</option>)}
+                {stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.label}</option>)}
               </select>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.priority} onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))}>
                 <option value="urgent">Urgent</option>
@@ -355,10 +356,93 @@ function CreateDealModal({ defaultStage, companies, users, onClose, onCreated }:
   );
 }
 
-function DealCard({ deal, onClick, onDragStart }: { deal: Deal; onClick: () => void; onDragStart: () => void }) {
+function CrmImportModal({
+  importing,
+  result,
+  error,
+  onClose,
+  onImport,
+}: {
+  importing: boolean;
+  result: CrmImportResponse | null;
+  error: string;
+  onClose: () => void;
+  onImport: () => Promise<void>;
+}) {
+  const statStyle = { fontSize: 12, color: "#5e738b" } as const;
+  return (
+    <>
+      <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.25)", zIndex: 40 }} onClick={importing ? undefined : onClose} />
+      <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "grid", placeItems: "center", padding: 16 }}>
+        <div style={{ width: "100%", maxWidth: 560, borderRadius: 20, background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", padding: 28 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+            <div>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1f2d3d" }}>Import from CRM</h3>
+              <p style={{ fontSize: 13, color: "#5e738b", marginTop: 6, lineHeight: 1.6 }}>
+                This replaces the current deal pipeline data with the latest records from the ClickUp <strong>Sales CRM</strong> board.
+                Users, settings, prospects, and integrations stay untouched.
+              </p>
+            </div>
+            <button onClick={onClose} disabled={importing} style={{ color: "#7a8ea4", cursor: importing ? "not-allowed" : "pointer", background: "none", border: "none" }}>Close</button>
+          </div>
+
+          <div style={{ borderRadius: 14, border: "1px solid #dbe6f2", background: "#f8fbff", padding: 14, display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#175089" }}>What happens</div>
+            <div style={statStyle}>1. Beacon clears the current deal-pipeline records.</div>
+            <div style={statStyle}>2. Beacon imports every board item from ClickUp Sales CRM as deals and companies.</div>
+            <div style={statStyle}>3. Reruns stay idempotent using ClickUp task ids, so the same source data is not duplicated.</div>
+          </div>
+
+          {error && <div style={{ marginTop: 14, fontSize: 12, color: "#b94a24", fontWeight: 600 }}>{error}</div>}
+
+          {result && (
+            <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+              <div style={{ borderRadius: 14, border: "1px solid #dbe6f2", background: "#fbfdff", padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", marginBottom: 8 }}>Cleared</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={statStyle}>Deals removed: {result.replace.deals_deleted}</div>
+                  <div style={statStyle}>Activities removed: {result.replace.activities_deleted}</div>
+                  <div style={statStyle}>Deal tasks removed: {result.replace.deal_tasks_deleted}</div>
+                  <div style={statStyle}>Companies removed: {result.replace.companies_deleted}</div>
+                </div>
+              </div>
+              <div style={{ borderRadius: 14, border: "1px solid #dbe6f2", background: "#fbfdff", padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", marginBottom: 8 }}>Imported</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={statStyle}>Deals seen: {result.import.top_level_tasks_seen}</div>
+                  <div style={statStyle}>Subtasks seen: {result.import.subtasks_seen}</div>
+                  <div style={statStyle}>Deals created: {result.import.deals_created}</div>
+                  <div style={statStyle}>Deals updated: {result.import.deals_updated}</div>
+                  <div style={statStyle}>Companies created: {result.import.companies_created}</div>
+                  <div style={statStyle}>Companies reused: {result.import.companies_reused}</div>
+                  <div style={statStyle}>Activities created: {result.import.activities_created}</div>
+                  <div style={statStyle}>Tasks created: {result.import.tasks_created}</div>
+                </div>
+                {result.import.unmatched_assignees.length > 0 && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: "#7a8ea4", lineHeight: 1.5 }}>
+                    Unmatched assignees: {result.import.unmatched_assignees.join(", ")}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+            <button className="crm-button soft" onClick={onClose} disabled={importing}>Cancel</button>
+            <button className="crm-button primary" onClick={onImport} disabled={importing}>
+              {importing ? "Importing..." : "Import from CRM"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DealCard({ deal, onClick, onDragStart, onDragEnd }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void }) {
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
   return (
-    <button type="button" draggable onDragStart={onDragStart} onClick={onClick} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+    <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onClick} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0 }} />
         <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 5, background: PRIORITY_COLOR[deal.priority] ?? "#94a3b8" }} />
@@ -384,9 +468,44 @@ function DealCard({ deal, onClick, onDragStart }: { deal: Deal; onClick: () => v
   );
 }
 
-function ProspectCard({ contact, company, onOpen, onDragStart }: { contact: Contact; company?: Company; onOpen: () => void; onDragStart: () => void }) {
+function LoadingCard({ kind }: { kind: "deal" | "prospect" }) {
   return (
-    <button type="button" draggable onDragStart={onDragStart} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+    <div
+      aria-hidden="true"
+      style={{
+        width: "100%",
+        borderRadius: 14,
+        border: "1px solid #e8eef5",
+        background: "#fff",
+        boxShadow: "0 1px 4px rgba(17,34,68,0.04)",
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 9,
+      }}
+    >
+      <div style={{ height: 12, width: kind === "deal" ? "72%" : "62%", borderRadius: 999, background: "#edf2f7" }} />
+      <div style={{ height: 10, width: "44%", borderRadius: 999, background: "#f3f6fa" }} />
+      <div style={{ height: 16, width: kind === "deal" ? "30%" : "52%", borderRadius: 999, background: "#edf2f7" }} />
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div style={{ height: 18, width: 66, borderRadius: 999, background: "#f3f6fa" }} />
+        <div style={{ height: 18, width: 50, borderRadius: 999, background: "#f7f9fc" }} />
+      </div>
+      <div style={{ height: 1, background: "#f0f4f8", marginTop: 4 }} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#edf2f7" }} />
+          <div style={{ height: 10, width: 28, borderRadius: 999, background: "#f3f6fa" }} />
+        </div>
+        <div style={{ height: 10, width: 64, borderRadius: 999, background: "#f3f6fa" }} />
+      </div>
+    </div>
+  );
+}
+
+function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd }: { contact: Contact; company?: Company; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void }) {
+  return (
+    <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
@@ -421,7 +540,7 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, chil
     <div style={{ width: 286, flexShrink: 0, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, padding: "0 4px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: STAGE_COLOR[stage.id] ?? "#94a3b8" }} />
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: stage.color || STAGE_COLOR[stage.id] || "#94a3b8" }} />
           <span style={{ fontSize: 12, fontWeight: 700, color: stage.group === "closed" ? "#7a8ca1" : "#2d4258" }}>{stage.label}</span>
           <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#ecf1f7", color: "#48607b" }}>{count}</span>
         </div>
@@ -559,7 +678,8 @@ export default function Pipeline() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingDeals, setLoadingDeals] = useState(true);
+  const [loadingProspects, setLoadingProspects] = useState(true);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [stageFilters, setStageFilters] = useState<string[]>([]);
@@ -579,29 +699,76 @@ export default function Pipeline() {
     normalizePipelineSummarySettings()
   );
   const [savingFunnelSettings, setSavingFunnelSettings] = useState(false);
+  const [dealStages, setDealStages] = useState<StageMeta[]>(DEFAULT_DEAL_STAGES);
+  const [showCrmImport, setShowCrmImport] = useState(false);
+  const [importingCrm, setImportingCrm] = useState(false);
+  const [crmImportResult, setCrmImportResult] = useState<CrmImportResponse | null>(null);
+  const [crmImportError, setCrmImportError] = useState("");
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
   const allDeals = useMemo(() => Object.values(dealBoard).flat(), [dealBoard]);
   const dealTags = useMemo(() => Array.from(new Set(allDeals.flatMap((deal) => deal.tags ?? []))).sort((a, b) => a.localeCompare(b)), [allDeals]);
+  const effectiveDealStages = useMemo(() => {
+    const configured = dealStages.length ? dealStages : DEFAULT_DEAL_STAGES;
+    const seen = new Set(configured.map((stage) => stage.id));
+    const extras = Object.keys(dealBoard)
+      .filter((stageId) => !seen.has(stageId))
+      .map((stageId) => ({
+        id: stageId,
+        label: stageId.replace(/_/g, " ").toUpperCase(),
+        group: ["closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"].includes(stageId) ? "closed" as const : "active" as const,
+        color: STAGE_COLOR[stageId] ?? "#94a3b8",
+      }));
+    return [...configured, ...extras];
+  }, [dealBoard, dealStages]);
 
-  const loadBoard = async () => {
-    setLoading(true);
+  const loadDealBoard = async () => {
+    setLoadingDeals(true);
     try {
-      const [board, companyList, userList, contactList, summarySettings] = await Promise.all([
+      const [board, dealStageSettings] = await Promise.all([
         dealsApi.board("deal"),
-        companiesApi.list(),
-        authApi.listAllUsers().catch(() => []),
-        contactsApi.list(0, 500),
-        settingsApi.getPipelineSummarySettings().catch(() => normalizePipelineSummarySettings()),
+        settingsApi.getDealStages().catch(() => ({ stages: DEFAULT_DEAL_STAGES as DealStageSetting[] })),
       ]);
       setDealBoard(board);
+      setDealStages((dealStageSettings.stages ?? DEFAULT_DEAL_STAGES).map((stage) => ({
+        id: stage.id,
+        label: stage.label,
+        group: stage.group,
+        color: stage.color,
+      })));
+    } finally {
+      setLoadingDeals(false);
+    }
+  };
+
+  const loadProspectBoard = async () => {
+    setLoadingProspects(true);
+    try {
+      const contactList = await contactsApi.list(0, 500);
+      setContacts(contactList);
+    } finally {
+      setLoadingProspects(false);
+    }
+  };
+
+  const loadSupportingData = async () => {
+    try {
+      const [companyList, userList, summarySettings] = await Promise.all([
+        companiesApi.list(),
+        authApi.listAllUsers().catch(() => []),
+        settingsApi.getPipelineSummarySettings().catch(() => normalizePipelineSummarySettings()),
+      ]);
       setCompanies(companyList);
       setUsers(userList);
-      setContacts(contactList);
       setPipelineSummaryConfig(normalizePipelineSummarySettings(summarySettings));
-    } finally {
-      setLoading(false);
+    } catch {
+      // Keep the board responsive even if secondary sidebar data lags or fails.
     }
+  };
+
+  const loadBoard = async () => {
+    void loadSupportingData();
+    await Promise.all([loadDealBoard(), loadProspectBoard()]);
   };
 
   useEffect(() => {
@@ -624,7 +791,7 @@ export default function Pipeline() {
 
   const filteredDealBoard = useMemo(() => {
     const next: Record<string, Deal[]> = {};
-    for (const stage of DEAL_STAGES) {
+    for (const stage of effectiveDealStages) {
       let items = dealBoard[stage.id] ?? [];
       if (search) {
         const q = search.toLowerCase();
@@ -642,7 +809,7 @@ export default function Pipeline() {
       next[stage.id] = items;
     }
     return next;
-  }, [assigneeFilters, dealBoard, geographyFilters, search, stageFilters, tagFilters]);
+  }, [assigneeFilters, dealBoard, effectiveDealStages, geographyFilters, search, stageFilters, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -679,13 +846,13 @@ export default function Pipeline() {
     const visible = Object.values(filteredDealBoard).flat();
     return {
       total: visible.length,
-      active: visible.filter((deal) => DEAL_STAGES.find((stage) => stage.id === deal.stage)?.group === "active").length,
-      closed: visible.filter((deal) => DEAL_STAGES.find((stage) => stage.id === deal.stage)?.group === "closed").length,
+      active: visible.filter((deal) => effectiveDealStages.find((stage) => stage.id === deal.stage)?.group === "active").length,
+      closed: visible.filter((deal) => effectiveDealStages.find((stage) => stage.id === deal.stage)?.group === "closed").length,
       tofu: visible.filter((deal) => pipelineSummaryConfig.deal.tofu.includes(deal.stage)).length,
       mofu: visible.filter((deal) => pipelineSummaryConfig.deal.mofu.includes(deal.stage)).length,
       bofu: visible.filter((deal) => pipelineSummaryConfig.deal.bofu.includes(deal.stage)).length,
     };
-  }, [filteredDealBoard, pipelineSummaryConfig.deal]);
+  }, [effectiveDealStages, filteredDealBoard, pipelineSummaryConfig.deal]);
 
   const prospectSummary = useMemo(() => ({
     total: Object.values(filteredProspects).flat().length,
@@ -706,9 +873,10 @@ export default function Pipeline() {
   }), [filteredProspects, pipelineSummaryConfig.prospect]);
 
   const summary = tab === "deal" ? dealSummary : prospectSummary;
+  const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
   const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0;
-  const stages = tab === "deal" ? DEAL_STAGES : PROSPECT_STAGES;
-  const stageOptions = (tab === "deal" ? DEAL_STAGES : PROSPECT_STAGES).map((stage) => ({ value: stage.id, label: stage.label }));
+  const stages = tab === "deal" ? effectiveDealStages : PROSPECT_STAGES;
+  const stageOptions = (tab === "deal" ? effectiveDealStages : PROSPECT_STAGES).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
   const geographyOptions = GEO_OPTIONS.map((option) => ({ value: option, label: option }));
   const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
@@ -722,7 +890,7 @@ export default function Pipeline() {
     tab === "deal"
       ? "Choose which deal stages count toward ToFU, MoFU, and BoFU in the shared summary cards."
       : "Choose which prospect lanes count toward ToFU, MoFU, and BoFU in the shared summary cards.";
-  const funnelModalStages = tab === "deal" ? DEAL_STAGES : PROSPECT_STAGES;
+  const funnelModalStages = tab === "deal" ? effectiveDealStages : PROSPECT_STAGES;
 
   const resetFilters = () => {
     setSearch("");
@@ -752,21 +920,30 @@ export default function Pipeline() {
   };
 
   const handleDealCreated = (deal: Deal) => setDealBoard((current) => ({ ...current, [deal.stage]: [...(current[deal.stage] ?? []), deal] }));
+  const clearDragState = () => setDragItem(null);
 
   const handleDealDrop = async (targetStage: string) => {
-    if (!dragItem || dragItem.kind !== "deal" || dragItem.fromStage === targetStage) return;
+    if (!dragItem || dragItem.kind !== "deal") return;
+    if (dragItem.fromStage === targetStage) {
+      clearDragState();
+      return;
+    }
     setBusyStage(targetStage);
     try {
       await dealsApi.moveStage(dragItem.id, targetStage);
       await loadBoard();
     } finally {
       setBusyStage(null);
-      setDragItem(null);
+      clearDragState();
     }
   };
 
   const handleProspectDrop = async (targetStage: ProspectStageId) => {
-    if (!dragItem || dragItem.kind !== "prospect" || dragItem.fromStage === targetStage) return;
+    if (!dragItem || dragItem.kind !== "prospect") return;
+    if (dragItem.fromStage === targetStage) {
+      clearDragState();
+      return;
+    }
     const draggedProspect = contacts.find((contact) => contact.id === dragItem.id) ?? null;
     setBusyStage(targetStage);
     try {
@@ -781,7 +958,7 @@ export default function Pipeline() {
       }
     } finally {
       setBusyStage(null);
-      setDragItem(null);
+      clearDragState();
     }
   };
 
@@ -824,6 +1001,20 @@ export default function Pipeline() {
       setShowFunnelSettings(false);
     } finally {
       setSavingFunnelSettings(false);
+    }
+  };
+
+  const handleImportFromCrm = async () => {
+    setImportingCrm(true);
+    setCrmImportError("");
+    try {
+      const result = await crmImportsApi.importClickUpSalesCrm({ replace_existing: true });
+      setCrmImportResult(result);
+      await loadBoard();
+    } catch (err) {
+      setCrmImportError(err instanceof Error ? err.message : "Failed to import from CRM");
+    } finally {
+      setImportingCrm(false);
     }
   };
 
@@ -876,16 +1067,33 @@ export default function Pipeline() {
           </div>
 
           <div style={{ flex: 1 }} />
-          {tab === "deal"
-            ? <button className="crm-button primary" onClick={() => setCreateDealStage("open")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Plus size={14} />New Deal</button>
-            : <button className="crm-button primary" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Target size={14} />Open Prospecting</button>}
+          {tab === "deal" ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              {isAdmin && (
+                <button
+                  className="crm-button soft"
+                  onClick={() => {
+                    setCrmImportError("");
+                    setCrmImportResult(null);
+                    setShowCrmImport(true);
+                  }}
+                  style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                >
+                  <Building2 size={14} />Import from CRM
+                </button>
+              )}
+              <button className="crm-button primary" onClick={() => setCreateDealStage(effectiveDealStages.find((stage) => stage.group === "active")?.id ?? "reprospect")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Plus size={14} />New Deal</button>
+            </div>
+          ) : (
+            <button className="crm-button primary" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Target size={14} />Open Prospecting</button>
+          )}
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f2744", margin: 0 }}>{tab === "deal" ? "Deals" : "Prospects"} Board</h2>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999, background: accentBg, color: accentColor, border: `1px solid ${accentBorder}` }}>{summary.total} visible</span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999, background: accentBg, color: accentColor, border: `1px solid ${accentBorder}` }}>{currentBoardLoading ? "Loading..." : `${summary.total} visible`}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#6b7f95" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><GripVertical size={11} />Drag cards across lanes</span>
@@ -893,34 +1101,36 @@ export default function Pipeline() {
             </div>
           </div>
 
-          {loading ? <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#7a96b0" }}>Loading pipeline...</div> : (
-            <div style={{ flex: 1, overflowX: "auto", padding: "16px 16px 16px 20px" }}>
-              <div style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%" }}>
-                {(tab === "deal" ? stages : PROSPECT_STAGES).map((stage, index) => {
-                  const divider = index > 0 && (tab === "deal" ? DEAL_STAGES[index - 1]?.group : PROSPECT_STAGES[index - 1]?.group) === "active" && stage.group === "closed";
-                  const dealItems = filteredDealBoard[stage.id] ?? [];
-                  const prospectItems = filteredProspects[stage.id as ProspectStageId] ?? [];
-                  return (
-                    <div key={stage.id} style={{ display: "flex", gap: 12, height: "100%" }}>
-                      {divider && <div style={{ width: 1, background: "linear-gradient(180deg, #dbe6f2 0%, transparent 100%)", margin: "28px 2px 0", alignSelf: "stretch" }} />}
-                      <BoardColumn stage={stage} count={tab === "deal" ? dealItems.length : prospectItems.length} totalValue={tab === "deal" ? dealItems.reduce((sum, deal) => sum + (deal.value ?? 0), 0) : undefined} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
-                        {tab === "deal" ? (
-                          dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => setSelectedDeal(deal)} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
-                        ) : (
-                          prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
-                        )}
-                      </BoardColumn>
-                    </div>
-                  );
-                })}
-              </div>
+          <div style={{ flex: 1, overflowX: "auto", padding: "16px 16px 16px 20px" }}>
+            <div style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%" }}>
+              {(tab === "deal" ? stages : PROSPECT_STAGES).map((stage, index) => {
+                const divider = index > 0 && (tab === "deal" ? effectiveDealStages[index - 1]?.group : PROSPECT_STAGES[index - 1]?.group) === "active" && stage.group === "closed";
+                const dealItems = filteredDealBoard[stage.id] ?? [];
+                const prospectItems = filteredProspects[stage.id as ProspectStageId] ?? [];
+                return (
+                  <div key={stage.id} style={{ display: "flex", gap: 12, height: "100%" }}>
+                    {divider && <div style={{ width: 1, background: "linear-gradient(180deg, #dbe6f2 0%, transparent 100%)", margin: "28px 2px 0", alignSelf: "stretch" }} />}
+                    <BoardColumn stage={stage} count={currentBoardLoading ? 0 : tab === "deal" ? dealItems.length : prospectItems.length} totalValue={currentBoardLoading || tab !== "deal" ? undefined : dealItems.reduce((sum, deal) => sum + (deal.value ?? 0), 0)} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
+                      {currentBoardLoading ? (
+                        Array.from({ length: stage.group === "active" ? 3 : 1 }).map((_, skeletonIndex) => (
+                          <LoadingCard key={`${stage.id}-skeleton-${skeletonIndex}`} kind={tab === "deal" ? "deal" : "prospect"} />
+                        ))
+                      ) : tab === "deal" ? (
+                        dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => setSelectedDeal(deal)} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
+                      ) : (
+                        prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
+                      )}
+                    </BoardColumn>
+                  </div>
+                );
+              })}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
-      {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} />}
-      {selectedDeal && <DealDetailDrawer deal={selectedDeal} companies={companies} users={users} stages={DEAL_STAGES} onClose={() => setSelectedDeal(null)} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
+      {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} stages={effectiveDealStages} />}
+      {selectedDeal && <DealDetailDrawer deal={selectedDeal} companies={companies} users={users} stages={effectiveDealStages} onClose={() => setSelectedDeal(null)} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
       {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} onClose={() => setSelectedProspect(null)} />}
       {pendingConvertProspect && (
         <>
@@ -953,6 +1163,17 @@ export default function Pipeline() {
           saving={savingFunnelSettings}
           onClose={() => setShowFunnelSettings(false)}
           onSave={handleSaveFunnelSettings}
+        />
+      )}
+      {showCrmImport && (
+        <CrmImportModal
+          importing={importingCrm}
+          result={crmImportResult}
+          error={crmImportError}
+          onClose={() => {
+            if (!importingCrm) setShowCrmImport(false);
+          }}
+          onImport={handleImportFromCrm}
         />
       )}
     </>

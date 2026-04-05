@@ -22,6 +22,8 @@ class Activity(ActivityBase, table=True):
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     deal_id: Optional[UUID] = Field(default=None, foreign_key="deals.id", index=True)
     contact_id: Optional[UUID] = Field(default=None, foreign_key="contacts.id", index=True)
+    external_source: Optional[str] = Field(default=None, index=True)
+    external_source_id: Optional[str] = Field(default=None, index=True)
     # Override inherited str fields with proper Text columns
     content: Optional[str] = Field(default=None, sa_column=Column(Text))
     ai_summary: Optional[str] = Field(default=None, sa_column=Column(Text))

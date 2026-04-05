@@ -4,6 +4,7 @@ import { dealsApi, activitiesApi, contactsApi, meetingsApi } from "../lib/api";
 import type { Deal, Activity, Contact, Meeting } from "../types";
 import { ArrowLeft, Phone, Mail, Video, FileText, Activity as ActivityIcon, Trash2, CalendarDays, X, ExternalLink, Sparkles } from "lucide-react";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
+import TranscriptPreview from "../components/activity/TranscriptPreview";
 
 const MEDDPICC = [
   { key: "metrics",           label: "Metrics",           desc: "Quantifiable value / ROI defined" },
@@ -283,6 +284,18 @@ export default function DealDetail() {
               {activities.map((a) => {
                 const Icon = ACTIVITY_ICON[a.type] ?? ActivityIcon;
                 const colorCls = ACTIVITY_COLOR[a.type] ?? "bg-[#eef3f8] text-[#6f8399]";
+                const metadata = (a.event_metadata ?? {}) as Record<string, unknown>;
+                const isTranscript = a.type === "transcript";
+                const transcriptText =
+                  typeof metadata.transcription === "string" && metadata.transcription.trim()
+                    ? metadata.transcription
+                    : a.content ?? "";
+                const transcriptTopics = Array.isArray(metadata.topics)
+                  ? metadata.topics.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+                  : [];
+                const transcriptActionItems = Array.isArray(metadata.action_items)
+                  ? metadata.action_items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+                  : [];
                 return (
                   <div key={a.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-4">
                     <div className="flex items-start gap-4">
@@ -301,8 +314,20 @@ export default function DealDetail() {
                           </div>
                           <p className="text-[12px] text-[#7a8ea4]">{formatDate(a.created_at)}</p>
                         </div>
-                        {a.content && <p className="text-[13px] text-[#4d6178] mt-1.5 leading-relaxed">{a.content}</p>}
-                        {a.ai_summary && <p className="text-[12px] text-[#ff6b35] mt-2">AI summary: {a.ai_summary}</p>}
+                        {a.ai_summary && (
+                          <div className="mt-3 rounded-2xl border border-[#ffd9c2] bg-[#fff6ef] px-5 py-4 text-[13px] leading-8 text-[#b45309]">
+                            {a.ai_summary}
+                          </div>
+                        )}
+                        {isTranscript ? (
+                          <TranscriptPreview
+                            transcript={transcriptText}
+                            topics={transcriptTopics}
+                            actionItems={transcriptActionItems}
+                          />
+                        ) : (
+                          a.content && <p className="text-[13px] text-[#4d6178] mt-1.5 leading-relaxed whitespace-pre-wrap">{a.content}</p>
+                        )}
                       </div>
                     </div>
                   </div>

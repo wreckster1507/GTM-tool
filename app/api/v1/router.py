@@ -18,6 +18,7 @@ from app.api.v1.endpoints import (
     battlecards,
     companies,
     contacts,
+    crm_imports,
     custom_demo,
     deals,
     execution_tracker,
@@ -31,6 +32,7 @@ from app.api.v1.endpoints import (
     settings,
     signals,
     tasks,
+    tldv,
     webhooks,
     workspace,
 )
@@ -42,6 +44,7 @@ router.include_router(assignments.router)
 router.include_router(companies.router)
 router.include_router(contacts.router)
 router.include_router(deals.router)
+router.include_router(crm_imports.router)
 router.include_router(execution_tracker.router)
 router.include_router(activities.router)
 router.include_router(enrichment.router)
@@ -50,6 +53,7 @@ router.include_router(outreach.router)
 router.include_router(intelligence.router)
 router.include_router(signals.router)
 router.include_router(tasks.router)
+router.include_router(tldv.router)
 router.include_router(meetings.router)
 router.include_router(battlecards.router)
 router.include_router(webhooks.router)

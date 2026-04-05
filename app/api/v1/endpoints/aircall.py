@@ -160,6 +160,12 @@ async def register_webhook() -> dict[str, Any]:
         "call.voicemail_left",
         "call.commented",
         "call.tagged",
+        "call.comm_assets_generated",
+        "summary.created",
+        "topics.created",
+        "transcription.created",
+        "action_item.created",
+        "sentiment.created",
     ]
 
     try:

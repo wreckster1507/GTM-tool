@@ -43,6 +43,10 @@ class Meeting(MeetingBase, table=True):
     __tablename__ = "meetings"
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    external_source: Optional[str] = Field(default=None, index=True)
+    external_source_id: Optional[str] = Field(default=None, index=True)
+    meeting_url: Optional[str] = Field(default=None, sa_column=Column(Text))
+    recording_url: Optional[str] = Field(default=None, sa_column=Column(Text))
     # Pre-meeting
     pre_brief: Optional[str] = Field(default=None, sa_column=Column(Text))
     demo_strategy: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -66,6 +70,10 @@ class MeetingCreate(MeetingBase):
 
 class MeetingRead(MeetingBase):
     id: UUID
+    external_source: Optional[str] = None
+    external_source_id: Optional[str] = None
+    meeting_url: Optional[str] = None
+    recording_url: Optional[str] = None
     pre_brief: Optional[str] = None
     demo_strategy: Optional[str] = None
     research_data: Optional[Any] = None
@@ -86,6 +94,10 @@ class MeetingUpdate(SQLModel):
     scheduled_at: Optional[datetime] = None
     status: Optional[str] = None
     meeting_type: Optional[str] = None
+    external_source: Optional[str] = None
+    external_source_id: Optional[str] = None
+    meeting_url: Optional[str] = None
+    recording_url: Optional[str] = None
     attendees: Optional[Any] = None
     raw_notes: Optional[str] = None
     ai_summary: Optional[str] = None

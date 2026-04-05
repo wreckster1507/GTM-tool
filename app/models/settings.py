@@ -96,6 +96,28 @@ class WorkspaceSettings(SQLModel, table=True):
             server_default='{"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"]}',
         ),
     )
+    deal_stage_settings: list[dict] = Field(
+        default=[
+            {"id": "reprospect", "label": "REPROSPECT", "group": "active", "color": "#8b5cf6"},
+            {"id": "demo_scheduled", "label": "4.DEMO SCHEDULED", "group": "active", "color": "#4f6ddf"},
+            {"id": "demo_done", "label": "5.DEMO DONE", "group": "active", "color": "#1d4ed8"},
+            {"id": "qualified_lead", "label": "6.QUALIFIED LEAD", "group": "active", "color": "#6d5efc"},
+            {"id": "poc_agreed", "label": "7.POC AGREED", "group": "active", "color": "#0ea5e9"},
+            {"id": "poc_wip", "label": "8.POC WIP", "group": "active", "color": "#06b6d4"},
+            {"id": "poc_done", "label": "9.POC DONE", "group": "active", "color": "#14b8a6"},
+            {"id": "commercial_negotiation", "label": "10.COMMERCIAL NEGOTIATION", "group": "active", "color": "#f59e0b"},
+            {"id": "msa_review", "label": "11.WORKSHOP/MSA", "group": "active", "color": "#a855f7"},
+            {"id": "closed_won", "label": "12.CLOSED WON", "group": "closed", "color": "#22c55e"},
+            {"id": "churned", "label": "CHURNED", "group": "closed", "color": "#ef4444"},
+            {"id": "not_a_fit", "label": "NOT FIT", "group": "closed", "color": "#9ca3af"},
+            {"id": "cold", "label": "COLD", "group": "closed", "color": "#94a3b8"},
+            {"id": "closed_lost", "label": "CLOSED LOST", "group": "closed", "color": "#7c8da4"},
+            {"id": "on_hold", "label": "ON HOLD - REVISIT LATER", "group": "closed", "color": "#7c3aed"},
+            {"id": "nurture", "label": "NURTURE - FUTURE FIT", "group": "closed", "color": "#2dd4bf"},
+            {"id": "closed", "label": "CLOSED", "group": "closed", "color": "#64748b"},
+        ],
+        sa_column=Column(JSON, nullable=False),
+    )
     prospect_funnel_config: dict = Field(
         default={"tofu": ["outreach"], "mofu": ["in_progress"], "bofu": ["meeting_booked"]},
         sa_column=Column(
@@ -161,6 +183,21 @@ class StageBucketSettings(SQLModel):
     tofu: list[str]
     mofu: list[str]
     bofu: list[str]
+
+
+class DealStageSetting(SQLModel):
+    id: str
+    label: str
+    group: str
+    color: str
+
+
+class DealStageSettingsRead(SQLModel):
+    stages: list[DealStageSetting]
+
+
+class DealStageSettingsUpdate(SQLModel):
+    stages: list[DealStageSetting]
 
 
 class PipelineSummarySettingsRead(SQLModel):

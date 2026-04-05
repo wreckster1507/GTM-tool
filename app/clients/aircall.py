@@ -169,6 +169,30 @@ class AircallClient:
         """Fetch full call details including recording URL."""
         return await self._request("GET", f"/calls/{call_id}")
 
+    async def get_call_transcription(self, call_id: int, mode: str = "async") -> dict | None:
+        """Fetch the transcription for a call when Aircall AI is available."""
+        return await self._request(
+            "GET",
+            f"/calls/{call_id}/transcription",
+            params={"mode": mode},
+        )
+
+    async def get_call_summary(self, call_id: int) -> dict | None:
+        """Fetch the generated summary for a call when Aircall AI is available."""
+        return await self._request("GET", f"/calls/{call_id}/summary")
+
+    async def get_call_topics(self, call_id: int) -> dict | None:
+        """Fetch the detected key topics for a call when Aircall AI is available."""
+        return await self._request("GET", f"/calls/{call_id}/topics")
+
+    async def get_call_action_items(self, call_id: int) -> dict | None:
+        """Fetch the generated action items for a call when Aircall AI is available."""
+        return await self._request("GET", f"/calls/{call_id}/action_items")
+
+    async def get_call_sentiments(self, call_id: int) -> dict | None:
+        """Fetch the detected sentiments for a call when Aircall AI is available."""
+        return await self._request("GET", f"/calls/{call_id}/sentiments")
+
     async def add_call_note(self, call_id: int, text: str) -> dict | None:
         """Add a comment/note to a call — syncs CRM note back to Aircall."""
         return await self._request(

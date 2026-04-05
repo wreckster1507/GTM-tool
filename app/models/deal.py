@@ -11,9 +11,9 @@ from sqlmodel import Field, SQLModel
 # ── Stage definitions ────────────────────────────────────────────────────────
 
 DEAL_STAGES = [
-    "open", "demo_scheduled", "demo_done", "qualified_lead",
+    "reprospect", "demo_scheduled", "demo_done", "qualified_lead",
     "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop",
-    "closed_won", "closed_lost", "not_a_fit", "on_hold", "nurture", "churned",
+    "closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed",
 ]
 
 PROSPECT_STAGES = [
@@ -54,7 +54,7 @@ def compute_meddpicc_score(qualification: dict | None) -> int | None:
 class DealBase(SQLModel):
     name: str
     pipeline_type: str = "deal"
-    stage: str = "open"
+    stage: str = "reprospect"
     priority: str = "normal"
     department: Optional[str] = None
     geography: Optional[str] = None
@@ -76,6 +76,8 @@ class Deal(DealBase, table=True):
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
     assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     email_cc_alias: Optional[str] = Field(default=None, index=True)
+    external_source: Optional[str] = Field(default=None, index=True)
+    external_source_id: Optional[str] = Field(default=None, index=True)
     value: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(15, 2)))
     qualification: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     tags: list[str] = Field(default=[], sa_column=Column(JSONB, nullable=False, server_default="[]"))

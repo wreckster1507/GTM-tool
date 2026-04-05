@@ -63,6 +63,13 @@ class BatchConfirmPayload(BaseModel):
     force: bool = False
 
 
+def _account_sourcing_visibility_filter():
+    return or_(
+        Company.sourcing_batch_id.isnot(None),
+        Company.enrichment_sources.contains({"clickup_import": {}}),
+    )
+
+
 async def _auto_create_angel_records(
     session,
     company: Company,
@@ -926,8 +933,8 @@ async def list_sourced_companies(
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
 ):
-    """List all companies that came through account sourcing (have a batch ID)."""
-    stmt = select(Company).where(Company.sourcing_batch_id.isnot(None))
+    """List sourced companies plus lightweight ClickUp-imported accounts."""
+    stmt = select(Company).where(_account_sourcing_visibility_filter())
     search_term = (q or "").strip()
     if search_term:
         like = f"%{search_term}%"
@@ -971,7 +978,7 @@ async def get_sourced_company_summary(
     session: DBSession = None,
     assigned_rep_email: str | None = Query(default=None),
 ):
-    stmt = select(Company).where(Company.sourcing_batch_id.isnot(None))
+    stmt = select(Company).where(_account_sourcing_visibility_filter())
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
 

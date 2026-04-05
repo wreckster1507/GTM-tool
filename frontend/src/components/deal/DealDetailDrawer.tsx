@@ -9,6 +9,7 @@ import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
 import TaskCenterModal from "../tasks/TaskCenterModal";
+import TranscriptPreview from "../activity/TranscriptPreview";
 
 interface Props {
   deal: Deal;
@@ -1059,20 +1060,36 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
   const Icon = ACTIVITY_ICON[activity.type] ?? ActivityIcon;
   const isSystem = activity.type !== "comment";
   const isEmail = activity.type === "email";
+  const isTranscript = activity.type === "transcript";
+  const isTldvMeeting = activity.source === "tldv" && activity.type === "meeting";
   const actor = activity.user_name || activity.aircall_user_name || activity.source || "System";
   const [expanded, setExpanded] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [movingPoc, setMovingPoc] = useState(false);
   const showPocSuggestion = Boolean(isEmail && pocEligible && !dismissed && shouldSuggestPoc(activity));
+  const metadata = (activity.event_metadata ?? {}) as Record<string, unknown>;
+  const transcriptText =
+    typeof metadata.transcription === "string" && metadata.transcription.trim()
+      ? metadata.transcription
+      : activity.content ?? "";
+  const transcriptTopics = Array.isArray(metadata.topics)
+    ? metadata.topics.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  const transcriptActionItems = Array.isArray(metadata.action_items)
+    ? metadata.action_items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  const hidePlainContent = Boolean(
+    isTranscript || (activity.source === "tldv" && activity.type === "meeting" && activity.ai_summary),
+  );
 
   return (
-    <div style={{
-      padding: "14px 16px",
-      borderRadius: 16,
-      background: isEmail ? "#fefefe" : isSystem ? "#f7f9fc" : "#fff",
-      border: isEmail ? "1px solid #d4e2f4" : "1px solid #e8eef5",
-      boxShadow: "0 1px 3px rgba(17,34,68,0.04)",
-    }}>
+      <div style={{
+        padding: isTranscript || isTldvMeeting ? "18px 20px" : "14px 16px",
+        borderRadius: 16,
+        background: isEmail ? "#fefefe" : isSystem ? "#f7f9fc" : "#fff",
+        border: isEmail ? "1px solid #d4e2f4" : "1px solid #e8eef5",
+        boxShadow: "0 1px 3px rgba(17,34,68,0.04)",
+      }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         <div style={{
           width: 36,
@@ -1089,7 +1106,7 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           {/* Header row */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#2d4258", textTransform: "capitalize" }}>
                 {activity.type.replace(/_/g, " ")}
@@ -1105,10 +1122,10 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
                 {actor}
               </span>
             </div>
-            <span style={{ fontSize: 11, color: "#94a3b8" }}>{formatDate(activity.created_at)}</span>
-          </div>
+              <span style={{ fontSize: 11, color: "#94a3b8" }}>{formatDate(activity.created_at)}</span>
+            </div>
 
-          {/* Email-specific rendering */}
+            {/* Email-specific rendering */}
           {isEmail && activity.email_subject && (
             <div style={{ marginTop: 8 }}>
               {/* Subject line */}
@@ -1271,8 +1288,33 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
             </div>
           )}
 
+          {/* Non-email AI summary */}
+          {!isEmail && activity.ai_summary && (
+            <div style={{
+              marginTop: 14,
+              marginBottom: 10,
+              padding: "16px 18px",
+              borderRadius: 16,
+              background: "#fff6ef",
+              border: "1px solid #ffd9c2",
+              fontSize: 13,
+              color: "#b45309",
+              lineHeight: 1.85,
+            }}>
+              {activity.ai_summary}
+            </div>
+          )}
+
+          {isTranscript && transcriptText && (
+            <TranscriptPreview
+              transcript={transcriptText}
+              topics={transcriptTopics}
+              actionItems={transcriptActionItems}
+            />
+          )}
+
           {/* Non-email content */}
-          {!isEmail && activity.content && (
+          {!isEmail && activity.content && !hidePlainContent && (
             <div style={{
               fontSize: 14,
               color: "#33485f",
@@ -1281,21 +1323,6 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
               whiteSpace: "pre-wrap",
             }}>
               {activity.content}
-            </div>
-          )}
-
-          {/* Non-email AI summary */}
-          {!isEmail && activity.ai_summary && (
-            <div style={{
-              marginTop: 10,
-              padding: "10px 12px",
-              borderRadius: 12,
-              background: "#fff6ef",
-              border: "1px solid #ffd9c2",
-              fontSize: 12,
-              color: "#b45309",
-            }}>
-              AI summary: {activity.ai_summary}
             </div>
           )}
         </div>

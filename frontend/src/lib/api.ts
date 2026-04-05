@@ -23,9 +23,11 @@ import type {
   ExecutionTrackerSummary,
   Reminder,
   GmailSyncSettings,
+  DealStageSettings,
   OutreachContentSettings,
   PipelineSummarySettings,
   ProspectImportResponse,
+  CrmImportResponse,
 } from "../types";
 
 /**
@@ -244,6 +246,20 @@ export const dealsApi = {
     }),
 };
 
+export const crmImportsApi = {
+  importClickUpSalesCrm: (data?: {
+    replace_existing?: boolean;
+    limit?: number;
+    cache_dir?: string;
+    skip_comments?: boolean;
+    skip_subtasks?: boolean;
+  }) =>
+    request<CrmImportResponse>("/api/v1/crm-imports/clickup-sales-crm", {
+      method: "POST",
+      body: JSON.stringify(data ?? { replace_existing: true }),
+    }),
+};
+
 export const enrichmentApi = {
   triggerCompany: (companyId: string) =>
     request<{ status: string; task_id: string; message: string }>(
@@ -400,6 +416,10 @@ export const tasksApi = {
   accept: (id: string) =>
     request<TaskItem>(`/api/v1/tasks/${id}/accept`, {
       method: "POST",
+    }),
+  remove: (id: string) =>
+    request<void>(`/api/v1/tasks/${id}`, {
+      method: "DELETE",
     }),
 };
 
@@ -1130,6 +1150,13 @@ export const settingsApi = {
     request<PipelineSummarySettings>("/api/v1/settings/pipeline-summary"),
   updatePipelineSummarySettings: (config: PipelineSummarySettings) =>
     request<PipelineSummarySettings>("/api/v1/settings/pipeline-summary", {
+      method: "PATCH",
+      body: JSON.stringify(config),
+    }),
+  getDealStages: () =>
+    request<DealStageSettings>("/api/v1/settings/deal-stages"),
+  updateDealStages: (config: DealStageSettings) =>
+    request<DealStageSettings>("/api/v1/settings/deal-stages", {
       method: "PATCH",
       body: JSON.stringify(config),
     }),

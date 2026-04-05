@@ -17,14 +17,15 @@ from app.models.deal import (
 from app.models.user import User
 from app.repositories.deal import DealRepository
 from app.schemas.common import PaginatedResponse
+from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
 
-def _valid_stages(pipeline_type: str) -> frozenset[str]:
-    return frozenset(DEAL_STAGES) if pipeline_type == "deal" else frozenset(PROSPECT_STAGES)
+async def _valid_stages(session, pipeline_type: str) -> frozenset[str]:
+    return frozenset(await get_configured_deal_stage_ids(session)) if pipeline_type == "deal" else frozenset(PROSPECT_STAGES)
 
 
 # ── Board ────────────────────────────────────────────────────────────────────
@@ -73,9 +74,9 @@ async def create_deal(payload: DealCreate, session: DBSession):
 
     # Default stage based on pipeline type
     if not data.get("stage"):
-        data["stage"] = "open" if data.get("pipeline_type", "deal") == "deal" else "cold_account"
+        data["stage"] = await get_configured_default_deal_stage(session) if data.get("pipeline_type", "deal") == "deal" else "cold_account"
 
-    valid = _valid_stages(data.get("pipeline_type", "deal"))
+    valid = await _valid_stages(session, data.get("pipeline_type", "deal"))
     if data["stage"] not in valid:
         raise ValidationError(f"Invalid stage for {data['pipeline_type']}. Must be one of: {sorted(valid)}")
 
@@ -116,7 +117,7 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession):
     # Validate stage if changed
     if "stage" in update_data and update_data["stage"] != deal.stage:
         pt = update_data.get("pipeline_type", deal.pipeline_type)
-        valid = _valid_stages(pt)
+        valid = await _valid_stages(session, pt)
         if update_data["stage"] not in valid:
             raise ValidationError(f"Invalid stage. Must be one of: {sorted(valid)}")
         update_data["stage_entered_at"] = datetime.utcnow()
@@ -164,7 +165,7 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession):
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
 
-    valid = _valid_stages(deal.pipeline_type)
+    valid = await _valid_stages(session, deal.pipeline_type)
     if new_stage not in valid:
         raise ValidationError(f"Invalid stage for {deal.pipeline_type}. Must be one of: {sorted(valid)}")
 
