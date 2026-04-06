@@ -473,6 +473,30 @@ body {
   flex-wrap: wrap;
 }
 
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.settings-nav-panel {
+  padding: 16px;
+  position: sticky;
+  top: 0;
+}
+
+.settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-nav-button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
 .crm-table {
   width: 100%;
   border-collapse: collapse;
@@ -837,6 +861,20 @@ textarea:focus {
     margin-left: 0;
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-nav-panel {
+    position: static;
+    padding: 14px;
+  }
+
+  .settings-nav-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   }
 
   .pipeline-toolbar-shell {

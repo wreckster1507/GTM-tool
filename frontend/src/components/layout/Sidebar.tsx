@@ -1,21 +1,18 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   BarChart3,
-  BookOpen,
-  BriefcaseBusiness,
-  CalendarDays,
   Compass,
   KanbanSquare,
   Radar,
   Search,
-  Swords,
   CheckSquare,
-  LayoutPanelTop,
   Settings,
   Users,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
+import { settingsApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 
 const NAV = [
@@ -23,16 +20,42 @@ const NAV = [
   { to: "/account-sourcing", label: "Account Sourcing", icon: Search },
   { to: "/prospecting", label: "Prospecting", icon: Radar },
   { to: "/pre-meeting-assistance", label: "Pre-Meeting Assistance", icon: Compass },
-  { to: "/custom-demo-assistance", label: "Custom-Demo Assistance", icon: BriefcaseBusiness },
-  { to: "/live-meeting-assistance", label: "Live-Meeting Assistance", icon: Swords },
   { to: "/crm-insights-alerts", label: "CRM- Insights and Alerts", icon: BarChart3 },
   { to: "/tasks", label: "Tasks", icon: CheckSquare },
-  { to: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
-  { to: "/sales-workspace", label: "Sales Workspace", icon: LayoutPanelTop },
 ];
 
 export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
+  const [canManageTeam, setCanManageTeam] = useState(isAdmin);
+
+  useEffect(() => {
+    if (isAdmin) {
+      setCanManageTeam(true);
+      return;
+    }
+    if (!user) {
+      setCanManageTeam(false);
+      return;
+    }
+    let cancelled = false;
+    settingsApi
+      .getRolePermissions()
+      .then((permissions) => {
+        if (!cancelled) {
+          const permissionRole = user.role === "admin" ? null : user.role;
+          setCanManageTeam(permissionRole ? Boolean(permissions[permissionRole]?.manage_team) : true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCanManageTeam(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, user]);
+
   return (
     <aside className={`crm-sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="crm-brand">
@@ -73,7 +96,7 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
       </nav>
 
       <div className="crm-sidebar-footer">
-        {isAdmin && (
+        {canManageTeam && (
           <NavLink
             to="/team"
             className={({ isActive }) => `crm-nav-link ${isActive ? "active" : ""}`}

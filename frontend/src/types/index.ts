@@ -498,6 +498,24 @@ export interface PipelineSummarySettings {
   prospect: StageBucketSettings;
 }
 
+export interface RolePermissionFlags {
+  crm_import: boolean;
+  prospect_migration: boolean;
+  manage_team: boolean;
+  run_pre_meeting_intel: boolean;
+}
+
+export interface RolePermissionsSettings {
+  ae: RolePermissionFlags;
+  sdr: RolePermissionFlags;
+}
+
+export interface PreMeetingAutomationSettings {
+  enabled: boolean;
+  send_hours_before: number;
+  auto_generate_if_missing: boolean;
+}
+
 export interface AngelInvestor {
   id: string;
   name: string;

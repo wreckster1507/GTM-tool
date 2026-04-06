@@ -17,6 +17,7 @@ import Meetings from "./pages/Meetings";
 import MeetingDetail from "./pages/MeetingDetail";
 import Battlecards from "./pages/Battlecards";
 import SalesWorkspace from "./pages/SalesWorkspace";
+import PreMeetingPlaceholder from "./pages/PreMeetingPlaceholder";
 import CustomDemoAssistance from "./pages/CustomDemoAssistance";
 import AccountSourcing from "./pages/AccountSourcing";
 import AccountSourcingCompanyDetail from "./pages/AccountSourcingCompanyDetail";
@@ -59,7 +60,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="/sales-workspace" replace />} />
+            <Route index element={<Navigate to="/pipeline" replace />} />
             <Route path="sales-workspace" element={<SalesWorkspace />} />
             <Route path="pipeline" element={<Pipeline />} />
             <Route path="import" element={<ImportPage />} />
@@ -74,7 +75,7 @@ export default function App() {
             <Route path="prospecting" element={<Contacts />} />
             <Route path="contacts/:id" element={<ContactDetail />} />
             <Route path="meetings" element={<Meetings />} />
-            <Route path="pre-meeting-assistance" element={<Meetings />} />
+            <Route path="pre-meeting-assistance" element={<PreMeetingPlaceholder />} />
             <Route path="custom-demo-assistance" element={<CustomDemoAssistance />} />
             <Route path="meetings/:id" element={<MeetingDetail />} />
             <Route path="battlecards" element={<Battlecards />} />

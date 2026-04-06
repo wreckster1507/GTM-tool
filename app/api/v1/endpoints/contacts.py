@@ -20,6 +20,7 @@ from app.services.account_sourcing import (
     row_to_contact_fields,
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
+from app.services.permissions import require_workspace_permission
 from app.services.persona_classifier import classify_persona
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
@@ -230,6 +231,8 @@ async def import_contacts_csv(
     session: DBSession,
     file: UploadFile = File(...),
 ):
+    await require_workspace_permission(session, current_user, "prospect_migration")
+
     lower_name = (file.filename or "").lower()
     if not (lower_name.endswith(".csv") or lower_name.endswith(".xlsx")):
         raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")

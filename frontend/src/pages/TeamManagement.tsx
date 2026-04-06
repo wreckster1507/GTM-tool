@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Shield, User, UserPlus, Loader2, CheckCircle2 } from "lucide-react";
-import { authApi } from "../lib/api";
+import { authApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { User as UserType } from "../types";
 
@@ -31,17 +31,33 @@ function roleMeta(role: UserType["role"]) {
 
 export default function TeamManagement() {
   const { user: currentUser, isAdmin } = useAuth();
+  const [canManageTeam, setCanManageTeam] = useState(isAdmin);
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
 
   useEffect(() => {
     if (isAdmin) {
-      authApi.listUsers().then((u) => { setUsers(u); setLoading(false); }).catch(() => setLoading(false));
-    } else {
-      authApi.listAllUsers().then((u) => { setUsers(u); setLoading(false); }).catch(() => setLoading(false));
+      setCanManageTeam(true);
+      return;
     }
-  }, [isAdmin]);
+    if (!currentUser) {
+      setCanManageTeam(false);
+      return;
+    }
+    settingsApi
+      .getRolePermissions()
+      .then((permissions) =>
+        setCanManageTeam(currentUser.role === "admin" ? true : Boolean(permissions[currentUser.role]?.manage_team))
+      )
+      .catch(() => setCanManageTeam(false));
+  }, [currentUser, isAdmin]);
+
+  useEffect(() => {
+    setLoading(true);
+    const loader = canManageTeam ? authApi.listUsers() : authApi.listAllUsers();
+    loader.then((u) => { setUsers(u); setLoading(false); }).catch(() => setLoading(false));
+  }, [canManageTeam]);
 
   const handleRoleChange = async (userId: string, newRole: string) => {
     setUpdating(userId);
@@ -80,6 +96,8 @@ export default function TeamManagement() {
           <p style={{ fontSize: 14, color: "#55657a", marginTop: 4 }}>
             {isAdmin
               ? "Manage your team members. Only admins can change someone else's role or access."
+              : canManageTeam
+                ? "You can manage teammate roles and access because your role has been granted team management permissions."
               : "View your team members."}
           </p>
         </div>
@@ -118,7 +136,7 @@ export default function TeamManagement() {
                   <th style={{ textAlign: "left", padding: "14px 16px", fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Role</th>
                   <th style={{ textAlign: "left", padding: "14px 16px", fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Status</th>
                   <th style={{ textAlign: "left", padding: "14px 16px", fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Joined</th>
-                  {isAdmin && (
+                  {canManageTeam && (
                     <th style={{ textAlign: "right", padding: "14px 20px", fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Actions</th>
                   )}
                 </tr>
@@ -179,7 +197,7 @@ export default function TeamManagement() {
                       <td style={{ padding: "14px 16px", fontSize: 13, color: "#55657a" }}>
                         {new Date(u.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                       </td>
-                      {isAdmin && (
+                      {canManageTeam && (
                         <td style={{ padding: "14px 20px", textAlign: "right" }}>
                           {updating === u.id ? (
                             <Loader2 size={16} style={{ animation: "spin 1s linear infinite", color: "#7f8fa5" }} />

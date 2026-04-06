@@ -37,12 +37,6 @@ const TYPE_STYLE = {
   system: { bg: colors.violetSoft, border: "#eadbff", color: colors.violet },
 } as const;
 
-const ROLE_LABEL: Record<"admin" | "ae" | "sdr", string> = {
-  admin: "Admin",
-  ae: "Account Executive",
-  sdr: "SDR",
-};
-
 type TaskStatusFilter = "open" | "completed" | "dismissed" | "all";
 type TaskTypeFilter = "all" | "manual" | "system";
 type EntityFilter = "all" | "company" | "contact" | "deal";
@@ -103,7 +97,7 @@ function TaskWorkspaceCard({
         <div style={{ display: "grid", gap: 4, justifyItems: "end", color: colors.faint, fontSize: 12 }}>
           <div>{formatDate(task.updated_at)}</div>
           {task.due_at ? <div>Due {formatDate(task.due_at)}</div> : null}
-          <div>{task.assigned_role ? `${ROLE_LABEL[task.assigned_role]}${task.assigned_to_name ? ` · ${task.assigned_to_name}` : ""}` : (task.assigned_to_name || "Unassigned")}</div>
+          <div>{task.assigned_to_name || "Unassigned"}</div>
           <div>{task.created_by_name ? `Created by ${task.created_by_name}` : (task.source || "Beacon")}</div>
           {canDelete ? (
             <button
@@ -316,7 +310,7 @@ export default function TasksPage() {
         ) : visibleTasks.length === 0 ? (
           <div className="crm-panel" style={{ padding: 28, color: colors.faint, display: "grid", gap: 8 }}>
             <div style={{ fontWeight: 800, color: colors.text }}>No tasks match these filters</div>
-            <div>When Beacon recommends something or a teammate adds a role-owned manual task, it will appear here.</div>
+            <div>When Beacon recommends something or a teammate assigns you a manual follow-up, it will appear here.</div>
           </div>
         ) : (
           visibleTasks.map((task) => (

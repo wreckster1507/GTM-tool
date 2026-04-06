@@ -60,6 +60,7 @@ class Meeting(MeetingBase, table=True):
     what_went_right: Optional[str] = Field(default=None, sa_column=Column(Text))
     what_went_wrong: Optional[str] = Field(default=None, sa_column=Column(Text))
     next_steps: Optional[str] = Field(default=None, sa_column=Column(Text))
+    intel_email_sent_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -85,6 +86,7 @@ class MeetingRead(MeetingBase):
     what_went_right: Optional[str] = None
     what_went_wrong: Optional[str] = None
     next_steps: Optional[str] = None
+    intel_email_sent_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -106,3 +108,4 @@ class MeetingUpdate(SQLModel):
     what_went_right: Optional[str] = None
     what_went_wrong: Optional[str] = None
     next_steps: Optional[str] = None
+    intel_email_sent_at: Optional[datetime] = None

@@ -48,6 +48,36 @@ async def _find_open_system_task(
     return result.scalar_one_or_none()
 
 
+async def _resolve_task_assignee(
+    session: AsyncSession,
+    *,
+    entity_type: str,
+    entity_id: UUID,
+    preferred_role: str | None = None,
+) -> tuple[UUID | None, str | None]:
+    user_id: UUID | None = None
+    if entity_type == "company":
+        company = await session.get(Company, entity_id)
+        if company:
+            user_id = company.assigned_to_id or company.sdr_id
+    elif entity_type == "contact":
+        contact = await session.get(Contact, entity_id)
+        if contact:
+            user_id = contact.assigned_to_id or contact.sdr_id
+    elif entity_type == "deal":
+        deal = await session.get(Deal, entity_id)
+        if deal:
+            user_id = deal.assigned_to_id
+
+    if not user_id:
+        return None, None
+
+    user = await session.get(User, user_id)
+    if not user or not user.is_active:
+        return None, None
+    return user.id, user.role
+
+
 async def _upsert_system_task(
     session: AsyncSession,
     *,
@@ -62,6 +92,12 @@ async def _upsert_system_task(
     action_payload: dict | None = None,
     assigned_role: str | None = None,
 ) -> Task:
+    assigned_to_id, resolved_role = await _resolve_task_assignee(
+        session,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        preferred_role=assigned_role,
+    )
     existing = await _find_open_system_task(
         session,
         entity_type=entity_type,
@@ -75,7 +111,8 @@ async def _upsert_system_task(
         existing.source = source
         existing.recommended_action = recommended_action
         existing.action_payload = action_payload
-        existing.assigned_role = assigned_role
+        existing.assigned_role = resolved_role
+        existing.assigned_to_id = assigned_to_id
         existing.updated_at = datetime.utcnow()
         session.add(existing)
         return existing
@@ -91,10 +128,43 @@ async def _upsert_system_task(
         recommended_action=recommended_action,
         action_payload=action_payload,
         system_key=system_key,
-        assigned_role=assigned_role,
+        assigned_role=resolved_role,
+        assigned_to_id=assigned_to_id,
     )
     session.add(task)
     return task
+
+
+async def backfill_open_task_assignments(session: AsyncSession) -> None:
+    open_tasks = (
+        await session.execute(
+            select(Task).where(Task.status == "open")
+        )
+    ).scalars().all()
+
+    for task in open_tasks:
+        if task.task_type == "system":
+            assigned_to_id, resolved_role = await _resolve_task_assignee(
+                session,
+                entity_type=task.entity_type,
+                entity_id=task.entity_id,
+                preferred_role=task.assigned_role,
+            )
+            if (
+                assigned_to_id != task.assigned_to_id
+                or resolved_role != task.assigned_role
+            ):
+                task.assigned_to_id = assigned_to_id
+                task.assigned_role = resolved_role
+                task.updated_at = datetime.utcnow()
+                session.add(task)
+            continue
+
+        if task.assigned_to_id or not task.created_by_id:
+            continue
+        task.assigned_to_id = task.created_by_id
+        task.updated_at = datetime.utcnow()
+        session.add(task)
 
 
 async def _resolve_system_task(

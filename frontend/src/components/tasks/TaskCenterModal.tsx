@@ -36,12 +36,6 @@ const TYPE_STYLE = {
   system: { bg: colors.violetSoft, border: "#eadbff", color: colors.violet },
 } as const;
 
-const ROLE_LABEL: Record<"admin" | "ae" | "sdr", string> = {
-  admin: "Admin",
-  ae: "Account Executive",
-  sdr: "SDR",
-};
-
 function TaskCard({
   task,
   commentDraft,
@@ -66,9 +60,7 @@ function TaskCard({
   const priorityStyle = PRIORITY_STYLE[task.priority as keyof typeof PRIORITY_STYLE] ?? PRIORITY_STYLE.normal;
   const typeStyle = TYPE_STYLE[task.task_type];
   const isOpen = task.status === "open";
-  const ownerText = task.assigned_role
-    ? `${ROLE_LABEL[task.assigned_role]}${task.assigned_to_name ? ` · ${task.assigned_to_name}` : ""}`
-    : task.assigned_to_name || "Unassigned";
+  const ownerText = task.assigned_to_name || "Unassigned";
 
   return (
     <div style={{ border: `1px solid ${colors.border}`, background: "#fff", borderRadius: 16, padding: "14px 16px", display: "grid", gap: 10 }}>
@@ -197,7 +189,6 @@ export default function TaskCenterModal({
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
   const [dueAt, setDueAt] = useState("");
-  const [assignedRole, setAssignedRole] = useState<"admin" | "ae" | "sdr">(entityType === "deal" ? "ae" : "sdr");
   const [assignedToId, setAssignedToId] = useState("");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [users, setUsers] = useState<UserType[]>([]);
@@ -222,9 +213,8 @@ export default function TaskCenterModal({
   }, [isVisible, entityType, entityId]);
 
   useEffect(() => {
-    setAssignedRole(entityType === "deal" ? "ae" : "sdr");
-    setAssignedToId("");
-  }, [entityType, entityId]);
+    setAssignedToId(user?.id || "");
+  }, [entityType, entityId, user?.id]);
 
   const openSystemTasks = useMemo(
     () => tasks.filter((task) => task.status === "open" && task.task_type === "system"),
@@ -241,15 +231,11 @@ export default function TaskCenterModal({
     setDescription("");
     setPriority("medium");
     setDueAt("");
-    setAssignedRole(entityType === "deal" ? "ae" : "sdr");
-    setAssignedToId("");
+    setAssignedToId(user?.id || "");
     setShowCreate(false);
   };
 
-  const assigneeOptions = useMemo(
-    () => users.filter((user) => user.role === assignedRole),
-    [users, assignedRole],
-  );
+  const assigneeOptions = useMemo(() => users, [users]);
 
   const createTask = async () => {
     if (!title.trim()) return;
@@ -260,7 +246,6 @@ export default function TaskCenterModal({
       description: description.trim() || undefined,
       priority,
       due_at: dueAt || undefined,
-      assigned_role: assignedRole,
       assigned_to_id: assignedToId || undefined,
     });
     resetForm();
@@ -354,21 +339,16 @@ export default function TaskCenterModal({
               </select>
               <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, outline: "none" }} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <select value={assignedRole} onChange={(e) => { setAssignedRole(e.target.value as "admin" | "ae" | "sdr"); setAssignedToId(""); }} style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff", outline: "none" }}>
-                {Object.entries(ROLE_LABEL).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+            <div style={{ display: "grid", gap: 10 }}>
               <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff", outline: "none" }}>
-                <option value="">Any {ROLE_LABEL[assignedRole]}</option>
+                <option value="">Unassigned</option>
                 {assigneeOptions.map((user) => (
-                  <option key={user.id} value={user.id}>{user.name}</option>
+                  <option key={user.id} value={user.id}>{user.name} · {user.role.toUpperCase()}</option>
                 ))}
               </select>
             </div>
             <div style={{ color: colors.faint, fontSize: 12, lineHeight: 1.5 }}>
-              Tie the task to the role first so it stays relevant even if the assignee changes later. Pick a person only when one specific teammate owns it right now.
+              Assign the task to the teammate who owns it right now so it shows up in their personal task queue.
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button type="button" onClick={resetForm} style={{ borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>

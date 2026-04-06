@@ -21,6 +21,7 @@ from app.services.auth import (
     create_access_token,
     exchange_google_code,
 )
+from app.services.permissions import require_workspace_permission
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 ALLOWED_USER_ROLES = {"admin", "ae", "sdr"}
@@ -119,8 +120,9 @@ async def get_me(user: CurrentUser):
 
 
 @router.get("/users", response_model=List[UserRead])
-async def list_users(session: DBSession, _admin: AdminUser):
-    """List all users. Admin only."""
+async def list_users(session: DBSession, current_user: CurrentUser):
+    """List all users for teammates allowed to manage team permissions."""
+    await require_workspace_permission(session, current_user, "manage_team")
     result = await session.execute(select(User).order_by(User.name))
     return result.scalars().all()
 
@@ -139,9 +141,10 @@ async def update_user(
     user_id: UUID,
     data: UserUpdate,
     session: DBSession,
-    admin: AdminUser,
+    current_user: CurrentUser,
 ):
-    """Update a user's role or active status. Admin only."""
+    """Update a user's role or active status."""
+    await require_workspace_permission(session, current_user, "manage_team")
     user = (
         await session.execute(select(User).where(User.id == user_id))
     ).scalar_one_or_none()
@@ -151,10 +154,10 @@ async def update_user(
     if data.role and data.role not in ALLOWED_USER_ROLES:
         raise ForbiddenError("Role must be one of: admin, ae, sdr")
 
-    # Prevent the current admin from accidentally locking themselves out of
-    # admin-only routes by changing their own role.
-    if user.id == admin.id and data.role and data.role != "admin":
-        raise ForbiddenError("Cannot change your own admin role")
+    # Keep role changes focused on teammate administration, not self-service,
+    # so nobody can accidentally lock themselves out from this screen.
+    if user.id == current_user.id and data.role and data.role != user.role:
+        raise ForbiddenError("Cannot change your own role from this screen")
 
     admin_count = (
         await session.execute(

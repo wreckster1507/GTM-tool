@@ -118,6 +118,39 @@ class WorkspaceSettings(SQLModel, table=True):
         ],
         sa_column=Column(JSON, nullable=False),
     )
+    role_permissions: dict = Field(
+        default={
+            "ae": {
+                "crm_import": False,
+                "prospect_migration": True,
+                "manage_team": False,
+                "run_pre_meeting_intel": True,
+            },
+            "sdr": {
+                "crm_import": False,
+                "prospect_migration": True,
+                "manage_team": False,
+                "run_pre_meeting_intel": False,
+            },
+        },
+        sa_column=Column(
+            JSON,
+            nullable=False,
+            server_default='{"ae":{"crm_import":false,"prospect_migration":true,"manage_team":false,"run_pre_meeting_intel":true},"sdr":{"crm_import":false,"prospect_migration":true,"manage_team":false,"run_pre_meeting_intel":false}}',
+        ),
+    )
+    pre_meeting_automation_settings: dict = Field(
+        default={
+            "enabled": True,
+            "send_hours_before": 12,
+            "auto_generate_if_missing": True,
+        },
+        sa_column=Column(
+            JSON,
+            nullable=False,
+            server_default='{"enabled":true,"send_hours_before":12,"auto_generate_if_missing":true}',
+        ),
+    )
     prospect_funnel_config: dict = Field(
         default={"tofu": ["outreach"], "mofu": ["in_progress"], "bofu": ["meeting_booked"]},
         sa_column=Column(
@@ -208,6 +241,35 @@ class PipelineSummarySettingsRead(SQLModel):
 class PipelineSummarySettingsUpdate(SQLModel):
     deal: StageBucketSettings
     prospect: StageBucketSettings
+
+
+class RolePermissionFlags(SQLModel):
+    crm_import: bool
+    prospect_migration: bool
+    manage_team: bool
+    run_pre_meeting_intel: bool
+
+
+class RolePermissionsRead(SQLModel):
+    ae: RolePermissionFlags
+    sdr: RolePermissionFlags
+
+
+class RolePermissionsUpdate(SQLModel):
+    ae: RolePermissionFlags
+    sdr: RolePermissionFlags
+
+
+class PreMeetingAutomationSettingsRead(SQLModel):
+    enabled: bool
+    send_hours_before: int
+    auto_generate_if_missing: bool
+
+
+class PreMeetingAutomationSettingsUpdate(SQLModel):
+    enabled: bool
+    send_hours_before: int
+    auto_generate_if_missing: bool
 
 
 class GmailSettingsRead(SQLModel):

@@ -14,13 +14,21 @@ import {
   Sparkles,
   Trash2,
   Unplug,
+  Users,
   Wand2,
 } from "lucide-react";
 import { settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import type { DealStageSettings, GmailSyncSettings, OutreachContentSettings, OutreachTemplateStep } from "../types";
+import type {
+  DealStageSettings,
+  GmailSyncSettings,
+  OutreachContentSettings,
+  OutreachTemplateStep,
+  PreMeetingAutomationSettings,
+  RolePermissionsSettings,
+} from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -60,6 +68,8 @@ export default function SettingsPage() {
   const [inbox, setInbox] = useState("zippy@beacon.li");
   const [outreachContent, setOutreachContent] = useState<OutreachContentSettings | null>(null);
   const [dealStages, setDealStages] = useState<DealStageSettings | null>(null);
+  const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
+  const [preMeetingSettings, setPreMeetingSettings] = useState<PreMeetingAutomationSettings | null>(null);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingInbox, setSavingInbox] = useState(false);
@@ -68,6 +78,9 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false);
   const [savingOutreach, setSavingOutreach] = useState(false);
   const [savingStages, setSavingStages] = useState(false);
+  const [savingPermissions, setSavingPermissions] = useState(false);
+  const [savingPreMeeting, setSavingPreMeeting] = useState(false);
+  const [runningPreMeeting, setRunningPreMeeting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,17 +98,21 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, outreachContentData, outreachTiming, dealStageData] = await Promise.all([
+      const [gmailData, outreachContentData, outreachTiming, dealStageData, rolePermissionData, preMeetingData] = await Promise.all([
         settingsApi.getGmailSync(),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
+        settingsApi.getRolePermissions(),
+        settingsApi.getPreMeetingAutomation(),
       ]);
       setGmail(gmailData);
       setInbox(gmailData.inbox || "zippy@beacon.li");
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
       setDealStages(dealStageData);
+      setRolePermissions(rolePermissionData);
+      setPreMeetingSettings(preMeetingData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -329,13 +346,89 @@ export default function SettingsPage() {
     }
   };
 
+  const updateRolePermission = (
+    role: keyof RolePermissionsSettings,
+    key: keyof RolePermissionsSettings["ae"],
+    value: boolean,
+  ) => {
+    setRolePermissions((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        [role]: {
+          ...current[role],
+          [key]: value,
+        },
+      };
+    });
+  };
+
+  const handleSavePermissions = async () => {
+    if (!rolePermissions) return;
+    setSavingPermissions(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const saved = await settingsApi.updateRolePermissions(rolePermissions);
+      setRolePermissions(saved);
+      setMessage("Role permissions saved. Beacon will now enforce these rules across shared workflows.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save role permissions");
+    } finally {
+      setSavingPermissions(false);
+    }
+  };
+
+  const updatePreMeetingField = <K extends keyof PreMeetingAutomationSettings>(field: K, value: PreMeetingAutomationSettings[K]) => {
+    setPreMeetingSettings((current) => {
+      if (!current) return current;
+      return { ...current, [field]: value };
+    });
+  };
+
+  const handleSavePreMeeting = async () => {
+    if (!preMeetingSettings) return;
+    setSavingPreMeeting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const payload: PreMeetingAutomationSettings = {
+        ...preMeetingSettings,
+        send_hours_before: Math.max(1, Math.min(168, Number(preMeetingSettings.send_hours_before) || 12)),
+      };
+      const saved = await settingsApi.updatePreMeetingAutomation(payload);
+      setPreMeetingSettings(saved);
+      setMessage("Pre-meeting automation saved. Beacon will generate and send prep intel using this schedule.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save pre-meeting automation");
+    } finally {
+      setSavingPreMeeting(false);
+    }
+  };
+
+  const handleRunPreMeetingNow = async () => {
+    setRunningPreMeeting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await settingsApi.runPreMeetingAutomationNow();
+      setMessage(
+        `Pre-meeting automation checked ${result.checked} meeting${result.checked === 1 ? "" : "s"}, generated intel for ${result.generated}, emailed ${result.emailed}, and skipped ${result.skipped}.`,
+      );
+      await loadSettings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to run pre-meeting automation");
+    } finally {
+      setRunningPreMeeting(false);
+    }
+  };
+
   const tabButton = (id: SettingsTab, label: string, icon: ReactNode) => (
     <button
       key={id}
       type="button"
       onClick={() => setActiveTab(id)}
-      className={`crm-button ${activeTab === id ? "primary" : "soft"}`}
-      style={{ minWidth: 180, justifyContent: "center" }}
+      className={`crm-button ${activeTab === id ? "primary" : "soft"} settings-nav-button`}
     >
       {icon}
       {label}
@@ -345,20 +438,26 @@ export default function SettingsPage() {
   return (
     <div className="crm-page" style={{ maxWidth: 1160, display: "grid", gap: 20 }}>
       <section className="crm-panel" style={{ padding: 28, display: "grid", gap: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-          <div>
-            <h2 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Workspace settings</h2>
-            <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
-              Keep shared workflows centralized here. Gmail sync controls how Beacon captures customer emails automatically,
-              and Outreach AI controls the playbook Beacon follows when it generates new sequences.
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {tabButton("email-sync", "Email Sync", <Mail size={15} />)}
-            {tabButton("outreach-ai", "Outreach AI", <Sparkles size={15} />)}
-            {tabButton("pipeline", "Pipeline", <GripVertical size={15} />)}
-          </div>
+        <div>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Workspace settings</h2>
+          <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+            Keep shared workflows centralized here. Gmail sync controls how Beacon captures customer emails automatically,
+            and Outreach AI controls the playbook Beacon follows when it generates new sequences.
+          </p>
         </div>
+
+        <div className="settings-layout">
+          <aside className="crm-panel settings-nav-panel" style={{ boxShadow: "none" }}>
+            <div className="settings-nav-list">
+              {tabButton("email-sync", "Email Sync", <Mail size={15} />)}
+              {tabButton("outreach-ai", "Outreach AI", <Sparkles size={15} />)}
+              {tabButton("pipeline", "Pipeline", <GripVertical size={15} />)}
+              {tabButton("permissions", "Permissions", <Users size={15} />)}
+              {tabButton("pre-meeting", "Pre-Meeting", <Shield size={15} />)}
+            </div>
+          </aside>
+
+          <div style={{ display: "grid", gap: 18, minWidth: 0 }}>
 
         {message && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#eaf8ef", border: "1px solid #cbe8d5", color: "#1f7a47" }}>
@@ -374,7 +473,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {error && activeTab === "outreach-ai" && (
+        {error && activeTab !== "email-sync" && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#fff4e6", border: "1px solid #f0d4ac", color: "#a46206" }}>
             <AlertTriangle size={18} />
             <span>{error}</span>
@@ -705,6 +804,180 @@ export default function SettingsPage() {
               </div>
             </div>
           </>
+        ) : activeTab === "permissions" ? (
+          <div style={{ display: "grid", gap: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f4efff", color: "#6f46d9", borderColor: "#e4d8ff" }}>
+                  <Users size={14} />
+                  Permissions
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Role permissions</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Admins always keep full access. Use these switches to decide what <strong>AEs</strong> and <strong>SDRs</strong> can do in Beacon without making them admins.
+                </p>
+              </div>
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              {([
+                {
+                  key: "crm_import" as const,
+                  label: "Import from CRM",
+                  help: "Lets this role replace the deal pipeline from the ClickUp Sales CRM board.",
+                },
+                {
+                  key: "prospect_migration" as const,
+                  label: "Migrate prospects",
+                  help: "Lets this role upload and migrate prospect spreadsheets or CSV files.",
+                },
+                {
+                  key: "manage_team" as const,
+                  label: "Manage team roles",
+                  help: "Lets this role change teammate roles and activation status from Team Management.",
+                },
+                {
+                  key: "run_pre_meeting_intel" as const,
+                  label: "Run pre-meeting intel",
+                  help: "Lets this role trigger meeting research, pre-briefs, and demo strategy generation manually.",
+                },
+              ]).map((permission) => (
+                <div key={permission.key} style={{ border: "1px solid #e7eaf5", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1.25fr) repeat(2, minmax(180px, 1fr))", gap: 14, padding: 18, alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 6 }}>{permission.label}</div>
+                      <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>{permission.help}</div>
+                    </div>
+                    {(["ae", "sdr"] as const).map((role) => (
+                      <label key={role} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e7eaf5", borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "#182042", textTransform: "uppercase", letterSpacing: "0.08em" }}>{role}</div>
+                          <div className="crm-muted" style={{ fontSize: 12 }}>{rolePermissions?.[role]?.[permission.key] ? "Allowed" : "Blocked"}</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(rolePermissions?.[role]?.[permission.key])}
+                          onChange={(event) => updateRolePermission(role, permission.key, event.target.checked)}
+                          disabled={!isAdmin || !rolePermissions}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                    Admins always keep full access. These switches only control what AEs and SDRs can do.
+                  </p>
+                  <button className="crm-button primary" type="button" onClick={handleSavePermissions} disabled={savingPermissions || !rolePermissions}>
+                    {savingPermissions ? <RefreshCw size={15} className="animate-spin" /> : <Users size={15} />}
+                    Save role permissions
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 13 }}>
+                  Only admins can change workspace permissions. Everyone else can review the current guardrails here.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : activeTab === "pre-meeting" ? (
+          <div style={{ display: "grid", gap: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#eef8ff", color: "#145d97", borderColor: "#d7ebfb" }}>
+                  <Shield size={14} />
+                  Pre-Meeting
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Pre-meeting automation</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Beacon watches scheduled meetings already in the CRM. Before the meeting starts, it can generate missing research, build the prep page, and email the meeting intel link to the assigned team.
+                </p>
+              </div>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", minWidth: 320 }}>
+                <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                  Delivery flow
+                </div>
+                <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 0 }}>
+                  Email includes the Beacon meeting prep page link and is sent to the deal owner plus linked AE / SDR teammates when Beacon finds them.
+                </p>
+              </div>
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(240px, 0.45fr)", gap: 16 }}>
+                <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable automatic pre-meeting sends</div>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(preMeetingSettings?.enabled)}
+                      onChange={(event) => updatePreMeetingField("enabled", event.target.checked)}
+                      disabled={!isAdmin || !preMeetingSettings}
+                    />
+                  </div>
+                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                    When enabled, Beacon checks scheduled meetings in the background and sends prep intel automatically before the meeting.
+                  </div>
+                </label>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Send window</div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={168}
+                    value={preMeetingSettings?.send_hours_before ?? 12}
+                    onChange={(event) => updatePreMeetingField("send_hours_before", Number(event.target.value))}
+                    disabled={!isAdmin || !preMeetingSettings}
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                    Default is <strong>12 hours</strong> before the scheduled meeting start. Use 1-168 hours.
+                  </div>
+                </div>
+              </div>
+
+              <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Generate missing research automatically</div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(preMeetingSettings?.auto_generate_if_missing)}
+                    onChange={(event) => updatePreMeetingField("auto_generate_if_missing", event.target.checked)}
+                    disabled={!isAdmin || !preMeetingSettings}
+                  />
+                </div>
+                <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                  If the account has no fresh meeting research yet, Beacon will run account research and demo-strategy generation before sending the prep email instead of waiting for a rep to do it manually.
+                </div>
+              </label>
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                    This automation runs off scheduled meeting records already in Beacon. Calendar ingestion can feed those records later without changing this workflow.
+                  </p>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button className="crm-button soft" type="button" onClick={handleRunPreMeetingNow} disabled={runningPreMeeting}>
+                      {runningPreMeeting ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                      Run now
+                    </button>
+                    <button className="crm-button primary" type="button" onClick={handleSavePreMeeting} disabled={savingPreMeeting || !preMeetingSettings}>
+                      {savingPreMeeting ? <RefreshCw size={15} className="animate-spin" /> : <Shield size={15} />}
+                      Save pre-meeting settings
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 13 }}>
+                  Only admins can change pre-meeting automation. Everyone else can review the current timing and behavior here.
+                </p>
+              )}
+            </div>
+          </div>
         ) : (
           <div style={{ display: "grid", gap: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
@@ -795,6 +1068,8 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+          </div>
+        </div>
       </section>
     </div>
   );

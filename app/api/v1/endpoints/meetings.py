@@ -5,9 +5,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.repositories.meeting import MeetingRepository
+from app.services.permissions import require_workspace_permission
 from app.schemas.common import PaginatedResponse
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -65,8 +66,10 @@ async def delete_meeting(meeting_id: UUID, session: DBSession):
 
 
 @router.post("/{meeting_id}/pre-brief")
-async def generate_pre_brief(meeting_id: UUID, session: DBSession):
+async def generate_pre_brief(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     """Generate AI pre-meeting brief combining company research + attendee profiles."""
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
     repo = MeetingRepository(session)
     meeting = await repo.get_or_raise(meeting_id)
 
@@ -102,12 +105,14 @@ async def generate_pre_brief(meeting_id: UUID, session: DBSession):
 
 
 @router.post("/{meeting_id}/intelligence")
-async def run_meeting_intelligence(meeting_id: UUID, session: DBSession):
+async def run_meeting_intelligence(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     """
     Full pre-meeting intelligence: website scrape, DuckDuckGo news/signals,
     Hunter contacts, Google News, competitive landscape, GPT-4o executive
     briefing. Saves to meeting.research_data. ~10-15s.
     """
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
     import logging
     logger = logging.getLogger(__name__)
     from app.services.pre_meeting_intelligence import run_pre_meeting_intelligence
@@ -124,11 +129,13 @@ async def run_meeting_intelligence(meeting_id: UUID, session: DBSession):
 
 
 @router.post("/{meeting_id}/demo-strategy")
-async def generate_demo_strategy(meeting_id: UUID, session: DBSession):
+async def generate_demo_strategy(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     """
     GPT-4o Demo Strategy & Story Lineup. Reads cached research_data (if intel
     was already run) plus company DB profile. Saves to meeting.demo_strategy.
     """
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
     import logging
     logger = logging.getLogger(__name__)
     from app.services.pre_meeting_intelligence import generate_meeting_demo_strategy

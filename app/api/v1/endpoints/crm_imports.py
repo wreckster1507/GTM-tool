@@ -3,8 +3,9 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from sqlmodel import SQLModel
 
-from app.core.dependencies import AdminUser, DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.services.clickup_import import import_sales_crm_clickup
+from app.services.permissions import require_workspace_permission
 
 
 router = APIRouter(prefix="/crm-imports", tags=["crm-imports"])
@@ -22,8 +23,10 @@ class ClickUpCrmImportRequest(SQLModel):
 async def import_clickup_sales_crm(
     body: ClickUpCrmImportRequest,
     session: DBSession,
-    _admin: AdminUser,
+    current_user: CurrentUser,
 ):
+    await require_workspace_permission(session, current_user, "crm_import")
+
     try:
         return await import_sales_crm_clickup(
             session,

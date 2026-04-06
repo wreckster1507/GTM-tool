@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, Upload, UserCircle2 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, User } from "../types";
+import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 
@@ -673,7 +673,7 @@ function ProspectDetailDrawer({
 export default function Pipeline() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState<PipelineTab>("deal");
   const [dealBoard, setDealBoard] = useState<Record<string, Deal[]>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -693,6 +693,7 @@ export default function Pipeline() {
   const [prospectActivities, setProspectActivities] = useState<Activity[]>([]);
   const [loadingProspectActivities, setLoadingProspectActivities] = useState(false);
   const [migratingProspects, setMigratingProspects] = useState(false);
+  const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [convertingProspect, setConvertingProspect] = useState(false);
   const [pendingConvertProspect, setPendingConvertProspect] = useState<Contact | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
@@ -776,6 +777,10 @@ export default function Pipeline() {
 
   useEffect(() => {
     loadBoard();
+  }, []);
+
+  useEffect(() => {
+    settingsApi.getRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
   }, []);
 
   useEffect(() => {
@@ -877,6 +882,10 @@ export default function Pipeline() {
 
   const summary = tab === "deal" ? dealSummary : prospectSummary;
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
+  const canImportCrm =
+    isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
+  const canMigrateProspects =
+    isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
   const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0;
   const stages = tab === "deal" ? effectiveDealStages : PROSPECT_STAGES;
   const stageOptions = (tab === "deal" ? effectiveDealStages : PROSPECT_STAGES).map((stage) => ({ value: stage.id, label: stage.label }));
@@ -1137,7 +1146,7 @@ export default function Pipeline() {
           <div style={{ flex: 1 }} />
           {tab === "deal" ? (
             <div style={{ display: "grid", gap: 10 }}>
-              {isAdmin && (
+              {canImportCrm && (
                 <button
                   className="crm-button soft"
                   onClick={() => {
@@ -1156,9 +1165,9 @@ export default function Pipeline() {
             <div style={{ display: "grid", gap: 10 }}>
               <button
                 className="crm-button primary"
-                disabled={migratingProspects}
+                disabled={migratingProspects || !canMigrateProspects}
                 onClick={() => prospectImportInputRef.current?.click()}
-                style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor, opacity: migratingProspects ? 0.75 : 1 }}
+                style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor, opacity: migratingProspects || !canMigrateProspects ? 0.75 : 1 }}
               >
                 <Upload size={14} />
                 {migratingProspects ? "Migrating..." : "Migrate Prospects"}
@@ -1168,7 +1177,7 @@ export default function Pipeline() {
                 type="file"
                 accept=".csv,.xlsx"
                 style={{ display: "none" }}
-                disabled={migratingProspects}
+                disabled={migratingProspects || !canMigrateProspects}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) {

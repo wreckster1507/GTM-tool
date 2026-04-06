@@ -25,7 +25,7 @@ from app.models.task import (
     TaskWorkspaceRead,
 )
 from app.models.user import User
-from app.services.tasks import apply_task_action, refresh_system_tasks_for_entity
+from app.services.tasks import apply_task_action, backfill_open_task_assignments, refresh_system_tasks_for_entity
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -54,6 +54,14 @@ def _can_delete_task(task: Task, current_user: User) -> bool:
     if current_user.role == "admin":
         return True
     return bool(task.created_by_id and task.created_by_id == current_user.id)
+
+
+def _can_manage_task(task: Task, current_user: User) -> bool:
+    if current_user.role == "admin":
+        return True
+    if task.assigned_to_id and task.assigned_to_id == current_user.id:
+        return True
+    return bool(task.task_type == "manual" and task.created_by_id and task.created_by_id == current_user.id)
 
 
 async def _build_task_reads(session: DBSession, tasks: list[Task]) -> list[TaskRead]:
@@ -176,6 +184,7 @@ async def list_tasks(
     _validate_entity_type(entity_type)
 
     await refresh_system_tasks_for_entity(session, entity_type, entity_id)
+    await backfill_open_task_assignments(session)
     await session.commit()
 
     status_rank = case(
@@ -226,13 +235,10 @@ async def list_workspace_tasks(
     )
 
     stmt = select(Task).order_by(status_rank, priority_rank, Task.updated_at.desc())
+    await backfill_open_task_assignments(session)
+    await session.commit()
     if current_user.role != "admin":
-        ownership_filter = or_(
-            Task.assigned_to_id == current_user.id,
-            and_(Task.assigned_to_id.is_(None), Task.assigned_role == current_user.role),
-            and_(Task.created_by_id == current_user.id, Task.task_type == "manual"),
-        )
-        stmt = stmt.where(ownership_filter)
+        stmt = stmt.where(Task.assigned_to_id == current_user.id)
     if not include_closed:
         stmt = stmt.where(Task.status == "open")
     if task_type:
@@ -261,8 +267,8 @@ async def create_task(payload: TaskCreate, session: DBSession, current_user: Cur
         due_at=payload.due_at,
         source="manual",
         created_by_id=current_user.id,
-        assigned_role=payload.assigned_role or current_user.role,
-        assigned_to_id=payload.assigned_to_id,
+        assigned_role=None,
+        assigned_to_id=payload.assigned_to_id or current_user.id,
     )
     session.add(task)
     await session.commit()
@@ -277,6 +283,8 @@ async def update_task(task_id: UUID, payload: TaskUpdate, session: DBSession, cu
     task = await session.get(Task, task_id)
     if not task:
         raise NotFoundError("Task not found")
+    if not _can_manage_task(task, current_user):
+        raise ForbiddenError("Only the assigned user or an admin can update this task")
 
     update_data = payload.model_dump(exclude_unset=True)
     if "priority" in update_data:
@@ -302,6 +310,8 @@ async def add_task_comment(task_id: UUID, payload: TaskCommentCreate, session: D
     task = await session.get(Task, task_id)
     if not task:
         raise NotFoundError("Task not found")
+    if not _can_manage_task(task, current_user):
+        raise ForbiddenError("Only the assigned user or an admin can update this task")
 
     comment = TaskComment(
         task_id=task_id,
@@ -325,6 +335,8 @@ async def accept_task(task_id: UUID, session: DBSession, current_user: CurrentUs
         raise NotFoundError("Task not found")
     if task.task_type != "system":
         raise ValidationError("Only system tasks can be accepted")
+    if not _can_manage_task(task, current_user):
+        raise ForbiddenError("Only the assigned user or an admin can act on this task")
 
     await apply_task_action(session, task, current_user)
     task.status = "completed"

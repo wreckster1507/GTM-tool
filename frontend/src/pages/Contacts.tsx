@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { accountSourcingApi, angelMappingApi, contactsApi } from "../lib/api";
-import type { Contact, AngelInvestor, AngelMapping } from "../types";
+import { accountSourcingApi, angelMappingApi, contactsApi, settingsApi } from "../lib/api";
+import type { Contact, AngelInvestor, AngelMapping, RolePermissionsSettings } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
@@ -98,7 +98,7 @@ const ANGEL_TEXT = {
 export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
   const pageSize = 50;
 
@@ -118,6 +118,7 @@ export default function Contacts() {
   const [resetting, setResetting] = useState(false);
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
+  const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [importSummary, setImportSummary] = useState<{
     imported_rows: number;
     created_count: number;
@@ -139,6 +140,8 @@ export default function Contacts() {
   const [filterStrength, setFilterStrength] = useState<number>(0);
   const [showAddInvestor, setShowAddInvestor] = useState(false);
   const [newInvestor, setNewInvestor] = useState({ name: "", current_role: "", current_company: "" });
+  const canMigrateProspects =
+    isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
 
   const loadContacts = () => {
     setLoading(true);
@@ -265,6 +268,10 @@ export default function Contacts() {
 
   useEffect(() => {
     loadAngels();
+  }, []);
+
+  useEffect(() => {
+    settingsApi.getRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
   }, []);
 
   useEffect(() => {
@@ -531,8 +538,8 @@ export default function Contacts() {
                     height: 38, padding: "0 14px", borderRadius: 10,
                     border: "1px solid #b8d0f0", background: "#eef5ff",
                     color: "#175089", fontSize: 13, fontWeight: 700,
-                    cursor: uploadingProspects ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                    opacity: uploadingProspects ? 0.7 : 1,
+                    cursor: uploadingProspects || !canMigrateProspects ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                    opacity: uploadingProspects || !canMigrateProspects ? 0.7 : 1,
                   }}
                 >
                   {uploadingProspects ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
@@ -541,7 +548,7 @@ export default function Contacts() {
                     type="file"
                     accept=".csv,.xlsx"
                     style={{ display: "none" }}
-                    disabled={uploadingProspects}
+                    disabled={uploadingProspects || !canMigrateProspects}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) {

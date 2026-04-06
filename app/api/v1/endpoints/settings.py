@@ -29,6 +29,10 @@ from app.models.settings import (
     OutreachSettingsUpdate,
     PipelineSummarySettingsRead,
     PipelineSummarySettingsUpdate,
+    PreMeetingAutomationSettingsRead,
+    PreMeetingAutomationSettingsUpdate,
+    RolePermissionsRead,
+    RolePermissionsUpdate,
     StageBucketSettings,
     WorkspaceSettings,
 )
@@ -39,6 +43,8 @@ from app.services.deal_stages import (
     normalize_deal_stage_settings,
 )
 from app.services.gmail_oauth import build_gmail_connect_url, create_gmail_oauth_state, decode_gmail_oauth_state, exchange_gmail_code
+from app.services.meeting_automation import normalize_pre_meeting_settings, run_due_pre_meeting_intel_once
+from app.services.permissions import normalize_role_permissions
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -103,6 +109,20 @@ _DEFAULT_PROSPECT_FUNNEL = {
     "mofu": ["in_progress"],
     "bofu": ["meeting_booked"],
 }
+_DEFAULT_ROLE_PERMISSIONS = {
+    "ae": {
+        "crm_import": False,
+        "prospect_migration": True,
+        "manage_team": False,
+        "run_pre_meeting_intel": True,
+    },
+    "sdr": {
+        "crm_import": False,
+        "prospect_migration": True,
+        "manage_team": False,
+        "run_pre_meeting_intel": False,
+    },
+}
 _PROSPECT_STAGES = {"outreach", "in_progress", "meeting_booked", "negative_response", "no_response", "not_a_fit"}
 
 
@@ -116,6 +136,7 @@ async def _get_or_create(session) -> WorkspaceSettings:
             outreach_content_settings=_DEFAULT_OUTREACH_CONTENT,
             deal_funnel_config=_DEFAULT_DEAL_FUNNEL,
             deal_stage_settings=[dict(item) for item in DEFAULT_DEAL_STAGE_SETTINGS],
+            role_permissions=_DEFAULT_ROLE_PERMISSIONS,
             prospect_funnel_config=_DEFAULT_PROSPECT_FUNNEL,
         )
         session.add(row)
@@ -126,7 +147,27 @@ async def _get_or_create(session) -> WorkspaceSettings:
         session.add(row)
         await session.commit()
         await session.refresh(row)
+    changed = False
+    if not row.role_permissions:
+        row.role_permissions = _DEFAULT_ROLE_PERMISSIONS
+        changed = True
+    if not row.pre_meeting_automation_settings:
+        row.pre_meeting_automation_settings = normalize_pre_meeting_settings(None)
+        changed = True
+    if changed:
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
     return row
+
+
+def _normalized_role_permissions(value: dict | None) -> RolePermissionsRead:
+    normalized = normalize_role_permissions(value)
+    return RolePermissionsRead(**normalized)
+
+
+def _normalized_pre_meeting_settings(value: dict | None) -> PreMeetingAutomationSettingsRead:
+    return PreMeetingAutomationSettingsRead(**normalize_pre_meeting_settings(value))
 
 
 def _normalized_bucket_config(value: dict | None, default: dict[str, list[str]]) -> StageBucketSettings:
@@ -378,6 +419,55 @@ async def update_pipeline_summary_settings(
     await session.commit()
     await session.refresh(row)
     return _normalized_pipeline_summary_settings(row)
+
+
+@router.get("/role-permissions", response_model=RolePermissionsRead)
+async def get_role_permissions(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return _normalized_role_permissions(row.role_permissions)
+
+
+@router.patch("/role-permissions", response_model=RolePermissionsRead)
+async def update_role_permissions(
+    body: RolePermissionsUpdate,
+    session: DBSession,
+    _admin: AdminUser,
+):
+    row = await _get_or_create(session)
+    row.role_permissions = body.model_dump()
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _normalized_role_permissions(row.role_permissions)
+
+
+@router.get("/pre-meeting-automation", response_model=PreMeetingAutomationSettingsRead)
+async def get_pre_meeting_automation_settings(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return _normalized_pre_meeting_settings(row.pre_meeting_automation_settings)
+
+
+@router.patch("/pre-meeting-automation", response_model=PreMeetingAutomationSettingsRead)
+async def update_pre_meeting_automation_settings(
+    body: PreMeetingAutomationSettingsUpdate,
+    session: DBSession,
+    _admin: AdminUser,
+):
+    if body.send_hours_before < 1 or body.send_hours_before > 168:
+        raise HTTPException(status_code=422, detail="send_hours_before must be between 1 and 168")
+
+    row = await _get_or_create(session)
+    row.pre_meeting_automation_settings = body.model_dump()
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _normalized_pre_meeting_settings(row.pre_meeting_automation_settings)
+
+
+@router.post("/pre-meeting-automation/run-now", response_model=dict)
+async def run_pre_meeting_automation_now(session: DBSession, _admin: AdminUser):
+    _ = session
+    return await run_due_pre_meeting_intel_once()
 
 
 @router.get("/email-sync", response_model=GmailSettingsRead)

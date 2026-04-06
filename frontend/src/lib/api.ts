@@ -26,7 +26,9 @@ import type {
   DealStageSettings,
   OutreachContentSettings,
   PipelineSummarySettings,
+  PreMeetingAutomationSettings,
   ProspectImportResponse,
+  RolePermissionsSettings,
   CrmImportResponse,
 } from "../types";
 
@@ -1159,6 +1161,24 @@ export const settingsApi = {
     request<DealStageSettings>("/api/v1/settings/deal-stages", {
       method: "PATCH",
       body: JSON.stringify(config),
+    }),
+  getRolePermissions: () =>
+    request<RolePermissionsSettings>("/api/v1/settings/role-permissions"),
+  updateRolePermissions: (config: RolePermissionsSettings) =>
+    request<RolePermissionsSettings>("/api/v1/settings/role-permissions", {
+      method: "PATCH",
+      body: JSON.stringify(config),
+    }),
+  getPreMeetingAutomation: () =>
+    request<PreMeetingAutomationSettings>("/api/v1/settings/pre-meeting-automation"),
+  updatePreMeetingAutomation: (config: PreMeetingAutomationSettings) =>
+    request<PreMeetingAutomationSettings>("/api/v1/settings/pre-meeting-automation", {
+      method: "PATCH",
+      body: JSON.stringify(config),
+    }),
+  runPreMeetingAutomationNow: () =>
+    request<{ checked: number; generated: number; emailed: number; skipped: number }>("/api/v1/settings/pre-meeting-automation/run-now", {
+      method: "POST",
     }),
   getGmailSync: () =>
     request<GmailSyncSettings>("/api/v1/settings/email-sync"),

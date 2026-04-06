@@ -1,9 +1,38 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
+from app.services.background_jobs import shutdown_background_workers, start_background_workers
+from app.services.meeting_automation import run_due_pre_meeting_intel_once
+
+logger = logging.getLogger(__name__)
+
+
+async def _pre_meeting_automation_loop() -> None:
+    while True:
+        try:
+            await run_due_pre_meeting_intel_once()
+        except Exception:
+            logger.exception("Pre-meeting automation loop failed")
+        await asyncio.sleep(600)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await start_background_workers()
+    automation_task = asyncio.create_task(_pre_meeting_automation_loop(), name="pre-meeting-automation")
+    try:
+        yield
+    finally:
+        automation_task.cancel()
+        await asyncio.gather(automation_task, return_exceptions=True)
+        await shutdown_background_workers()
 
 # FastAPI app bootstrap:
 # 1. create the app
@@ -16,6 +45,7 @@ app = FastAPI(
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # The frontend talks to the API directly from the browser, so allowed origins
