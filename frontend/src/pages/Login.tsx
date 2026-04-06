@@ -5,11 +5,16 @@ export default function Login() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        position: "fixed",
+        inset: 0,
+        width: "100%",
+        minHeight: "100dvh",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         background: "linear-gradient(135deg, #0a0e1a 0%, #141b2d 50%, #0a0e1a 100%)",
+        padding: "24px",
+        overflow: "auto",
       }}
     >
       <div
