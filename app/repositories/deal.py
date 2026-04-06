@@ -89,12 +89,18 @@ class DealRepository(BaseRepository[Deal]):
         rows = result.all()
 
         board: dict[str, list[DealRead]] = {}
+        now = datetime.utcnow()
         for deal, company_name, rep_name, cc in rows:
             read = DealRead.model_validate(deal)
             read.company_name = company_name
             read.assigned_rep_name = rep_name
             read.contact_count = cc or 0
             read.meddpicc_score = compute_meddpicc_score(deal.qualification)
+            # Compute days_in_stage live so reps always see real-time staleness
+            if deal.stage_entered_at:
+                read.days_in_stage = (now - deal.stage_entered_at).days
+            elif deal.created_at:
+                read.days_in_stage = (now - deal.created_at).days
             board.setdefault(deal.stage, []).append(read)
 
         return board
@@ -135,6 +141,11 @@ class DealRepository(BaseRepository[Deal]):
         read.assigned_rep_name = rep_name
         read.contact_count = cc or 0
         read.meddpicc_score = compute_meddpicc_score(deal.qualification)
+        # Compute days_in_stage live
+        if deal.stage_entered_at:
+            read.days_in_stage = (datetime.utcnow() - deal.stage_entered_at).days
+        elif deal.created_at:
+            read.days_in_stage = (datetime.utcnow() - deal.created_at).days
         return read
 
     # ── Contact management ───────────────────────────────────────────────────

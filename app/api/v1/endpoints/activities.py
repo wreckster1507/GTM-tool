@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.models.activity import Activity, ActivityCreate, ActivityRead, ActivityUpdate
 from app.repositories.activity import ActivityRepository
 from app.schemas.common import PaginatedResponse

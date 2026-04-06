@@ -11,6 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.tldv import TldvClient, TldvError
+from app.clients.azure_openai import AzureOpenAIClient
 from app.config import settings
 from app.models.activity import Activity
 from app.models.company import Company
@@ -499,6 +500,99 @@ def _fallback_meeting_intelligence(*, title: str, transcript_text: str, highligh
     }
 
 
+def _fallback_followup_email_draft(
+    *,
+    contact_name: str,
+    company_name: str,
+    meeting_title: str,
+    summary: str,
+    action_items: list[str],
+    next_steps: list[str],
+) -> str:
+    greeting_name = contact_name.strip() or "team"
+    bullets = action_items[:3] or next_steps[:3]
+    bullet_lines = "\n".join(f"- {item}" for item in bullets if item.strip())
+    summary_text = summary.strip() or f"Thanks again for the discussion around {meeting_title}."
+    body = [
+        f"Hi {greeting_name},",
+        "",
+        f"Thanks again for the time today. It was great speaking with you and the {company_name} team.",
+        "",
+        summary_text,
+        "",
+    ]
+    if bullet_lines:
+        body.extend(
+            [
+                "Recap and next steps:",
+                bullet_lines,
+                "",
+            ]
+        )
+    body.extend(
+        [
+            "Let me know if I missed anything or if you'd like us to adjust the next step.",
+            "",
+            "Best,",
+            "Beacon",
+        ]
+    )
+    return "\n".join(body).strip()
+
+
+async def _build_followup_email_draft(
+    *,
+    contact_name: str,
+    company_name: str,
+    meeting_title: str,
+    summary: str,
+    action_items: list[str],
+    next_steps: list[str],
+) -> str:
+    ai = AzureOpenAIClient()
+    bullets = [item.strip() for item in [*action_items, *next_steps] if isinstance(item, str) and item.strip()]
+    bullet_text = "\n".join(f"- {item}" for item in bullets[:5])
+    if ai.mock:
+        return _fallback_followup_email_draft(
+            contact_name=contact_name,
+            company_name=company_name,
+            meeting_title=meeting_title,
+            summary=summary,
+            action_items=action_items,
+            next_steps=next_steps,
+        )
+
+    system = (
+        "You are a senior enterprise account executive writing post-meeting recap emails. "
+        "Write a concise, professional client-facing follow-up email body only. "
+        "Do not invent facts. Keep it crisp, practical, and human."
+    )
+    user = (
+        f"Meeting title: {meeting_title}\n"
+        f"Client company: {company_name}\n"
+        f"Primary recipient: {contact_name or 'client team'}\n"
+        f"Meeting summary: {summary}\n"
+        f"Action items / next steps:\n{bullet_text or '- Confirm next steps'}\n\n"
+        "Write the email body with:\n"
+        "- a thank-you opening\n"
+        "- a short recap paragraph\n"
+        "- 2-4 bullet points for agreed next steps\n"
+        "- a soft closing asking them to confirm or adjust anything\n"
+        "Return only the email body."
+    )
+    draft = await ai.complete(system, user, max_tokens=450)
+    if draft and draft.strip():
+        return draft.strip()
+    return _fallback_followup_email_draft(
+        contact_name=contact_name,
+        company_name=company_name,
+        meeting_title=meeting_title,
+        summary=summary,
+        action_items=action_items,
+        next_steps=next_steps,
+    )
+
+
 def _build_attendee_payloads(attendees: list[dict[str, Any]], contacts: list[Contact]) -> list[dict[str, Any]]:
     contacts_by_email = {_normalize_email(contact.email): contact for contact in contacts if contact.email}
     payloads: list[dict[str, Any]] = []
@@ -624,6 +718,33 @@ async def sync_tldv_meeting(
     action_items = list(dict.fromkeys(ai_bundle.get("action_items") or []))
     attendee_payloads = _build_attendee_payloads(attendees, matched_contacts)
     primary_contact = matched_contacts[0] if matched_contacts else None
+    primary_external_attendee = next(
+        (
+            attendee
+            for attendee in attendee_payloads
+            if isinstance(attendee.get("email"), str)
+            and attendee["email"]
+            and "@" in attendee["email"]
+            and _normalize_domain(attendee["email"].split("@", 1)[1]) not in _internal_domains()
+        ),
+        None,
+    )
+    follow_up_contact_name = (
+        f"{primary_contact.first_name} {primary_contact.last_name}".strip()
+        if primary_contact
+        else str((primary_external_attendee or {}).get("name") or "").strip()
+    )
+    if not follow_up_contact_name:
+        follow_up_contact_name = "there"
+    follow_up_company_name = company.name if company and company.name else (_extract_title_candidates(str(meeting_payload.get("name") or ""))[:1] or ["the team"])[0]
+    follow_up_email_draft = await _build_followup_email_draft(
+        contact_name=follow_up_contact_name,
+        company_name=follow_up_company_name,
+        meeting_title=str(meeting_payload.get("name") or "Meeting"),
+        summary=str(ai_bundle.get("summary") or "").strip(),
+        action_items=action_items,
+        next_steps=list(dict.fromkeys(ai_bundle.get("next_steps") or action_items)),
+    )
 
     meeting = await _find_existing_meeting(session, meeting_id)
     created = meeting is None
@@ -656,6 +777,7 @@ async def sync_tldv_meeting(
             "stage_signal": ai_bundle.get("stage_signal"),
             "meeting_outcome": ai_bundle.get("meeting_outcome"),
             "mapped_via_gmail": mapped_via_gmail,
+            "follow_up_email_draft": follow_up_email_draft,
         }
     }
     meeting.updated_at = datetime.utcnow()
@@ -691,6 +813,7 @@ async def sync_tldv_meeting(
         "meeting_outcome": ai_bundle.get("meeting_outcome"),
         "attendees": attendee_payloads,
         "mapped_via_gmail": mapped_via_gmail,
+        "follow_up_email_draft": follow_up_email_draft,
         "highlights_text": highlights_text or None,
         "highlights": highlights_payload.get("data") if isinstance(highlights_payload, dict) else None,
         "conversation_intelligence": {

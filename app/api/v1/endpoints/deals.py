@@ -69,7 +69,7 @@ async def list_deals(
 # ── Create ───────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=DealRead, status_code=201)
-async def create_deal(payload: DealCreate, session: DBSession):
+async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUser):
     data = payload.model_dump()
 
     # Default stage based on pipeline type
@@ -109,7 +109,7 @@ async def get_deal(deal_id: UUID, session: DBSession):
 # ── Update ───────────────────────────────────────────────────────────────────
 
 @router.put("/{deal_id}", response_model=DealRead)
-async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession):
+async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
     update_data = payload.model_dump(exclude_unset=True)
@@ -149,15 +149,15 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession):
 
 
 @router.patch("/{deal_id}", response_model=DealRead)
-async def patch_deal(deal_id: UUID, payload: DealUpdate, session: DBSession):
+async def patch_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _user: CurrentUser):
     """PATCH alias for update_deal — same logic."""
-    return await update_deal(deal_id, payload, session)
+    return await update_deal(deal_id, payload, session, _user)
 
 
 # ── Stage move ───────────────────────────────────────────────────────────────
 
 @router.patch("/{deal_id}/stage", response_model=DealRead)
-async def move_stage(deal_id: UUID, body: dict, session: DBSession):
+async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: CurrentUser):
     new_stage = body.get("stage")
     if not new_stage:
         raise ValidationError("stage is required")
@@ -212,7 +212,7 @@ async def list_deal_contacts(deal_id: UUID, session: DBSession):
 
 
 @router.post("/{deal_id}/contacts", response_model=DealContactRead, status_code=201)
-async def add_deal_contact(deal_id: UUID, body: DealContactCreate, session: DBSession):
+async def add_deal_contact(deal_id: UUID, body: DealContactCreate, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
 
@@ -241,7 +241,7 @@ async def add_deal_contact(deal_id: UUID, body: DealContactCreate, session: DBSe
 
 
 @router.delete("/{deal_id}/contacts/{contact_id}", status_code=204)
-async def remove_deal_contact(deal_id: UUID, contact_id: UUID, session: DBSession):
+async def remove_deal_contact(deal_id: UUID, contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     await repo.get_or_raise(deal_id)
     removed = await repo.remove_contact(deal_id, contact_id)

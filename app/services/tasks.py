@@ -896,17 +896,36 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
 
     if latest_tldv_meeting and latest_tldv_meeting.created_at >= datetime.utcnow() - timedelta(days=4):
         created_keys.add("deal_send_meeting_recap")
+        tldv_metadata = latest_tldv_meeting.event_metadata if isinstance(latest_tldv_meeting.event_metadata, dict) else {}
+        follow_up_email_draft = str(tldv_metadata.get("follow_up_email_draft") or "").strip() or None
+        meeting_summary = str(tldv_metadata.get("summary") or latest_tldv_meeting.ai_summary or "").strip() or None
+        action_items = [
+            str(item).strip()
+            for item in (tldv_metadata.get("action_items") or [])
+            if isinstance(item, str) and str(item).strip()
+        ]
+        meeting_title = str(tldv_metadata.get("meeting_title") or "").strip() or None
         await _upsert_system_task(
             session,
             entity_type="deal",
             entity_id=deal.id,
             system_key="deal_send_meeting_recap",
             title="Send post-meeting follow-up",
-            description="tl;dv shows a recent customer meeting on this deal. Send the follow-up summary, confirm action items, and keep momentum explicit.",
+            description=(
+                "tl;dv shows a recent customer meeting on this deal. "
+                "Beacon prepared a follow-up draft from the meeting summary and transcript so the rep can send it faster."
+            ),
             priority="high",
             source="tldv",
             recommended_action=None,
-            action_payload={"deal_id": str(deal.id), "next_step": "send_meeting_follow_up"},
+            action_payload={
+                "deal_id": str(deal.id),
+                "next_step": "send_meeting_follow_up",
+                "meeting_title": meeting_title,
+                "meeting_summary": meeting_summary,
+                "action_items": action_items,
+                "follow_up_email_draft": follow_up_email_draft,
+            },
             assigned_role="ae",
         )
 

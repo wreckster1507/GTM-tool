@@ -20,6 +20,7 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    broker_connection_retry_on_startup=True,
     # Daily deal health recalculation at 02:00 UTC
     beat_schedule={
         "recalculate-deal-health-daily": {

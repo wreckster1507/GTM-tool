@@ -36,6 +36,84 @@ const TYPE_STYLE = {
   system: { bg: colors.violetSoft, border: "#eadbff", color: colors.violet },
 } as const;
 
+function parseMeetingPayload(payload?: Record<string, unknown>) {
+  const meetingTitle = typeof payload?.meeting_title === "string" ? payload.meeting_title.trim() : "";
+  const meetingSummary = typeof payload?.meeting_summary === "string" ? payload.meeting_summary.trim() : "";
+  const followUpEmailDraft = typeof payload?.follow_up_email_draft === "string" ? payload.follow_up_email_draft.trim() : "";
+  const actionItems = Array.isArray(payload?.action_items)
+    ? payload.action_items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+
+  return {
+    meetingTitle,
+    meetingSummary,
+    followUpEmailDraft,
+    actionItems,
+    hasMeetingContent: Boolean(meetingTitle || meetingSummary || followUpEmailDraft || actionItems.length),
+  };
+}
+
+function MeetingFollowUpBlock({ task }: { task: TaskItem }) {
+  const [copied, setCopied] = useState(false);
+  const { meetingTitle, meetingSummary, followUpEmailDraft, actionItems, hasMeetingContent } = parseMeetingPayload(task.action_payload);
+
+  if (!hasMeetingContent) return null;
+
+  const copyDraft = async () => {
+    if (!followUpEmailDraft) return;
+    try {
+      await navigator.clipboard.writeText(followUpEmailDraft);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {meetingSummary ? (
+        <div style={{ borderRadius: 14, border: "1px solid #ffd7b0", background: "#fff7ef", padding: "14px 15px", display: "grid", gap: 8 }}>
+          <div style={{ color: colors.amber, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>MEETING SUMMARY</div>
+          {meetingTitle ? <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{meetingTitle}</div> : null}
+          <div style={{ color: colors.text, fontSize: 13.5, lineHeight: 1.7 }}>{meetingSummary}</div>
+        </div>
+      ) : null}
+
+      {actionItems.length > 0 ? (
+        <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fcfdff", padding: "14px 15px", display: "grid", gap: 10 }}>
+          <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ACTION ITEMS</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {actionItems.map((item) => (
+              <div key={item} style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.6, padding: "8px 10px", borderRadius: 10, background: "#fff", border: `1px solid ${colors.border}` }}>
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {followUpEmailDraft ? (
+        <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fff", padding: "14px 15px", display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>FOLLOW-UP EMAIL DRAFT</div>
+            <button
+              type="button"
+              onClick={() => void copyDraft()}
+              style={{ borderRadius: 8, border: `1px solid ${colors.border}`, background: copied ? colors.greenSoft : "#fff", color: copied ? colors.green : colors.sub, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              {copied ? "Copied" : "Copy draft"}
+            </button>
+          </div>
+          <div style={{ whiteSpace: "pre-wrap", color: colors.text, fontSize: 13.5, lineHeight: 1.75, padding: "12px 13px", borderRadius: 12, background: "#fbfdff", border: `1px solid ${colors.border}` }}>
+            {followUpEmailDraft}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function TaskCard({
   task,
   commentDraft,
@@ -128,6 +206,8 @@ function TaskCard({
           </button>
         </div>
       ) : null}
+
+      <MeetingFollowUpBlock task={task} />
 
       <div style={{ display: "grid", gap: 8 }}>
         <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>COMMENTS</div>

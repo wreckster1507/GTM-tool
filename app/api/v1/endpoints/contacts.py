@@ -91,7 +91,7 @@ async def list_contacts(
 
 
 @router.post("/", response_model=ContactRead, status_code=201)
-async def create_contact(payload: ContactCreate, session: DBSession):
+async def create_contact(payload: ContactCreate, session: DBSession, _user: CurrentUser):
     contact = Contact(**payload.model_dump())
     if not contact.persona:
         contact.persona = classify_persona(contact)
@@ -106,7 +106,7 @@ async def get_contact(contact_id: UUID, session: DBSession):
 
 
 @router.put("/{contact_id}", response_model=ContactRead)
-async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession):
+async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await repo.get_or_raise(contact_id)
     update_data = payload.model_dump(exclude_unset=True)
@@ -120,14 +120,14 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
 
 
 @router.delete("/{contact_id}", status_code=204)
-async def delete_contact(contact_id: UUID, session: DBSession):
+async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     await repo.get_or_raise(contact_id)
     await repo.delete_with_cascade(contact_id)
 
 
 @router.post("/{contact_id}/enrich")
-async def enrich_contact(contact_id: UUID, session: DBSession):
+async def enrich_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await repo.get_or_raise(contact_id)
 
@@ -163,7 +163,7 @@ async def enrich_contact(contact_id: UUID, session: DBSession):
 
 
 @router.post("/discover/{company_id}", response_model=list[ContactRead], status_code=201)
-async def discover_contacts(company_id: UUID, session: DBSession):
+async def discover_contacts(company_id: UUID, session: DBSession, _user: CurrentUser):
     """
     Call Hunter domain-search for the given company and create any new contacts found.
     Skips duplicates by email. Returns the newly created contacts.

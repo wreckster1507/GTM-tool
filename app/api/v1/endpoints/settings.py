@@ -286,7 +286,7 @@ async def _gmail_status(session: DBSession) -> GmailSettingsRead:
 
 
 @router.get("/outreach", response_model=OutreachSettingsRead)
-async def get_outreach_settings(session: DBSession):
+async def get_outreach_settings(session: DBSession, _user: CurrentUser):
     """Return the global outreach sequence timing defaults."""
     row = await _get_or_create(session)
     delays = row.outreach_step_delays or _DEFAULTS
@@ -294,7 +294,7 @@ async def get_outreach_settings(session: DBSession):
 
 
 @router.patch("/outreach", response_model=OutreachSettingsRead)
-async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSession):
+async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSession, _admin: AdminUser):
     """
     Update global outreach step delays.
     Accepts a list of integers — one per step, in days from sequence start.

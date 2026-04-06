@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate
 from app.models.deal import Deal, DealRead
@@ -81,7 +81,7 @@ async def list_companies(
 
 
 @router.post("/", response_model=CompanyRead, status_code=201)
-async def create_company(payload: CompanyCreate, session: DBSession):
+async def create_company(payload: CompanyCreate, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     if await repo.get_by_domain(payload.domain):
         raise ConflictError(f"Company with domain '{payload.domain}' already exists")
@@ -98,7 +98,7 @@ async def get_company(company_id: UUID, session: DBSession):
 
 
 @router.put("/{company_id}", response_model=CompanyRead)
-async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSession):
+async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
     update_data = payload.model_dump(exclude_unset=True)
@@ -110,7 +110,7 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
 
 
 @router.delete("/{company_id}", status_code=204)
-async def delete_company(company_id: UUID, session: DBSession):
+async def delete_company(company_id: UUID, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     await repo.get_or_raise(company_id)  # 404 if not found
     await repo.delete_with_cascade(company_id)
