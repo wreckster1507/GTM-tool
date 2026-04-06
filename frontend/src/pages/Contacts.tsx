@@ -206,7 +206,7 @@ export default function Contacts() {
 
   const handleEnrichMissingCompany = async (company: { name: string; domain?: string }) => {
     const shouldEnrich = window.confirm(
-      `Beacon could not map prospects for ${company.name}. Do you want to add this account to Account Sourcing and start enrichment now?`
+      `Beacon already created a placeholder account for ${company.name}. Do you want to start enrichment now?`
     );
     if (!shouldEnrich) return;
 
@@ -218,7 +218,7 @@ export default function Contacts() {
         domain: company.domain,
       });
       removeMissingCompanyFromSummary(company.name, company.domain);
-      window.alert(`${company.name} was added to Account Sourcing and queued for enrichment.`);
+      window.alert(`${company.name} was queued for enrichment.`);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to queue company enrichment");
     } finally {
@@ -229,7 +229,7 @@ export default function Contacts() {
   const handleCreateMissingCompanies = async () => {
     if (!importSummary?.missing_companies.length) return;
     const shouldEnrich = window.confirm(
-      `Beacon found ${importSummary.missing_company_count} missing compan${importSummary.missing_company_count === 1 ? "y" : "ies"}. Do you want to add ${importSummary.missing_company_count === 1 ? "it" : "them"} to Account Sourcing and start enrichment now?`
+      `Beacon created ${importSummary.missing_company_count} placeholder compan${importSummary.missing_company_count === 1 ? "y" : "ies"}. Do you want to start enrichment for ${importSummary.missing_company_count === 1 ? "it" : "them"} now?`
     );
     if (!shouldEnrich) return;
 
@@ -246,7 +246,7 @@ export default function Contacts() {
           ? { ...current, missing_company_count: 0, missing_companies: [] }
           : current
       );
-      window.alert("The missing companies were added to Account Sourcing and queued for enrichment.");
+      window.alert("The placeholder companies were queued for enrichment.");
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to queue missing companies");
     } finally {
@@ -1421,10 +1421,10 @@ export default function Contacts() {
             {importSummary.missing_company_count > 0 && (
               <div style={{ marginTop: 18, border: "1px solid #f5ddaa", background: "#fff8e8", borderRadius: 14, padding: "14px 16px" }}>
                 <div style={{ color: "#8a5b00", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 8 }}>
-                  Missing companies
+                  Placeholder companies created
                 </div>
                 <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6 }}>
-                  {importSummary.missing_company_count} compan{importSummary.missing_company_count === 1 ? "y is" : "ies are"} not in Beacon yet, so those prospects could not be mapped until you decide whether to enrich the missing account.
+                  {importSummary.missing_company_count} compan{importSummary.missing_company_count === 1 ? "y was" : "ies were"} imported as a lightweight account so the prospects could migrate now. You can enrich or remap those accounts later when needed.
                 </div>
                 <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
                   {importSummary.missing_companies.map((company) => (
@@ -1475,7 +1475,7 @@ export default function Contacts() {
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
                   <div style={{ color: "#7d6d4f", fontSize: 12.5 }}>
-                    Choose enrich when you want Beacon to add the missing company and start research. If you skip it for now, Beacon will leave those prospects unmapped until the account is enriched later.
+                    Choose enrich when you want Beacon to start researching one of these placeholder accounts. If you skip it for now, the prospects stay migrated and you can enrich later.
                   </div>
                   <button
                     type="button"

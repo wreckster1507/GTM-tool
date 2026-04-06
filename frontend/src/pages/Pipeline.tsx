@@ -370,6 +370,20 @@ function CrmImportModal({
   onImport: () => Promise<void>;
 }) {
   const statStyle = { fontSize: 12, color: "#5e738b" } as const;
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!importing) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [importing]);
+
   return (
     <>
       <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.25)", zIndex: 40 }} onClick={importing ? undefined : onClose} />
@@ -391,6 +405,14 @@ function CrmImportModal({
             <div style={statStyle}>1. Beacon clears the current deal-pipeline records.</div>
             <div style={statStyle}>2. Beacon imports every board item from ClickUp Sales CRM as deals and companies.</div>
             <div style={statStyle}>3. Reruns stay idempotent using ClickUp task ids, so the same source data is not duplicated.</div>
+            <div style={{ ...statStyle, color: "#35506b" }}>
+              Typical runtime is around 1-3 minutes for this CRM size. If ClickUp comments and subtasks are heavy, it can take longer.
+            </div>
+            {importing && (
+              <div style={{ marginTop: 2, fontSize: 12, fontWeight: 700, color: "#175089" }}>
+                Import running for {elapsedSeconds}s. Keep this window open while Beacon finishes the sync.
+              </div>
+            )}
           </div>
 
           {error && <div style={{ marginTop: 14, fontSize: 12, color: "#b94a24", fontWeight: 600 }}>{error}</div>}
@@ -1083,7 +1105,7 @@ export default function Pipeline() {
       const result = await contactsApi.importCsv(file);
       await loadBoard();
       const missingMessage = result.missing_company_count
-        ? `\nMissing companies: ${result.missing_company_count} (left untouched so you can enrich only when needed)`
+        ? `\nPlaceholder companies created: ${result.missing_company_count} (they were imported now and can be enriched or remapped later)`
         : "";
       window.alert(
         `Prospect migration complete.\nImported rows: ${result.imported_rows}\nCreated: ${result.created_count}\nUpdated: ${result.updated_count}\nSkipped: ${result.skipped_count}${missingMessage}`,

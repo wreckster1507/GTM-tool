@@ -516,6 +516,12 @@ export interface PreMeetingAutomationSettings {
   auto_generate_if_missing: boolean;
 }
 
+export interface ClickUpCrmSettings {
+  team_id?: string | null;
+  space_id?: string | null;
+  deals_list_id?: string | null;
+}
+
 export interface AngelInvestor {
   id: string;
   name: string;

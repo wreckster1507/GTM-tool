@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 
@@ -18,6 +20,7 @@ from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
+from app.models.settings import WorkspaceSettings
 from app.models.task import Task
 from app.models.user import User
 from app.repositories.deal import DealRepository
@@ -50,6 +53,8 @@ PRIORITY_MAP = {
     "normal": "normal",
     "low": "low",
 }
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -141,6 +146,18 @@ class ClickUpClient:
     async def get_comments(self, task_id: str) -> list[dict[str, Any]]:
         payload = await self._get_json(f"/task/{task_id}/comment", cache_name=f"comments-{task_id}.json")
         return payload.get("comments", [])
+
+
+async def _resolve_clickup_config(session: AsyncSession) -> dict[str, str]:
+    row = await session.get(WorkspaceSettings, 1)
+    stored = row.clickup_crm_settings if row and isinstance(row.clickup_crm_settings, dict) else {}
+    return {
+        "api_token": settings.CLICKUP_API_TOKEN,
+        "api_base": settings.CLICKUP_API_BASE,
+        "team_id": str(stored.get("team_id") or settings.CLICKUP_TEAM_ID or "").strip(),
+        "space_id": str(stored.get("space_id") or settings.CLICKUP_SPACE_ID or "").strip(),
+        "deals_list_id": str(stored.get("deals_list_id") or settings.CLICKUP_DEALS_LIST_ID or "").strip(),
+    }
 
 
 def _slugify(value: str) -> str:
@@ -732,35 +749,54 @@ async def import_sales_crm_clickup(
     skip_comments: bool = False,
     skip_subtasks: bool = False,
 ) -> dict[str, Any]:
-    if not settings.CLICKUP_API_TOKEN:
+    started_at = perf_counter()
+    clickup_config = await _resolve_clickup_config(session)
+    if not clickup_config["api_token"]:
         raise RuntimeError("CLICKUP_API_TOKEN is not configured")
-    if not settings.CLICKUP_DEALS_LIST_ID:
-        raise RuntimeError("CLICKUP_DEALS_LIST_ID is not configured")
+    if not clickup_config["deals_list_id"]:
+        raise RuntimeError("ClickUp Deals list ID is not configured")
 
     replace_stats = ClickUpReplaceStats()
     if replace_existing:
+        logger.info("clickup import: clearing existing pipeline data")
         replace_stats = await replace_pipeline_deal_data(session)
+        logger.info(
+            "clickup import: cleared deals=%s companies=%s activities=%s deal_tasks=%s contacts=%s",
+            replace_stats.deals_deleted,
+            replace_stats.companies_deleted,
+            replace_stats.activities_deleted,
+            replace_stats.deal_tasks_deleted,
+            replace_stats.contacts_deleted,
+        )
 
     client = ClickUpClient(
-        token=settings.CLICKUP_API_TOKEN,
-        base_url=settings.CLICKUP_API_BASE,
+        token=clickup_config["api_token"],
+        base_url=clickup_config["api_base"],
         cache_dir=Path(cache_dir).resolve() if cache_dir else None,
     )
 
     users_by_email, users_by_name = await _load_users(session)
     stats = ClickUpImportStats()
 
-    fields = await client.get_fields(settings.CLICKUP_DEALS_LIST_ID)
+    fields = await client.get_fields(clickup_config["deals_list_id"])
     stats.fields_loaded = len(fields)
+    logger.info("clickup import: loaded %s custom fields", stats.fields_loaded)
 
-    all_tasks = await client.get_all_tasks(settings.CLICKUP_DEALS_LIST_ID)
+    all_tasks = await client.get_all_tasks(clickup_config["deals_list_id"])
     top_level_tasks = [task for task in all_tasks if not task.get("parent")]
     subtasks = [task for task in all_tasks if task.get("parent")]
+    logger.info(
+        "clickup import: fetched %s tasks total (%s top-level, %s subtasks)",
+        len(all_tasks),
+        len(top_level_tasks),
+        len(subtasks),
+    )
 
     if limit:
         top_level_tasks = top_level_tasks[:limit]
         selected_ids = {str(task["id"]) for task in top_level_tasks}
         subtasks = [task for task in subtasks if str(task.get("parent")) in selected_ids]
+        logger.info("clickup import: limit applied, processing %s top-level tasks", len(top_level_tasks))
 
     stats.top_level_tasks_seen = len(top_level_tasks)
     stats.subtasks_seen = len(subtasks)
@@ -770,7 +806,7 @@ async def import_sales_crm_clickup(
     company_cache: dict[str, Company] = {}
     imported_deals_by_clickup_id: dict[str, Deal] = {}
 
-    for task in top_level_tasks:
+    for index, task in enumerate(top_level_tasks, start=1):
         company = await _get_or_create_company(session, task, stats, company_cache)
         deal = await _upsert_deal(session, repo, task, company, users_by_email, users_by_name, stats)
         await _upsert_placeholder_contact(session, task, company, deal, users_by_email, users_by_name, stats)
@@ -787,16 +823,36 @@ async def import_sales_crm_clickup(
             users_by_name,
             stats,
         )
+        if index == len(top_level_tasks) or index % 50 == 0:
+            logger.info(
+                "clickup import: processed %s/%s deals (created=%s updated=%s companies_created=%s activities_created=%s)",
+                index,
+                len(top_level_tasks),
+                stats.deals_created,
+                stats.deals_updated,
+                stats.companies_created,
+                stats.activities_created,
+            )
 
     if not skip_subtasks:
-        for subtask in subtasks:
+        for index, subtask in enumerate(subtasks, start=1):
             parent_deal = imported_deals_by_clickup_id.get(str(subtask.get("parent")))
             if not parent_deal:
                 continue
             await _upsert_subtask(session, subtask, parent_deal, users_by_email, users_by_name, stats)
+            if index == len(subtasks) or index % 100 == 0:
+                logger.info(
+                    "clickup import: processed %s/%s subtasks (tasks_created=%s tasks_updated=%s)",
+                    index,
+                    len(subtasks),
+                    stats.tasks_created,
+                    stats.tasks_updated,
+                )
 
     await session.commit()
-    return {
+    result = {
         "replace": replace_stats.as_response(),
         "import": stats.as_response(),
     }
+    logger.info("clickup import: complete in %.1fs", perf_counter() - started_at)
+    return result

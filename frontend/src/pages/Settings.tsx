@@ -20,6 +20,7 @@ import {
 import { settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type {
+  ClickUpCrmSettings,
   DealStageSettings,
   GmailSyncSettings,
   OutreachContentSettings,
@@ -68,6 +69,7 @@ export default function SettingsPage() {
   const [inbox, setInbox] = useState("zippy@beacon.li");
   const [outreachContent, setOutreachContent] = useState<OutreachContentSettings | null>(null);
   const [dealStages, setDealStages] = useState<DealStageSettings | null>(null);
+  const [clickupCrmSettings, setClickupCrmSettings] = useState<ClickUpCrmSettings | null>(null);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [preMeetingSettings, setPreMeetingSettings] = useState<PreMeetingAutomationSettings | null>(null);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
@@ -78,6 +80,7 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false);
   const [savingOutreach, setSavingOutreach] = useState(false);
   const [savingStages, setSavingStages] = useState(false);
+  const [savingClickUpCrm, setSavingClickUpCrm] = useState(false);
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [savingPreMeeting, setSavingPreMeeting] = useState(false);
   const [runningPreMeeting, setRunningPreMeeting] = useState(false);
@@ -98,11 +101,12 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, outreachContentData, outreachTiming, dealStageData, rolePermissionData, preMeetingData] = await Promise.all([
+      const [gmailData, outreachContentData, outreachTiming, dealStageData, clickupCrmData, rolePermissionData, preMeetingData] = await Promise.all([
         settingsApi.getGmailSync(),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
+        settingsApi.getClickUpCrmSettings(),
         settingsApi.getRolePermissions(),
         settingsApi.getPreMeetingAutomation(),
       ]);
@@ -111,6 +115,7 @@ export default function SettingsPage() {
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
       setDealStages(dealStageData);
+      setClickupCrmSettings(clickupCrmData);
       setRolePermissions(rolePermissionData);
       setPreMeetingSettings(preMeetingData);
     } catch (err) {
@@ -343,6 +348,33 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to save deal stages");
     } finally {
       setSavingStages(false);
+    }
+  };
+
+  const updateClickUpCrmField = (field: keyof ClickUpCrmSettings, value: string) => {
+    setClickupCrmSettings((current) => {
+      if (!current) return current;
+      return { ...current, [field]: value };
+    });
+  };
+
+  const handleSaveClickUpCrm = async () => {
+    if (!clickupCrmSettings) return;
+    setSavingClickUpCrm(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const saved = await settingsApi.updateClickUpCrmSettings({
+        team_id: clickupCrmSettings.team_id?.trim() || null,
+        space_id: clickupCrmSettings.space_id?.trim() || null,
+        deals_list_id: clickupCrmSettings.deals_list_id?.trim() || null,
+      });
+      setClickupCrmSettings(saved);
+      setMessage("ClickUp CRM source settings saved. Beacon imports will use these IDs, falling back to env defaults when fields are blank.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save ClickUp CRM settings");
+    } finally {
+      setSavingClickUpCrm(false);
     }
   };
 
@@ -1063,6 +1095,68 @@ export default function SettingsPage() {
               ) : (
                 <p className="crm-muted" style={{ fontSize: 13 }}>
                   Only admins can update the shared deal slimlines. Everyone else sees the same board layout in Pipeline.
+                </p>
+              )}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>
+                  <Link2 size={14} />
+                  ClickUp CRM import
+                </div>
+                <h4 style={{ fontSize: 20, fontWeight: 800, color: "#182042", marginBottom: 8 }}>ClickUp source IDs</h4>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Beacon still uses the ClickUp API token from env, but admins can override the Sales CRM workspace IDs here instead of hardcoding them in deployment.
+                </p>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+                <div>
+                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Team ID</div>
+                  <input
+                    value={clickupCrmSettings?.team_id ?? ""}
+                    onChange={(event) => updateClickUpCrmField("team_id", event.target.value)}
+                    disabled={!isAdmin}
+                    placeholder="9016838025"
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Space ID</div>
+                  <input
+                    value={clickupCrmSettings?.space_id ?? ""}
+                    onChange={(event) => updateClickUpCrmField("space_id", event.target.value)}
+                    disabled={!isAdmin}
+                    placeholder="90166384157"
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Deals List ID</div>
+                  <input
+                    value={clickupCrmSettings?.deals_list_id ?? ""}
+                    onChange={(event) => updateClickUpCrmField("deals_list_id", event.target.value)}
+                    disabled={!isAdmin}
+                    placeholder="901613645185"
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                </div>
+              </div>
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                    Leave a field blank to fall back to the current env default. This only changes which ClickUp Sales CRM board Beacon imports from.
+                  </p>
+                  <button className="crm-button primary" type="button" onClick={handleSaveClickUpCrm} disabled={savingClickUpCrm || !clickupCrmSettings}>
+                    {savingClickUpCrm ? <RefreshCw size={15} className="animate-spin" /> : <Shield size={15} />}
+                    Save ClickUp source
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 13 }}>
+                  Only admins can change the ClickUp import source. Everyone else uses the shared Sales CRM configuration.
                 </p>
               )}
             </div>

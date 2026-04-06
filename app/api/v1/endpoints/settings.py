@@ -16,6 +16,8 @@ from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.models.settings import (
+    ClickUpCrmSettingsRead,
+    ClickUpCrmSettingsUpdate,
     DealStageSettingsRead,
     DealStageSettingsUpdate,
     DealFunnelSettingsRead,
@@ -123,6 +125,11 @@ _DEFAULT_ROLE_PERMISSIONS = {
         "run_pre_meeting_intel": False,
     },
 }
+_DEFAULT_CLICKUP_CRM_SETTINGS = {
+    "team_id": settings.CLICKUP_TEAM_ID or None,
+    "space_id": settings.CLICKUP_SPACE_ID or None,
+    "deals_list_id": settings.CLICKUP_DEALS_LIST_ID or None,
+}
 _PROSPECT_STAGES = {"outreach", "in_progress", "meeting_booked", "negative_response", "no_response", "not_a_fit"}
 
 
@@ -154,6 +161,9 @@ async def _get_or_create(session) -> WorkspaceSettings:
     if not row.pre_meeting_automation_settings:
         row.pre_meeting_automation_settings = normalize_pre_meeting_settings(None)
         changed = True
+    if not row.clickup_crm_settings:
+        row.clickup_crm_settings = dict(_DEFAULT_CLICKUP_CRM_SETTINGS)
+        changed = True
     if changed:
         session.add(row)
         await session.commit()
@@ -168,6 +178,15 @@ def _normalized_role_permissions(value: dict | None) -> RolePermissionsRead:
 
 def _normalized_pre_meeting_settings(value: dict | None) -> PreMeetingAutomationSettingsRead:
     return PreMeetingAutomationSettingsRead(**normalize_pre_meeting_settings(value))
+
+
+def _normalized_clickup_crm_settings(value: dict | None) -> ClickUpCrmSettingsRead:
+    raw = value if isinstance(value, dict) else {}
+    return ClickUpCrmSettingsRead(
+        team_id=str(raw.get("team_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["team_id"] or "").strip() or None,
+        space_id=str(raw.get("space_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["space_id"] or "").strip() or None,
+        deals_list_id=str(raw.get("deals_list_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["deals_list_id"] or "").strip() or None,
+    )
 
 
 def _normalized_bucket_config(value: dict | None, default: dict[str, list[str]]) -> StageBucketSettings:
@@ -258,6 +277,26 @@ async def update_deal_stage_settings(body: DealStageSettingsUpdate, session: DBS
     await session.commit()
     await session.refresh(row)
     return DealStageSettingsRead(stages=normalize_deal_stage_settings(row.deal_stage_settings))
+
+
+@router.get("/clickup-crm", response_model=ClickUpCrmSettingsRead)
+async def get_clickup_crm_settings(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return _normalized_clickup_crm_settings(row.clickup_crm_settings)
+
+
+@router.patch("/clickup-crm", response_model=ClickUpCrmSettingsRead)
+async def update_clickup_crm_settings(body: ClickUpCrmSettingsUpdate, session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    row.clickup_crm_settings = {
+        "team_id": (body.team_id or "").strip() or None,
+        "space_id": (body.space_id or "").strip() or None,
+        "deals_list_id": (body.deals_list_id or "").strip() or None,
+    }
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _normalized_clickup_crm_settings(row.clickup_crm_settings)
 
 
 async def _gmail_status(session: DBSession) -> GmailSettingsRead:

@@ -30,6 +30,7 @@ import type {
   ProspectImportResponse,
   RolePermissionsSettings,
   CrmImportResponse,
+  ClickUpCrmSettings,
 } from "../types";
 
 /**
@@ -1159,6 +1160,13 @@ export const settingsApi = {
     request<DealStageSettings>("/api/v1/settings/deal-stages"),
   updateDealStages: (config: DealStageSettings) =>
     request<DealStageSettings>("/api/v1/settings/deal-stages", {
+      method: "PATCH",
+      body: JSON.stringify(config),
+    }),
+  getClickUpCrmSettings: () =>
+    request<ClickUpCrmSettings>("/api/v1/settings/clickup-crm"),
+  updateClickUpCrmSettings: (config: ClickUpCrmSettings) =>
+    request<ClickUpCrmSettings>("/api/v1/settings/clickup-crm", {
       method: "PATCH",
       body: JSON.stringify(config),
     }),

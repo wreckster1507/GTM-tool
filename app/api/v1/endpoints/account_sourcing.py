@@ -67,6 +67,7 @@ def _account_sourcing_visibility_filter():
     return or_(
         Company.sourcing_batch_id.isnot(None),
         Company.enrichment_sources.contains({"clickup_import": {}}),
+        Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
     )
 
 

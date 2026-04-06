@@ -151,6 +151,7 @@ class WorkspaceSettings(SQLModel, table=True):
             server_default='{"enabled":true,"send_hours_before":12,"auto_generate_if_missing":true}',
         ),
     )
+    clickup_crm_settings: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     prospect_funnel_config: dict = Field(
         default={"tofu": ["outreach"], "mofu": ["in_progress"], "bofu": ["meeting_booked"]},
         sa_column=Column(
@@ -270,6 +271,18 @@ class PreMeetingAutomationSettingsUpdate(SQLModel):
     enabled: bool
     send_hours_before: int
     auto_generate_if_missing: bool
+
+
+class ClickUpCrmSettingsRead(SQLModel):
+    team_id: Optional[str] = None
+    space_id: Optional[str] = None
+    deals_list_id: Optional[str] = None
+
+
+class ClickUpCrmSettingsUpdate(SQLModel):
+    team_id: Optional[str] = None
+    space_id: Optional[str] = None
+    deals_list_id: Optional[str] = None
 
 
 class GmailSettingsRead(SQLModel):

@@ -61,6 +61,49 @@ async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> 
     return company
 
 
+def _placeholder_company_domain(name: str) -> str:
+    base = "".join(ch.lower() if ch.isalnum() else "-" for ch in (name or "").strip())
+    slug = "-".join(part for part in base.split("-") if part) or "unknown-company"
+    return f"{slug}.unknown"
+
+
+async def _get_or_create_uploaded_placeholder_company(
+    session: DBSession,
+    row: dict[str, str],
+    current_user: CurrentUser,
+) -> tuple[Company | None, bool]:
+    company = await _resolve_uploaded_company(session, row)
+    if company:
+        return company, False
+
+    company_fields = row_to_company_fields(row)
+    company_name = (company_fields.get("name") or "").strip()
+    if not company_name:
+        return None, False
+
+    company_domain = (company_fields.get("domain") or "").strip().lower() or _placeholder_company_domain(company_name)
+    company = Company(
+        name=company_name,
+        domain=company_domain,
+        industry=(company_fields.get("industry") or "").strip() or None,
+        region=(company_fields.get("region") or "").strip() or None,
+        headquarters=(company_fields.get("headquarters") or "").strip() or None,
+        description=(company_fields.get("description") or "").strip() or None,
+        assigned_rep_email=(company_fields.get("assigned_rep_email") or "").strip() or None,
+        recommended_outreach_lane=(company_fields.get("recommended_outreach_lane") or "").strip() or None,
+        enrichment_sources={
+            "prospect_import_placeholder": {
+                "source": "prospect_import",
+                "uploaded_by": current_user.email,
+                "needs_enrichment": True,
+            }
+        },
+    )
+    session.add(company)
+    await session.flush()
+    return company, True
+
+
 @router.get("/", response_model=PaginatedResponse[ContactRead])
 async def list_contacts(
     session: DBSession,
@@ -249,7 +292,7 @@ async def import_contacts_csv(
     missing_companies: dict[str, ProspectImportMissingCompany] = {}
 
     for row in rows:
-        company = await _resolve_uploaded_company(session, row)
+        company, created_placeholder_company = await _get_or_create_uploaded_placeholder_company(session, row, current_user)
         company_fields = row_to_company_fields(row)
         company_context = {
             "assigned_rep_email": company.assigned_rep_email if company else None,
@@ -275,6 +318,18 @@ async def import_contacts_csv(
                 )
             skipped_count += 1
             continue
+
+        if created_placeholder_company:
+            key = f"{(company_fields.get('domain') or '').strip().lower()}::{(company_fields.get('name') or '').strip().lower()}"
+            current = missing_companies.get(key)
+            if current:
+                current.contacts_count += 1
+            else:
+                missing_companies[key] = ProspectImportMissingCompany(
+                    name=(company_fields.get("name") or "Unknown company").strip(),
+                    domain=(company_fields.get("domain") or "").strip() or None,
+                    contacts_count=1,
+                )
 
         touched_company_ids.add(company.id)
         contact_fields["assigned_to_id"] = contact_fields.get("assigned_to_id") or company.assigned_to_id
@@ -366,7 +421,7 @@ async def import_contacts_csv(
         message=(
             "Prospects imported successfully."
             if not missing_rows
-            else "Prospects imported for mapped companies. Some companies are not sourced yet."
+            else "Prospects imported successfully. Placeholder companies were created for rows that still need enrichment."
         ),
     )
 
