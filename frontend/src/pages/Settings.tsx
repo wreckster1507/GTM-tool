@@ -343,7 +343,7 @@ export default function SettingsPage() {
       };
       const saved = await settingsApi.updateDealStages(normalized);
       setDealStages(saved);
-      setMessage("Pipeline slimlines saved. The deal board now follows this shared lane configuration.");
+      setMessage("Pipeline lanes saved. The deal board now follows this shared lane configuration.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save deal stages");
     } finally {
@@ -1018,15 +1018,15 @@ export default function SettingsPage() {
                   <GripVertical size={14} />
                   Pipeline
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Deal slimlines</h3>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Deal lanes</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
-                  Control the shared deal board lanes here. Admins can rename, reorder, add, or remove slimlines, and the Pipeline page will use this exact layout.
+                  Control the shared deal board lanes here. Admins can rename, reorder, add, or remove lanes, and the Pipeline page will use this exact layout.
                 </p>
               </div>
               {isAdmin && (
                 <button className="crm-button soft" type="button" onClick={addStage} disabled={!dealStages}>
                   <Plus size={15} />
-                  Add slimline
+                  Add lane
                 </button>
               )}
             </div>
@@ -1037,7 +1037,7 @@ export default function SettingsPage() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: stage.color }} />
-                      <strong style={{ color: "#182042" }}>Slimline {index + 1}</strong>
+                      <strong style={{ color: "#182042" }}>Lane {index + 1}</strong>
                       <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>{stage.id}</span>
                     </div>
                     {isAdmin && (
@@ -1051,7 +1051,7 @@ export default function SettingsPage() {
 
                   <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 180px 160px", gap: 14 }}>
                     <div>
-                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Slimline name</div>
+                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Lane name</div>
                       <input
                         value={stage.label}
                         onChange={(event) => updateStage(index, "label", event.target.value)}
@@ -1085,16 +1085,16 @@ export default function SettingsPage() {
               {isAdmin ? (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <p className="crm-muted" style={{ fontSize: 13 }}>
-                    These slimlines define the shared deal board order and names across Beacon, including the ClickUp CRM import flow.
+                    These lanes define the shared deal board order and names across Beacon, including the ClickUp CRM import flow.
                   </p>
                   <button className="crm-button primary" type="button" onClick={handleSaveStages} disabled={savingStages || !dealStages}>
                     {savingStages ? <RefreshCw size={15} className="animate-spin" /> : <Shield size={15} />}
-                    Save pipeline slimlines
+                    Save pipeline lanes
                   </button>
                 </div>
               ) : (
                 <p className="crm-muted" style={{ fontSize: 13 }}>
-                  Only admins can update the shared deal slimlines. Everyone else sees the same board layout in Pipeline.
+                  Only admins can update the shared deal lanes. Everyone else sees the same board layout in Pipeline.
                 </p>
               )}
             </div>

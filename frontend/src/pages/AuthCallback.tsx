@@ -12,7 +12,7 @@ export default function AuthCallback() {
     if (token) {
       login(token);
       // Small delay to let AuthContext re-fetch user
-      setTimeout(() => navigate("/sales-workspace", { replace: true }), 300);
+      setTimeout(() => navigate("/pipeline", { replace: true }), 300);
     } else {
       navigate("/login", { replace: true });
     }
