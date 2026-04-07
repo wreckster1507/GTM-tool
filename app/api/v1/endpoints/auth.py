@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, func, select
 
 from app.config import settings
@@ -178,6 +179,42 @@ async def update_user(
     await session.commit()
     await session.refresh(user)
     return user
+
+
+@router.delete("/users/{user_id}", response_model=dict)
+async def delete_user(
+    user_id: UUID,
+    session: DBSession,
+    current_user: CurrentUser,
+):
+    """Delete a user account from the workspace (admin/team-managers only)."""
+    await require_workspace_permission(session, current_user, "manage_team")
+    user = (
+        await session.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if not user:
+        raise NotFoundError("User not found")
+
+    if user.id == current_user.id:
+        raise ForbiddenError("Cannot delete your own account from this screen")
+
+    admin_count = (
+        await session.execute(
+            select(func.count(User.id)).where(User.role == "admin", User.is_active == True)  # noqa: E712
+        )
+    ).scalar_one()
+    deleting_last_admin = user.role == "admin" and user.is_active and admin_count <= 1
+    if deleting_last_admin:
+        raise ForbiddenError("At least one active admin must remain on the workspace")
+
+    try:
+        await session.delete(user)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise ForbiddenError("Cannot delete this user because related records still reference this account. Deactivate instead.")
+
+    return {"status": "deleted", "user_id": str(user_id)}
 
 
 class SeedUserPayload(SQLModel):

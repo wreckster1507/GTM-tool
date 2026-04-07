@@ -1013,6 +1013,10 @@ export const authApi = {
       method: "POST",
       body: JSON.stringify({ users }),
     }),
+  deleteUser: (userId: string) =>
+    request<{ status: string; user_id: string }>(`/api/v1/auth/users/${userId}`, {
+      method: "DELETE",
+    }),
 };
 
 // ── Assignments ──────────────────────────────────────────────────────────────

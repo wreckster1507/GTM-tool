@@ -83,6 +83,21 @@ export default function TeamManagement() {
     }
   };
 
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    const ok = window.confirm(`Delete ${userName}? This permanently removes the account.`);
+    if (!ok) return;
+
+    setUpdating(userId);
+    try {
+      await authApi.deleteUser(userId);
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete user");
+    } finally {
+      setUpdating(null);
+    }
+  };
+
   const [seeding, setSeeding] = useState(false);
 
   const BEACON_TEAM = [
@@ -302,6 +317,20 @@ export default function TeamManagement() {
                               >
                                 {u.is_active ? "Deactivate" : "Reactivate"}
                               </button>
+                              {isAdmin && (
+                                <button
+                                  onClick={() => handleDeleteUser(u.id, u.name)}
+                                  style={{
+                                    padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                    background: "rgba(180, 35, 54, 0.08)",
+                                    color: "#b42336",
+                                    border: "1px solid rgba(180, 35, 54, 0.2)",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           )}
                         </td>
