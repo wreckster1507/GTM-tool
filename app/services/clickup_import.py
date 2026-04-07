@@ -57,6 +57,23 @@ PRIORITY_MAP = {
 logger = logging.getLogger(__name__)
 
 
+def _normalize_clickup_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    # Handle values accidentally stored as floats/scientific notation.
+    try:
+        numeric = Decimal(text)
+        if numeric == numeric.to_integral_value():
+            return str(int(numeric))
+    except (InvalidOperation, ValueError):
+        pass
+
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return digits or text
+
+
 @dataclass
 class ClickUpImportStats:
     top_level_tasks_seen: int = 0
@@ -168,9 +185,9 @@ async def _resolve_clickup_config(session: AsyncSession) -> dict[str, str]:
     return {
         "api_token": settings.CLICKUP_API_TOKEN,
         "api_base": settings.CLICKUP_API_BASE,
-        "team_id": str(stored.get("team_id") or settings.CLICKUP_TEAM_ID or "").strip(),
-        "space_id": str(stored.get("space_id") or settings.CLICKUP_SPACE_ID or "").strip(),
-        "deals_list_id": str(stored.get("deals_list_id") or settings.CLICKUP_DEALS_LIST_ID or "").strip(),
+        "team_id": _normalize_clickup_id(stored.get("team_id") or settings.CLICKUP_TEAM_ID or ""),
+        "space_id": _normalize_clickup_id(stored.get("space_id") or settings.CLICKUP_SPACE_ID or ""),
+        "deals_list_id": _normalize_clickup_id(stored.get("deals_list_id") or settings.CLICKUP_DEALS_LIST_ID or ""),
     }
 
 
@@ -817,6 +834,8 @@ async def import_sales_crm_clickup(
         raise RuntimeError("CLICKUP_API_TOKEN is not configured")
     if not clickup_config["deals_list_id"]:
         raise RuntimeError("ClickUp Deals list ID is not configured")
+    if not clickup_config["deals_list_id"].isdigit():
+        raise RuntimeError("ClickUp Deals list ID is invalid. Use the numeric list ID from ClickUp.")
 
     replace_stats = ClickUpReplaceStats()
     if replace_existing:

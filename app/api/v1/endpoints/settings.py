@@ -8,6 +8,7 @@ PATCH /settings/outreach-content → update outreach AI templates and guidance
 GET  /settings/email-sync → current Gmail sync status
 """
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
@@ -200,10 +201,29 @@ def _normalized_pre_meeting_settings(value: dict | None) -> PreMeetingAutomation
 
 def _normalized_clickup_crm_settings(value: dict | None) -> ClickUpCrmSettingsRead:
     raw = value if isinstance(value, dict) else {}
+
+    def _normalize_clickup_id(v: object) -> str | None:
+        if v in (None, ""):
+            return None
+        text = str(v).strip()
+        if not text:
+            return None
+
+        # Accept scientific notation / float-like values and normalize to digits.
+        try:
+            numeric = Decimal(text)
+            if numeric == numeric.to_integral_value():
+                return str(int(numeric))
+        except (InvalidOperation, ValueError):
+            pass
+
+        digits = "".join(ch for ch in text if ch.isdigit())
+        return digits or text
+
     return ClickUpCrmSettingsRead(
-        team_id=str(raw.get("team_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["team_id"] or "").strip() or None,
-        space_id=str(raw.get("space_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["space_id"] or "").strip() or None,
-        deals_list_id=str(raw.get("deals_list_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["deals_list_id"] or "").strip() or None,
+        team_id=_normalize_clickup_id(raw.get("team_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["team_id"]),
+        space_id=_normalize_clickup_id(raw.get("space_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["space_id"]),
+        deals_list_id=_normalize_clickup_id(raw.get("deals_list_id") or _DEFAULT_CLICKUP_CRM_SETTINGS["deals_list_id"]),
     )
 
 
@@ -355,11 +375,24 @@ async def get_clickup_crm_settings(session: DBSession, _user: CurrentUser):
 
 @router.patch("/clickup-crm", response_model=ClickUpCrmSettingsRead)
 async def update_clickup_crm_settings(body: ClickUpCrmSettingsUpdate, session: DBSession, _admin: AdminUser):
+    def _normalize_clickup_id(v: str | None) -> str | None:
+        text = (v or "").strip()
+        if not text:
+            return None
+        try:
+            numeric = Decimal(text)
+            if numeric == numeric.to_integral_value():
+                return str(int(numeric))
+        except (InvalidOperation, ValueError):
+            pass
+        digits = "".join(ch for ch in text if ch.isdigit())
+        return digits or text
+
     row = await _get_or_create(session)
     row.clickup_crm_settings = {
-        "team_id": (body.team_id or "").strip() or None,
-        "space_id": (body.space_id or "").strip() or None,
-        "deals_list_id": (body.deals_list_id or "").strip() or None,
+        "team_id": _normalize_clickup_id(body.team_id),
+        "space_id": _normalize_clickup_id(body.space_id),
+        "deals_list_id": _normalize_clickup_id(body.deals_list_id),
     }
     session.add(row)
     await session.commit()
