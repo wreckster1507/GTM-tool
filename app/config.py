@@ -51,16 +51,15 @@ class Settings(BaseSettings):
     FIREFLIES_API_KEY: str = ""
     NEWS_API_KEY: str = ""  # No longer required — news client uses Google News RSS
 
-    # Azure OpenAI
-    AZURE_OPENAI_API_KEY: str = ""
-    AZURE_OPENAI_ENDPOINT: str = ""
-    AZURE_OPENAI_DEPLOYMENT: str = "gpt-4o-mini"
-    AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
-
-    # Anthropic Claude (demo HTML generation)
+    # Anthropic Claude
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_API_KEY: str = ""  # alias — some .env files use this name
-    ANTHROPIC_MODEL: str = "claude-opus-4-6"
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+
+    # CRM AI routing by complexity
+    CLAUDE_MODEL_SIMPLE: str = "claude-haiku-4-5-20251001"
+    CLAUDE_MODEL_STANDARD: str = "claude-sonnet-4-20250514"
+    CLAUDE_MODEL_COMPLEX: str = "claude-opus-4-6"
 
     # Demo generation tuning
     DEMO_MODEL: str = "claude-sonnet-4-20250514"  # Sonnet 4 — best availability + quality for code gen

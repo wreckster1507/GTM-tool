@@ -794,7 +794,7 @@ export default function SettingsPage() {
                   <textarea
                     value={outreachContent?.general_prompt ?? ""}
                     onChange={(event) => updateOutreachField("general_prompt", event.target.value)}
-                    disabled={!isAdmin || !outreachContent}
+                    disabled={!outreachContent}
                     rows={5}
                     placeholder="Tell Beacon the shared writing rules, tone, and constraints to follow across all emails."
                     style={{ width: "100%", resize: "vertical", minHeight: 120 }}
@@ -811,7 +811,7 @@ export default function SettingsPage() {
                   <textarea
                     value={outreachContent?.linkedin_prompt ?? ""}
                     onChange={(event) => updateOutreachField("linkedin_prompt", event.target.value)}
-                    disabled={!isAdmin || !outreachContent}
+                    disabled={!outreachContent}
                     rows={3}
                     placeholder="Guide how Beacon should write LinkedIn connection notes."
                     style={{ width: "100%", resize: "vertical", minHeight: 90 }}
@@ -827,12 +827,10 @@ export default function SettingsPage() {
                       Each touch has a goal, optional subject hint, writing cue, and reference template. Beacon will adapt these to the actual contact instead of copying them verbatim.
                     </p>
                   </div>
-                  {isAdmin && (
-                    <button className="crm-button soft" type="button" onClick={handleAddTemplate} disabled={!outreachContent || outreachContent.step_templates.length >= 10}>
-                      <Plus size={15} />
-                      Add step template
-                    </button>
-                  )}
+                  <button className="crm-button soft" type="button" onClick={handleAddTemplate} disabled={!outreachContent || outreachContent.step_templates.length >= 10}>
+                    <Plus size={15} />
+                    Add step template
+                  </button>
                 </div>
 
                 {extraTemplateCount > 0 && (
@@ -858,12 +856,10 @@ export default function SettingsPage() {
                             </span>
                           )}
                         </div>
-                        {isAdmin && (
-                          <button className="crm-button soft" type="button" onClick={() => handleRemoveTemplate(index)} disabled={(outreachContent?.step_templates.length ?? 0) <= 1}>
-                            <Trash2 size={15} />
-                            Remove
-                          </button>
-                        )}
+                        <button className="crm-button soft" type="button" onClick={() => handleRemoveTemplate(index)} disabled={(outreachContent?.step_templates.length ?? 0) <= 1}>
+                          <Trash2 size={15} />
+                          Remove
+                        </button>
                       </div>
 
                       <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.55fr) minmax(0, 1fr)", gap: 14 }}>
@@ -874,7 +870,7 @@ export default function SettingsPage() {
                           <input
                             value={template.label}
                             onChange={(event) => updateTemplate(index, "label", event.target.value)}
-                            disabled={!isAdmin}
+                            disabled={!outreachContent}
                             placeholder="Initial email"
                             style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
                           />
@@ -886,7 +882,7 @@ export default function SettingsPage() {
                           <input
                             value={template.goal}
                             onChange={(event) => updateTemplate(index, "goal", event.target.value)}
-                            disabled={!isAdmin}
+                            disabled={!outreachContent}
                             placeholder="What should this touch accomplish?"
                             style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
                           />
@@ -901,7 +897,7 @@ export default function SettingsPage() {
                           <input
                             value={template.subject_hint ?? ""}
                             onChange={(event) => updateTemplate(index, "subject_hint", event.target.value)}
-                            disabled={!isAdmin}
+                            disabled={!outreachContent}
                             placeholder="Quick question about {{company_name}}"
                             style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
                           />
@@ -913,7 +909,7 @@ export default function SettingsPage() {
                           <input
                             value={template.prompt_hint ?? ""}
                             onChange={(event) => updateTemplate(index, "prompt_hint", event.target.value)}
-                            disabled={!isAdmin}
+                            disabled={!outreachContent}
                             placeholder="Tell Beacon how this touch should feel."
                             style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
                           />
@@ -927,7 +923,7 @@ export default function SettingsPage() {
                         <textarea
                           value={template.body_template ?? ""}
                           onChange={(event) => updateTemplate(index, "body_template", event.target.value)}
-                          disabled={!isAdmin}
+                          disabled={!outreachContent}
                           rows={6}
                           placeholder="Use placeholders like {{first_name}} and {{company_name}} if you want to give Beacon a reusable pattern."
                           style={{ width: "100%", resize: "vertical", minHeight: 150 }}
@@ -940,21 +936,15 @@ export default function SettingsPage() {
                   ))}
                 </div>
 
-                {isAdmin ? (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <p className="crm-muted" style={{ fontSize: 13 }}>
-                      These settings apply to new outreach generation and regeneration. Existing launched sequences keep their current copy.
-                    </p>
-                    <button className="crm-button primary" type="button" onClick={handleSaveOutreach} disabled={savingOutreach || !outreachContent}>
-                      {savingOutreach ? <RefreshCw size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                      Save outreach settings
-                    </button>
-                  </div>
-                ) : (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <p className="crm-muted" style={{ fontSize: 13 }}>
-                    Only admins can change the shared outreach playbook. Everyone can review it here to understand how Beacon is generating outreach.
+                    These settings apply to new outreach generation and regeneration. Existing launched sequences keep their current copy.
                   </p>
-                )}
+                  <button className="crm-button primary" type="button" onClick={handleSaveOutreach} disabled={savingOutreach || !outreachContent}>
+                    {savingOutreach ? <RefreshCw size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                    Save outreach settings
+                  </button>
+                </div>
               </div>
             </div>
           </>

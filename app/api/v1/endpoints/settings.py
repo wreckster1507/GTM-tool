@@ -401,7 +401,7 @@ async def get_outreach_settings(session: DBSession, _user: CurrentUser):
 
 
 @router.patch("/outreach", response_model=OutreachSettingsRead)
-async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSession, _admin: AdminUser):
+async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSession, _user: CurrentUser):
     """
     Update global outreach step delays.
     Accepts a list of integers — one per step, in days from sequence start.
@@ -432,7 +432,7 @@ async def get_outreach_content_settings(session: DBSession, _user: CurrentUser):
 async def update_outreach_content_settings(
     body: OutreachContentSettingsUpdate,
     session: DBSession,
-    _admin: AdminUser,
+    _user: CurrentUser,
 ):
     if len(body.step_templates) < 1 or len(body.step_templates) > 10:
         raise HTTPException(status_code=422, detail="step_templates must have 1–10 entries")
