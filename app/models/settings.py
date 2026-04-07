@@ -151,6 +151,32 @@ class WorkspaceSettings(SQLModel, table=True):
             server_default='{"enabled":true,"send_hours_before":12,"auto_generate_if_missing":true}',
         ),
     )
+    prospect_stage_settings: list[dict] = Field(
+        default=[
+            {"id": "outreach", "label": "Outreach", "group": "active", "color": "#2563eb"},
+            {"id": "in_progress", "label": "In Progress", "group": "active", "color": "#7c3aed"},
+            {"id": "meeting_booked", "label": "Meeting Booked", "group": "active", "color": "#0ea5e9"},
+            {"id": "negative_response", "label": "Negative Response", "group": "closed", "color": "#ef4444"},
+            {"id": "no_response", "label": "No Response", "group": "closed", "color": "#94a3b8"},
+            {"id": "not_a_fit", "label": "Not a Fit", "group": "closed", "color": "#9ca3af"},
+        ],
+        sa_column=Column(JSON, nullable=True),
+    )
+    sync_schedule_settings: dict = Field(
+        default={
+            "tldv_sync_hour": 3,
+            "tldv_sync_enabled": True,
+            "tldv_page_size": 20,
+            "tldv_max_pages": 3,
+            "email_sync_interval_seconds": 180,
+            "deal_health_hour": 2,
+        },
+        sa_column=Column(
+            JSON,
+            nullable=False,
+            server_default='{"tldv_sync_hour":3,"tldv_sync_enabled":true,"tldv_page_size":20,"tldv_max_pages":3,"email_sync_interval_seconds":180,"deal_health_hour":2}',
+        ),
+    )
     clickup_crm_settings: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     prospect_funnel_config: dict = Field(
         default={"tofu": ["outreach"], "mofu": ["in_progress"], "bofu": ["meeting_booked"]},
@@ -234,6 +260,14 @@ class DealStageSettingsUpdate(SQLModel):
     stages: list[DealStageSetting]
 
 
+class ProspectStageSettingsRead(SQLModel):
+    stages: list[DealStageSetting]
+
+
+class ProspectStageSettingsUpdate(SQLModel):
+    stages: list[DealStageSetting]
+
+
 class PipelineSummarySettingsRead(SQLModel):
     deal: StageBucketSettings
     prospect: StageBucketSettings
@@ -283,6 +317,24 @@ class ClickUpCrmSettingsUpdate(SQLModel):
     team_id: Optional[str] = None
     space_id: Optional[str] = None
     deals_list_id: Optional[str] = None
+
+
+class SyncScheduleSettingsRead(SQLModel):
+    tldv_sync_hour: int
+    tldv_sync_enabled: bool
+    tldv_page_size: int
+    tldv_max_pages: int
+    email_sync_interval_seconds: int
+    deal_health_hour: int
+
+
+class SyncScheduleSettingsUpdate(SQLModel):
+    tldv_sync_hour: Optional[int] = None
+    tldv_sync_enabled: Optional[bool] = None
+    tldv_page_size: Optional[int] = None
+    tldv_max_pages: Optional[int] = None
+    email_sync_interval_seconds: Optional[int] = None
+    deal_health_hour: Optional[int] = None
 
 
 class GmailSettingsRead(SQLModel):

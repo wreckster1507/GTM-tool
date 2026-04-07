@@ -82,10 +82,15 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   // Tag input
   const [tagInput, setTagInput] = useState("");
 
+  const [companyContacts, setCompanyContacts] = useState<Contact[]>([]);
+
   useEffect(() => {
     dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
     dealsApi.getContacts(deal.id).then(setDealContacts).catch(() => {});
-  }, [deal.id]);
+    if (deal.company_id) {
+      contactsApi.list(0, 50, deal.company_id).then(setCompanyContacts).catch(() => {});
+    }
+  }, [deal.id, deal.company_id]);
 
   useEffect(() => {
     settingsApi.getGmailSync().then((data) => {
@@ -772,6 +777,53 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 })}
               </div>
             )}
+
+            {/* Company prospects not yet linked to this deal */}
+            {(() => {
+              const linkedIds = new Set(dealContacts.map((dc) => dc.contact_id));
+              const unlinked = companyContacts.filter((c) => !linkedIds.has(c.id));
+              if (unlinked.length === 0) return null;
+              return (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0", marginBottom: 8 }}>
+                    Company Prospects ({unlinked.length})
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {unlinked.map((c) => {
+                      const name = `${c.first_name ?? ""} ${c.last_name ?? ""}`.trim();
+                      return (
+                        <div key={c.id} style={{
+                          display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+                          borderRadius: 12, border: "1px dashed #dbe6f2", background: "#fafcfe",
+                        }}>
+                          <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(name)}`}
+                            style={{ width: 24, height: 24, flexShrink: 0 }}>
+                            {getInitials(name || "?")}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{name}</div>
+                            <div style={{ fontSize: 10, color: "#94a3b8" }}>{c.title ?? c.email}</div>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              const dc = await dealsApi.addContact(deal.id, c.id, c.persona ?? undefined);
+                              setDealContacts((prev) => [dc, ...prev]);
+                            }}
+                            style={{
+                              fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
+                              background: "#eef5ff", color: "#175089", border: "1px solid #c8daf0",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Link
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
             </>

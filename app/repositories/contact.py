@@ -95,6 +95,14 @@ class ContactRepository(BaseRepository[Contact]):
             base_stmt = base_stmt.where(email_filter)
             count_stmt = count_stmt.where(email_filter)
 
+        # Exclude ClickUp placeholder contacts (company-name records, not real people)
+        placeholder_filter = or_(
+            Contact.enrichment_data.is_(None),
+            Contact.enrichment_data["source"].as_string() != "clickup_import_placeholder",
+        )
+        base_stmt = base_stmt.where(placeholder_filter)
+        count_stmt = count_stmt.where(placeholder_filter)
+
         total = (await self.session.execute(count_stmt)).scalar_one()
 
         rows = (
@@ -114,6 +122,14 @@ class ContactRepository(BaseRepository[Contact]):
 
         await apply_contact_tracking(self.session, result)
         return result, total
+
+    async def delete_all(self) -> None:
+        """Delete all contacts and their dependent records. Admin only."""
+        from sqlalchemy import delete as sa_delete
+        await self.session.execute(sa_delete(OutreachSequence))
+        await self.session.execute(sa_delete(Activity).where(Activity.contact_id.isnot(None)))
+        await self.session.execute(sa_delete(Contact))
+        await self.session.commit()
 
     async def delete_with_cascade(self, contact_id: UUID) -> None:
         """Delete contact + dependent outreach_sequences and activities."""

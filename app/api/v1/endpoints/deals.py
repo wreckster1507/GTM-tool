@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError, ValidationError
@@ -253,19 +253,47 @@ async def remove_deal_contact(deal_id: UUID, contact_id: UUID, session: DBSessio
 
 @router.get("/{deal_id}/activities", response_model=list[ActivityRead])
 async def list_deal_activities(deal_id: UUID, session: DBSession):
+    from app.models.meeting import Meeting
+
     repo = DealRepository(session)
-    await repo.get_or_raise(deal_id)
+    deal = await repo.get_or_raise(deal_id)
+
+    # Include activities directly on the deal, plus TLDV meeting activities
+    # linked via the deal's company (where deal_id wasn't set on the activity)
+    filters = [Activity.deal_id == deal_id]
+    if deal.company_id:
+        tldv_ext_ids = (
+            select(("tldv:meeting:" + Meeting.external_source_id))
+            .where(
+                Meeting.company_id == deal.company_id,
+                Meeting.external_source_id.isnot(None),
+            )
+        )
+        tldv_transcript_ids = (
+            select(("tldv:transcript:" + Meeting.external_source_id))
+            .where(
+                Meeting.company_id == deal.company_id,
+                Meeting.external_source_id.isnot(None),
+            )
+        )
+        filters.append(Activity.external_source_id.in_(tldv_ext_ids))
+        filters.append(Activity.external_source_id.in_(tldv_transcript_ids))
 
     stmt = (
         select(Activity, User.name.label("user_name"))
         .outerjoin(User, Activity.created_by_id == User.id)
-        .where(Activity.deal_id == deal_id)
+        .where(or_(*filters))
         .order_by(Activity.created_at.desc())
     )
     rows = (await session.execute(stmt)).all()
 
+    # Deduplicate in case an activity has both deal_id and external_source_id match
+    seen: set[UUID] = set()
     result = []
     for act, user_name in rows:
+        if act.id in seen:
+            continue
+        seen.add(act.id)
         read = ActivityRead.model_validate(act)
         read.user_name = user_name
         result.append(read)

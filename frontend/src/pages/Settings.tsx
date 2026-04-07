@@ -12,9 +12,11 @@ import {
   RefreshCw,
   Shield,
   Sparkles,
+  Target,
   Trash2,
   Unplug,
   Users,
+  Clock,
   Wand2,
 } from "lucide-react";
 import { settingsApi } from "../lib/api";
@@ -22,14 +24,16 @@ import { useAuth } from "../lib/AuthContext";
 import type {
   ClickUpCrmSettings,
   DealStageSettings,
+  ProspectStageSettings,
   GmailSyncSettings,
   OutreachContentSettings,
   OutreachTemplateStep,
   PreMeetingAutomationSettings,
   RolePermissionsSettings,
+  SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "sync-schedule";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -69,9 +73,14 @@ export default function SettingsPage() {
   const [inbox, setInbox] = useState("zippy@beacon.li");
   const [outreachContent, setOutreachContent] = useState<OutreachContentSettings | null>(null);
   const [dealStages, setDealStages] = useState<DealStageSettings | null>(null);
+  const [prospectStages, setProspectStages] = useState<ProspectStageSettings | null>(null);
+  const [savingProspectStages, setSavingProspectStages] = useState(false);
   const [clickupCrmSettings, setClickupCrmSettings] = useState<ClickUpCrmSettings | null>(null);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [preMeetingSettings, setPreMeetingSettings] = useState<PreMeetingAutomationSettings | null>(null);
+  const [syncSchedule, setSyncSchedule] = useState<SyncScheduleSettings | null>(null);
+  const [savingSyncSchedule, setSavingSyncSchedule] = useState(false);
+  const [triggeringTldv, setTriggeringTldv] = useState(false);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingInbox, setSavingInbox] = useState(false);
@@ -101,23 +110,27 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, outreachContentData, outreachTiming, dealStageData, clickupCrmData, rolePermissionData, preMeetingData] = await Promise.all([
+      const [gmailData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData] = await Promise.all([
         settingsApi.getGmailSync(),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
+        settingsApi.getProspectStages().catch(() => null),
         settingsApi.getClickUpCrmSettings(),
         settingsApi.getRolePermissions(),
         settingsApi.getPreMeetingAutomation(),
+        settingsApi.getSyncSchedule().catch(() => null),
       ]);
       setGmail(gmailData);
       setInbox(gmailData.inbox || "zippy@beacon.li");
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
       setDealStages(dealStageData);
+      setProspectStages(prospectStageData);
       setClickupCrmSettings(clickupCrmData);
       setRolePermissions(rolePermissionData);
       setPreMeetingSettings(preMeetingData);
+      if (syncScheduleData) setSyncSchedule(syncScheduleData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -351,6 +364,79 @@ export default function SettingsPage() {
     }
   };
 
+  /* ── Prospect stage CRUD (mirrors deal stage handlers above) ── */
+  const updateProspectStage = (index: number, field: "label" | "group" | "color", value: string) => {
+    setProspectStages((current) => {
+      if (!current) return current;
+      const nextStages = current.stages.map((stage, i) =>
+        i === index ? { ...stage, [field]: value } : stage
+      );
+      return { stages: nextStages };
+    });
+  };
+
+  const moveProspectStage = (index: number, direction: -1 | 1) => {
+    setProspectStages((current) => {
+      if (!current) return current;
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.stages.length) return current;
+      const nextStages = [...current.stages];
+      const [item] = nextStages.splice(index, 1);
+      nextStages.splice(nextIndex, 0, item);
+      return { stages: nextStages };
+    });
+  };
+
+  const addProspectStage = () => {
+    setProspectStages((current) => {
+      const existing = current?.stages ?? [];
+      const baseLabel = `New Stage ${existing.length + 1}`;
+      let nextId = slugifyStageId(baseLabel);
+      let suffix = 2;
+      while (existing.some((stage) => stage.id === nextId)) {
+        nextId = `${slugifyStageId(baseLabel)}_${suffix}`;
+        suffix += 1;
+      }
+      return {
+        stages: [...existing, { id: nextId, label: baseLabel, group: "active", color: "#64748b" }],
+      };
+    });
+  };
+
+  const removeProspectStage = (index: number) => {
+    setProspectStages((current) => {
+      if (!current || current.stages.length <= 1) return current;
+      return { stages: current.stages.filter((_, i) => i !== index) };
+    });
+  };
+
+  const handleSaveProspectStages = async () => {
+    if (!prospectStages) return;
+    setSavingProspectStages(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const normalized = {
+        stages: prospectStages.stages.map((stage, index) => {
+          const label = stage.label.trim() || `Stage ${index + 1}`;
+          return {
+            id: stage.id || slugifyStageId(label),
+            label,
+            group: (stage.group === "closed" ? "closed" : "active") as "closed" | "active",
+            color: stage.color || "#64748b",
+          };
+        }),
+      };
+      const saved = await settingsApi.updateProspectStages(normalized);
+      setProspectStages(saved);
+      setMessage("Prospect lanes saved. The prospect board now follows this shared lane configuration.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save prospect stages");
+    } finally {
+      setSavingProspectStages(false);
+    }
+  };
+
   const updateClickUpCrmField = (field: keyof ClickUpCrmSettings, value: string) => {
     setClickupCrmSettings((current) => {
       if (!current) return current;
@@ -455,6 +541,41 @@ export default function SettingsPage() {
     }
   };
 
+  const updateSyncField = (field: keyof SyncScheduleSettings, value: number | boolean) => {
+    if (!syncSchedule) return;
+    setSyncSchedule({ ...syncSchedule, [field]: value });
+  };
+
+  const handleSaveSyncSchedule = async () => {
+    if (!syncSchedule) return;
+    setSavingSyncSchedule(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await settingsApi.updateSyncSchedule(syncSchedule);
+      setSyncSchedule(updated);
+      setMessage("Sync schedule saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save sync schedule");
+    } finally {
+      setSavingSyncSchedule(false);
+    }
+  };
+
+  const handleTriggerTldvSync = async () => {
+    setTriggeringTldv(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await settingsApi.triggerTldvSync();
+      setMessage("TLDV sync triggered — check worker logs for progress");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to trigger TLDV sync");
+    } finally {
+      setTriggeringTldv(false);
+    }
+  };
+
   const tabButton = (id: SettingsTab, label: string, icon: ReactNode) => (
     <button
       key={id}
@@ -486,6 +607,7 @@ export default function SettingsPage() {
               {tabButton("pipeline", "Pipeline", <GripVertical size={15} />)}
               {tabButton("permissions", "Permissions", <Users size={15} />)}
               {tabButton("pre-meeting", "Pre-Meeting", <Shield size={15} />)}
+              {tabButton("sync-schedule", "Sync Schedule", <Clock size={15} />)}
             </div>
           </aside>
 
@@ -915,6 +1037,139 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        ) : activeTab === "sync-schedule" ? (
+          <div style={{ display: "grid", gap: 18 }}>
+            <div>
+              <div className="crm-chip" style={{ marginBottom: 12, background: "#fef3e2", color: "#9a5c10", borderColor: "#fcd9a8" }}>
+                <Clock size={14} />
+                Sync Schedule
+              </div>
+              <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Background sync configuration</h3>
+              <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                Control how often Beacon runs background sync jobs — tl;dv meeting import, email ingestion, and deal health recalculation.
+              </p>
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              {/* TLDV section */}
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#182042" }}>tl;dv Meeting Sync</div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
+                <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable tl;dv sync</div>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(syncSchedule?.tldv_sync_enabled)}
+                      onChange={(e) => updateSyncField("tldv_sync_enabled", e.target.checked)}
+                      disabled={!isAdmin || !syncSchedule}
+                    />
+                  </div>
+                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                    When disabled, the daily tl;dv sync task will skip execution.
+                  </div>
+                </label>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Sync hour (UTC)</div>
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={syncSchedule?.tldv_sync_hour ?? 3}
+                    onChange={(e) => updateSyncField("tldv_sync_hour", Number(e.target.value))}
+                    disabled={!isAdmin || !syncSchedule}
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                  <div className="crm-muted" style={{ fontSize: 13 }}>Hour of the day (0–23 UTC) when sync runs. Default: <strong>3</strong></div>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Page size</div>
+                  <input
+                    type="number"
+                    min={5}
+                    max={100}
+                    value={syncSchedule?.tldv_page_size ?? 20}
+                    onChange={(e) => updateSyncField("tldv_page_size", Number(e.target.value))}
+                    disabled={!isAdmin || !syncSchedule}
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                  <div className="crm-muted" style={{ fontSize: 13 }}>Meetings per API page (5–100). Default: <strong>20</strong></div>
+                </div>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Max pages</div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={syncSchedule?.tldv_max_pages ?? 3}
+                    onChange={(e) => updateSyncField("tldv_max_pages", Number(e.target.value))}
+                    disabled={!isAdmin || !syncSchedule}
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                  <div className="crm-muted" style={{ fontSize: 13 }}>Max pages to fetch per run (1–20). Default: <strong>3</strong></div>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <hr style={{ border: "none", borderTop: "1px solid #e7eaf5", margin: "4px 0" }} />
+
+              {/* Other sync settings */}
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#182042" }}>Other Sync Jobs</div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Email sync interval (seconds)</div>
+                  <input
+                    type="number"
+                    min={60}
+                    max={3600}
+                    value={syncSchedule?.email_sync_interval_seconds ?? 180}
+                    onChange={(e) => updateSyncField("email_sync_interval_seconds", Number(e.target.value))}
+                    disabled={!isAdmin || !syncSchedule}
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                  <div className="crm-muted" style={{ fontSize: 13 }}>How often Beacon checks for new emails (60–3600s). Default: <strong>180</strong></div>
+                </div>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Deal health hour (UTC)</div>
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={syncSchedule?.deal_health_hour ?? 2}
+                    onChange={(e) => updateSyncField("deal_health_hour", Number(e.target.value))}
+                    disabled={!isAdmin || !syncSchedule}
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                  <div className="crm-muted" style={{ fontSize: 13 }}>Hour of the day (0–23 UTC) for deal health recalc. Default: <strong>2</strong></div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <button className="crm-button soft" type="button" onClick={handleTriggerTldvSync} disabled={triggeringTldv}>
+                    {triggeringTldv ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                    Sync tl;dv now
+                  </button>
+                  <button className="crm-button primary" type="button" onClick={handleSaveSyncSchedule} disabled={savingSyncSchedule || !syncSchedule}>
+                    {savingSyncSchedule ? <RefreshCw size={15} className="animate-spin" /> : <Clock size={15} />}
+                    Save sync schedule
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 13 }}>
+                  Only admins can change sync schedule settings.
+                </p>
+              )}
+            </div>
+          </div>
         ) : activeTab === "pre-meeting" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
@@ -1095,6 +1350,94 @@ export default function SettingsPage() {
               ) : (
                 <p className="crm-muted" style={{ fontSize: 13 }}>
                   Only admins can update the shared deal lanes. Everyone else sees the same board layout in Pipeline.
+                </p>
+              )}
+            </div>
+
+            {/* ── Prospect lanes editor ── */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", marginTop: 28 }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f0fdf4", color: "#15803d", borderColor: "#bbf7d0" }}>
+                  <Target size={14} />
+                  Prospecting
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Prospect lanes</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Control the shared prospect board lanes here. The Pipeline prospect tab will use this exact layout for sorting contacts into stages.
+                </p>
+              </div>
+              {isAdmin && (
+                <button className="crm-button soft" type="button" onClick={addProspectStage} disabled={!prospectStages}>
+                  <Plus size={15} />
+                  Add lane
+                </button>
+              )}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+              {(prospectStages?.stages ?? []).map((stage, index) => (
+                <div key={stage.id} style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: stage.color }} />
+                      <strong style={{ color: "#182042" }}>Lane {index + 1}</strong>
+                      <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>{stage.id}</span>
+                    </div>
+                    {isAdmin && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button className="crm-button soft" type="button" onClick={() => moveProspectStage(index, -1)} disabled={index === 0}><ArrowUp size={15} />Up</button>
+                        <button className="crm-button soft" type="button" onClick={() => moveProspectStage(index, 1)} disabled={index === (prospectStages?.stages.length ?? 0) - 1}><ArrowDown size={15} />Down</button>
+                        <button className="crm-button soft" type="button" onClick={() => removeProspectStage(index)} disabled={(prospectStages?.stages.length ?? 0) <= 1}><Trash2 size={15} />Delete</button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 180px 160px", gap: 14 }}>
+                    <div>
+                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Lane name</div>
+                      <input
+                        value={stage.label}
+                        onChange={(event) => updateProspectStage(index, "label", event.target.value)}
+                        disabled={!isAdmin}
+                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Group</div>
+                      <select
+                        value={stage.group}
+                        onChange={(event) => updateProspectStage(index, "group", event.target.value)}
+                        disabled={!isAdmin}
+                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                      >
+                        <option value="active">Active</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Color</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <input type="color" value={stage.color} onChange={(event) => updateProspectStage(index, "color", event.target.value)} disabled={!isAdmin} style={{ width: 52, height: 44, border: "1px solid #d8e2ef", borderRadius: 10, background: "#fff" }} />
+                        <span className="crm-chip" style={{ background: "#f8fafc", color: "#55657a", borderColor: "#e7eaf5" }}><Palette size={13} />{stage.color}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                    These lanes define the shared prospect board order and names across Beacon.
+                  </p>
+                  <button className="crm-button primary" type="button" onClick={handleSaveProspectStages} disabled={savingProspectStages || !prospectStages}>
+                    {savingProspectStages ? <RefreshCw size={15} className="animate-spin" /> : <Shield size={15} />}
+                    Save prospect lanes
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 13 }}>
+                  Only admins can update the shared prospect lanes. Everyone else sees the same board layout in Pipeline.
                 </p>
               )}
             </div>

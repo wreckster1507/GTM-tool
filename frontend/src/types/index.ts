@@ -472,6 +472,10 @@ export interface DealStageSettings {
   stages: DealStageSetting[];
 }
 
+export interface ProspectStageSettings {
+  stages: DealStageSetting[];
+}
+
 export interface OutreachTemplateStep {
   step_number: number;
   label: string;
@@ -514,6 +518,15 @@ export interface PreMeetingAutomationSettings {
   enabled: boolean;
   send_hours_before: number;
   auto_generate_if_missing: boolean;
+}
+
+export interface SyncScheduleSettings {
+  tldv_sync_hour: number;
+  tldv_sync_enabled: boolean;
+  tldv_page_size: number;
+  tldv_max_pages: number;
+  email_sync_interval_seconds: number;
+  deal_health_hour: number;
 }
 
 export interface ClickUpCrmSettings {

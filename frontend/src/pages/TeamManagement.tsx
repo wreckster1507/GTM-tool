@@ -83,6 +83,38 @@ export default function TeamManagement() {
     }
   };
 
+  const [seeding, setSeeding] = useState(false);
+
+  const BEACON_TEAM = [
+    { email: "yash@beacon.li", name: "Yashveer Singh", role: "admin" },
+    { email: "annie@beacon.li", name: "Annie Gupta", role: "ae" },
+    { email: "bhavya@beacon.li", name: "Bhavya Mukkera", role: "ae" },
+    { email: "dyuthith@beacon.li", name: "Dyuthith Din", role: "sdr" },
+    { email: "mahesh@beacon.li", name: "Mahesh Pothula", role: "sdr" },
+    { email: "manognya@beacon.li", name: "Manognya Rangineni", role: "sdr" },
+    { email: "pravalika@beacon.li", name: "Pravalika Jamalpur", role: "sdr" },
+    { email: "pulkit@beacon.li", name: "Pulkit Anand", role: "ae" },
+    { email: "rakesh@beacon.li", name: "Rakesh Vaddadi", role: "sdr" },
+    { email: "saher@beacon.li", name: "Saher Ghattas", role: "ae" },
+    { email: "sandeep@beacon.li", name: "Sandeep Sinha", role: "ae" },
+    { email: "sarthak@beacon.li", name: "Sarthak Aitha", role: "admin" },
+    { email: "shahruk@beacon.li", name: "Shahruk", role: "sdr" },
+  ];
+
+  const handleSeedTeam = async () => {
+    setSeeding(true);
+    try {
+      const result = await authApi.seedUsers(BEACON_TEAM);
+      alert(`Created ${result.created} new team members (${result.skipped} already existed)`);
+      const loader = canManageTeam ? authApi.listUsers() : authApi.listAllUsers();
+      setUsers(await loader);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to seed team");
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const admins = users.filter((u) => u.role === "admin");
   const aes = users.filter((u) => u.role === "ae");
   const sdrs = users.filter((u) => u.role === "sdr");
@@ -100,6 +132,17 @@ export default function TeamManagement() {
                 ? "You can manage teammate roles and access because your role has been granted team management permissions."
               : "View your team members."}
           </p>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={handleSeedTeam}
+              disabled={seeding}
+              style={{ marginTop: 10, border: "1px solid #c7d5e5", background: "#fff", color: "#1d2b3c", borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}
+            >
+              <UserPlus size={14} />
+              {seeding ? "Seeding..." : "Seed Beacon Team (13 members)"}
+            </button>
+          )}
         </div>
 
         {/* Stats */}

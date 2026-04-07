@@ -272,10 +272,19 @@ def _map_user(assignee: dict[str, Any], users_by_email: dict[str, User], users_b
     name = _normalize_text(assignee.get("username"))
     if name and name in users_by_name:
         return users_by_name[name]
+    # Fuzzy match: ClickUp username's first name → beacon user's first name or email prefix
+    if name:
+        first = name.split()[0] if name.split() else name
+        for user_email, user in users_by_email.items():
+            prefix = user_email.split("@")[0]
+            user_first = _normalize_text(user.name).split()[0] if user.name else ""
+            if first and (first == prefix or first == user_first):
+                return user
     return None
 
 
-def _resolve_primary_user(
+async def _resolve_primary_user(
+    session: AsyncSession,
     assignees: list[dict[str, Any]],
     users_by_email: dict[str, User],
     users_by_name: dict[str, User],
@@ -285,10 +294,33 @@ def _resolve_primary_user(
         user = _map_user(assignee, users_by_email, users_by_name)
         if user:
             return user
+    # Auto-create user for the first assignee with an email
     for assignee in assignees or []:
-        identifier = assignee.get("email") or assignee.get("username")
-        if identifier:
-            stats.unmatched_assignees.add(str(identifier))
+        email = _normalize_text(assignee.get("email"))
+        username = assignee.get("username") or assignee.get("email") or ""
+        if not email:
+            continue
+        # Check if user exists (may have been created in this batch)
+        existing = (await session.execute(
+            select(User).where(func.lower(User.email) == email).limit(1)
+        )).scalar_one_or_none()
+        if existing:
+            users_by_email[email] = existing
+            return existing
+        # Create new user with placeholder google_id
+        new_user = User(
+            email=email,
+            name=username.strip() or email.split("@")[0],
+            google_id=f"clickup_import_{email}",
+            role="ae",
+            is_active=True,
+        )
+        session.add(new_user)
+        await session.flush()
+        users_by_email[email] = new_user
+        users_by_name[_normalize_text(new_user.name)] = new_user
+        logger.info("Auto-created user %s (%s) from ClickUp assignee", new_user.name, email)
+        return new_user
     return None
 
 
@@ -360,7 +392,7 @@ async def _upsert_deal(
     ).scalar_one_or_none()
 
     assignees = task.get("assignees") or []
-    primary_user = _resolve_primary_user(assignees, users_by_email, users_by_name, stats)
+    primary_user = await _resolve_primary_user(session, assignees, users_by_email, users_by_name, stats)
 
     payload: dict[str, Any] = {
         "name": str(task.get("name") or company.name),
@@ -412,7 +444,7 @@ async def _upsert_placeholder_contact(
     stats: ClickUpImportStats,
 ) -> Contact:
     assignees = task.get("assignees") or []
-    primary_user = _resolve_primary_user(assignees, users_by_email, users_by_name, stats)
+    primary_user = await _resolve_primary_user(session, assignees, users_by_email, users_by_name, stats)
     task_id = str(task["id"])
 
     existing_contacts = (
@@ -466,6 +498,14 @@ async def _upsert_placeholder_contact(
         for key, value in payload.items():
             setattr(existing, key, value)
         session.add(existing)
+        await session.flush()
+        # Ensure deal-contact link exists
+        existing_link = (await session.execute(
+            select(DealContact).where(DealContact.deal_id == deal.id, DealContact.contact_id == existing.id)
+        )).scalar_one_or_none()
+        if not existing_link:
+            session.add(DealContact(deal_id=deal.id, contact_id=existing.id, role="imported"))
+            await session.flush()
         stats.contacts_updated += 1
         return existing
 
@@ -473,6 +513,14 @@ async def _upsert_placeholder_contact(
     session.add(contact)
     await session.flush()
     stats.contacts_created += 1
+
+    # Link contact to deal via DealContact junction
+    existing_link = (await session.execute(
+        select(DealContact).where(DealContact.deal_id == deal.id, DealContact.contact_id == contact.id)
+    )).scalar_one_or_none()
+    if not existing_link:
+        session.add(DealContact(deal_id=deal.id, contact_id=contact.id, role="imported"))
+        await session.flush()
     return contact
 
 

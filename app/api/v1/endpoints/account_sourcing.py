@@ -28,6 +28,7 @@ from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.models.angel import AngelInvestor, AngelMapping
 from app.models.company import Company, CompanyRead, CompanySourcingSummary, CompanyUpdate
 from app.models.contact import Contact, ContactRead, ContactUpdate
+from app.models.deal import Deal
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.user import User
 from app.repositories.company import CompanyRepository
@@ -563,14 +564,35 @@ async def _build_competitive_landscape(session, company: Company) -> list[dict[s
         if label:
             seed_names.append(label)
 
-    stmt = select(Company).where(Company.id != company.id)
+    # Try specific filters first, then broaden
+    base = select(Company).where(Company.id != company.id)
+    candidates = []
     if company.industry:
-        stmt = stmt.where(Company.industry == company.industry)
-    elif company.vertical:
-        stmt = stmt.where(Company.vertical == company.vertical)
-    candidates = (
-        await session.execute(stmt.order_by(Company.enriched_at.desc().nullslast(), Company.updated_at.desc()).limit(8))
-    ).scalars().all()
+        candidates = (
+            await session.execute(base.where(Company.industry == company.industry).order_by(Company.enriched_at.desc().nullslast(), Company.updated_at.desc()).limit(8))
+        ).scalars().all()
+    if not candidates and company.vertical:
+        candidates = (
+            await session.execute(base.where(Company.vertical == company.vertical).order_by(Company.enriched_at.desc().nullslast(), Company.updated_at.desc()).limit(8))
+        ).scalars().all()
+    # Last resort: companies with enrichment data (descriptions)
+    if not candidates:
+        candidates = (
+            await session.execute(
+                base.where(Company.description.isnot(None), Company.description != "")
+                .order_by(Company.enriched_at.desc().nullslast(), Company.updated_at.desc())
+                .limit(8)
+            )
+        ).scalars().all()
+    # Final: any companies with real domains
+    if not candidates:
+        candidates = (
+            await session.execute(
+                base.where(~Company.domain.endswith(".unknown"))
+                .order_by(Company.enriched_at.desc().nullslast(), Company.updated_at.desc())
+                .limit(8)
+            )
+        ).scalars().all()
 
     results: list[dict[str, str]] = []
     seen: set[str] = set()

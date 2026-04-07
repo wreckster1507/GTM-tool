@@ -13,7 +13,6 @@ import {
   Send,
   Sparkles,
   UserRound,
-  Users,
 } from "lucide-react";
 
 import { accountSourcingApi, activitiesApi, companiesApi, contactsApi, dealsApi } from "../lib/api";
@@ -333,6 +332,7 @@ export default function AccountSourcingContactDetail() {
   const [convertingDeal, setConvertingDeal] = useState(false);
   const [commsLog, setCommsLog] = useState<Activity[]>([]);
   const [showTasksModal, setShowTasksModal] = useState(false);
+  const [showEngagementTimeline, setShowEngagementTimeline] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -660,6 +660,14 @@ export default function AccountSourcingContactDetail() {
               {reEnriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               Re-enrich
             </button>
+            <button
+              type="button"
+              onClick={() => setShowEngagementTimeline((v) => !v)}
+              style={{ border: `1px solid ${showEngagementTimeline ? colors.primary : colors.border}`, background: showEngagementTimeline ? colors.primarySoft : "#fff", color: showEngagementTimeline ? colors.primary : colors.text, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+            >
+              <MessageSquare size={14} />
+              Engagement ({commsLog.length})
+            </button>
           </div>
           </div>
         </div>
@@ -771,7 +779,7 @@ export default function AccountSourcingContactDetail() {
               </div>
             </Section>
 
-            <Section title={`Engagement Timeline (${commsLog.length})`} icon={<MessageSquare size={15} color={colors.primary} />}>
+            {showEngagementTimeline && <Section title={`Engagement Timeline (${commsLog.length})`} icon={<MessageSquare size={15} color={colors.primary} />}>
               <div
                 style={{
                   borderRadius: 14,
@@ -840,7 +848,7 @@ export default function AccountSourcingContactDetail() {
                   })}
                 </div>
               )}
-            </Section>
+            </Section>}
 
             <Section title="Sales Playbook" icon={<Send size={15} color={colors.primary} />}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
@@ -866,15 +874,6 @@ export default function AccountSourcingContactDetail() {
                   empty="No priorities available yet."
                 />
               </div>
-              {planSteps.length === 0 ? (
-                <div style={{ color: colors.faint }}>No prospect sequence plan has been generated yet.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {planSteps.map((step, idx) => (
-                    <SequenceStepCard key={`step-${idx}`} index={idx} step={step} />
-                  ))}
-                </div>
-              )}
             </Section>
 
             <Section title="Uploaded Prospect Intelligence" icon={<Sparkles size={15} color={colors.primary} />}>
@@ -945,20 +944,6 @@ export default function AccountSourcingContactDetail() {
               <KV label="Persona" value={contact.persona_type || contact.persona} />
               <KV label="Enriched" value={formatDate(contact.enriched_at)} />
               <KV label="Updated" value={formatDate(contact.updated_at)} />
-            </Section>
-
-            <Section title="Warm Intro Path" icon={<Users size={15} color={colors.primary} />}>
-              <KV label="Strength" value={contact.warm_intro_strength ? `Strength ${contact.warm_intro_strength}` : Object.keys(displayWarmPath).length > 0 ? "Inherited from account" : undefined} />
-              <KV label="Connector" value={asText(displayWarmPath.name)} />
-              <KV label="Path" value={asText(displayWarmPath.connection_path)} />
-              <KV label="Why It Works" value={asText(displayWarmPath.why_it_works)} />
-              {companyWarmPaths.length > 1 ? (
-                <ListCard
-                  title="Additional Paths"
-                  items={companyWarmPaths.slice(1).map((item) => `${String(item.name || "Connector")}: ${String(item.connection_path || item.why_it_works || "")}`.trim())}
-                  empty="No additional paths."
-                />
-              ) : null}
             </Section>
 
             <Section title="Company Context" icon={<Building2 size={15} color={colors.primary} />}>

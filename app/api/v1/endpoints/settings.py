@@ -32,10 +32,14 @@ from app.models.settings import (
     PipelineSummarySettingsRead,
     PipelineSummarySettingsUpdate,
     PreMeetingAutomationSettingsRead,
+    ProspectStageSettingsRead,
+    ProspectStageSettingsUpdate,
     PreMeetingAutomationSettingsUpdate,
     RolePermissionsRead,
     RolePermissionsUpdate,
     StageBucketSettings,
+    SyncScheduleSettingsRead,
+    SyncScheduleSettingsUpdate,
     WorkspaceSettings,
 )
 from app.services.deal_stages import (
@@ -279,6 +283,54 @@ async def update_deal_stage_settings(body: DealStageSettingsUpdate, session: DBS
     return DealStageSettingsRead(stages=normalize_deal_stage_settings(row.deal_stage_settings))
 
 
+_DEFAULT_PROSPECT_STAGES = [
+    {"id": "outreach", "label": "Outreach", "group": "active", "color": "#2563eb"},
+    {"id": "in_progress", "label": "In Progress", "group": "active", "color": "#7c3aed"},
+    {"id": "meeting_booked", "label": "Meeting Booked", "group": "active", "color": "#0ea5e9"},
+    {"id": "negative_response", "label": "Negative Response", "group": "closed", "color": "#ef4444"},
+    {"id": "no_response", "label": "No Response", "group": "closed", "color": "#94a3b8"},
+    {"id": "not_a_fit", "label": "Not a Fit", "group": "closed", "color": "#9ca3af"},
+]
+
+
+def _normalize_prospect_stage_settings(raw: list[dict] | None) -> list[dict]:
+    if not raw:
+        return _DEFAULT_PROSPECT_STAGES
+    stages = []
+    for stage in raw:
+        if not isinstance(stage, dict) or not stage.get("id"):
+            continue
+        stages.append({
+            "id": stage["id"],
+            "label": stage.get("label") or stage["id"].replace("_", " ").title(),
+            "group": stage.get("group", "active") if stage.get("group") in ("active", "closed") else "active",
+            "color": stage.get("color") or "#94a3b8",
+        })
+    return stages or _DEFAULT_PROSPECT_STAGES
+
+
+@router.get("/prospect-stages", response_model=ProspectStageSettingsRead)
+async def get_prospect_stage_settings(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return ProspectStageSettingsRead(stages=_normalize_prospect_stage_settings(row.prospect_stage_settings))
+
+
+@router.patch("/prospect-stages", response_model=ProspectStageSettingsRead)
+async def update_prospect_stage_settings(body: ProspectStageSettingsUpdate, session: DBSession, _admin: AdminUser):
+    stages = _normalize_prospect_stage_settings([stage.model_dump() for stage in body.stages])
+    if not stages:
+        raise HTTPException(status_code=422, detail="At least one prospect stage is required")
+
+    stage_ids = [stage["id"] for stage in stages]
+    row = await _get_or_create(session)
+    row.prospect_stage_settings = stages
+    row.prospect_funnel_config = filter_funnel_config_to_stage_ids(row.prospect_funnel_config, stage_ids, _DEFAULT_PROSPECT_FUNNEL)
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return ProspectStageSettingsRead(stages=_normalize_prospect_stage_settings(row.prospect_stage_settings))
+
+
 @router.get("/clickup-crm", response_model=ClickUpCrmSettingsRead)
 async def get_clickup_crm_settings(session: DBSession, _user: CurrentUser):
     row = await _get_or_create(session)
@@ -507,6 +559,53 @@ async def update_pre_meeting_automation_settings(
 async def run_pre_meeting_automation_now(session: DBSession, _admin: AdminUser):
     _ = session
     return await run_due_pre_meeting_intel_once()
+
+
+SYNC_DEFAULTS = {
+    "tldv_sync_hour": 3,
+    "tldv_sync_enabled": True,
+    "tldv_page_size": 20,
+    "tldv_max_pages": 3,
+    "email_sync_interval_seconds": 180,
+    "deal_health_hour": 2,
+}
+
+
+def _normalized_sync_schedule(value: dict | None) -> SyncScheduleSettingsRead:
+    merged = {**SYNC_DEFAULTS, **(value or {})}
+    return SyncScheduleSettingsRead(**merged)
+
+
+@router.get("/sync-schedule", response_model=SyncScheduleSettingsRead)
+async def get_sync_schedule(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return _normalized_sync_schedule(row.sync_schedule_settings)
+
+
+@router.patch("/sync-schedule", response_model=SyncScheduleSettingsRead)
+async def update_sync_schedule(body: SyncScheduleSettingsUpdate, session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    current = {**SYNC_DEFAULTS, **(row.sync_schedule_settings or {})}
+    updates = body.model_dump(exclude_unset=True)
+    current.update(updates)
+    # Clamp values
+    current["tldv_sync_hour"] = max(0, min(23, current["tldv_sync_hour"]))
+    current["tldv_page_size"] = max(5, min(100, current["tldv_page_size"]))
+    current["tldv_max_pages"] = max(1, min(20, current["tldv_max_pages"]))
+    current["email_sync_interval_seconds"] = max(60, min(3600, current["email_sync_interval_seconds"]))
+    current["deal_health_hour"] = max(0, min(23, current["deal_health_hour"]))
+    row.sync_schedule_settings = current
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _normalized_sync_schedule(row.sync_schedule_settings)
+
+
+@router.post("/sync-schedule/tldv-now", response_model=dict)
+async def trigger_tldv_sync_now(_admin: AdminUser):
+    from app.tasks.tldv_sync import sync_tldv_meetings
+    sync_tldv_meetings.delay()
+    return {"status": "queued"}
 
 
 @router.get("/email-sync", response_model=GmailSettingsRead)

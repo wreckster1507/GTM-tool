@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.tasks.enrichment",
         "app.tasks.health",
         "app.tasks.email_sync",
+        "app.tasks.tldv_sync",
     ],
 )
 
@@ -30,6 +31,10 @@ celery_app.conf.update(
         "sync-gmail-inbox": {
             "task": "app.tasks.email_sync.sync_gmail_inbox",
             "schedule": settings.EMAIL_SYNC_INTERVAL_SECONDS,  # every 3 min
+        },
+        "sync-tldv-meetings": {
+            "task": "app.tasks.tldv_sync.sync_tldv_meetings",
+            "schedule": crontab(hour=3, minute=0),  # daily at 03:00 UTC
         },
     },
 )

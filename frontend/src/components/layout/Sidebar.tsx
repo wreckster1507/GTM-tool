@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
-  BarChart3,
   Compass,
   KanbanSquare,
   Radar,
@@ -20,7 +19,6 @@ const NAV = [
   { to: "/account-sourcing", label: "Account Sourcing", icon: Search },
   { to: "/prospecting", label: "Prospecting", icon: Radar },
   { to: "/pre-meeting-assistance", label: "Pre-Meeting Assistance", icon: Compass },
-  { to: "/crm-insights-alerts", label: "CRM- Insights and Alerts", icon: BarChart3 },
   { to: "/tasks", label: "Tasks", icon: CheckSquare },
 ];
 

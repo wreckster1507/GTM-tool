@@ -22,8 +22,9 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi, contactsApi, dealsApi } from "../lib/api";
-import { Plus, UserPlus } from "lucide-react";
+import { accountSourcingApi, companiesApi, contactsApi, dealsApi } from "../lib/api";
+import { Plus, Trash2, UserPlus } from "lucide-react";
+import { useAuth } from "../lib/AuthContext";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
@@ -572,6 +573,7 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
 export default function AccountSourcingCompanyDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
+  const { isAdmin } = useAuth();
 
   const [company, setCompany] = useState<Company | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -1009,6 +1011,22 @@ export default function AccountSourcingCompanyDetail() {
               >
                 <Plus size={13} /> Add to Deal
               </button>
+
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm(`Delete account "${company.name}" and all its data? This cannot be undone.`)) return;
+                    try {
+                      await companiesApi.delete(company.id);
+                      nav("/account-sourcing");
+                    } catch { /* swallow */ }
+                  }}
+                  style={{ width: "100%", border: "1px solid #fecaca", background: "#fff5f5", color: "#dc2626", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+                >
+                  <Trash2 size={13} /> Delete Account
+                </button>
+              )}
               </div>
 
               <div style={{ ...cardStyle, padding: "12px 14px", display: "grid", gap: 10 }}>
@@ -1089,22 +1107,6 @@ export default function AccountSourcingCompanyDetail() {
             hint="Relevant stakeholders ready for prospecting and meeting prep."
             tone="neutral"
             onClick={scrollToContacts}
-          />
-          <MetricCard
-            label="Prospect Momentum"
-            value={contactMomentum?.best ? getProspectTrackingStage(contactMomentum.best) : "No signals"}
-            hint={
-              contactMomentum?.best
-                ? `${getProspectTrackingScore(contactMomentum.best)} · ${contactMomentum.hint}`
-                : "Prospect momentum will appear once stakeholders start showing outreach or deal signals."
-            }
-            tone={
-              contactMomentum?.best?.tracking_label === "good"
-                ? "green"
-                : contactMomentum?.best?.tracking_label === "blocked"
-                  ? "warm"
-                  : "primary"
-            }
           />
         </div>
 

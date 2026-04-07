@@ -24,6 +24,7 @@ import type {
   Reminder,
   GmailSyncSettings,
   DealStageSettings,
+  ProspectStageSettings,
   OutreachContentSettings,
   PipelineSummarySettings,
   PreMeetingAutomationSettings,
@@ -31,6 +32,7 @@ import type {
   RolePermissionsSettings,
   CrmImportResponse,
   ClickUpCrmSettings,
+  SyncScheduleSettings,
 } from "../types";
 
 /**
@@ -173,6 +175,8 @@ export const contactsApi = {
     }),
   delete: (id: string) =>
     request<void>(`/api/v1/contacts/${id}`, { method: "DELETE" }),
+  bulkDelete: () =>
+    request<void>("/api/v1/contacts/bulk", { method: "DELETE" }),
   discover: (companyId: string) =>
     request<Contact[]>(`/api/v1/contacts/discover/${companyId}`, { method: "POST" }),
   importCsv: (file: File) => {
@@ -978,6 +982,11 @@ export const authApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  seedUsers: (users: { email: string; name: string; role?: string }[]) =>
+    request<{ created: number; skipped: number; users: User[] }>("/api/v1/auth/users/seed", {
+      method: "POST",
+      body: JSON.stringify({ users }),
+    }),
 };
 
 // ── Assignments ──────────────────────────────────────────────────────────────
@@ -1163,6 +1172,13 @@ export const settingsApi = {
       method: "PATCH",
       body: JSON.stringify(config),
     }),
+  getProspectStages: () =>
+    request<ProspectStageSettings>("/api/v1/settings/prospect-stages"),
+  updateProspectStages: (config: ProspectStageSettings) =>
+    request<ProspectStageSettings>("/api/v1/settings/prospect-stages", {
+      method: "PATCH",
+      body: JSON.stringify(config),
+    }),
   getClickUpCrmSettings: () =>
     request<ClickUpCrmSettings>("/api/v1/settings/clickup-crm"),
   updateClickUpCrmSettings: (config: ClickUpCrmSettings) =>
@@ -1203,6 +1219,17 @@ export const settingsApi = {
     }),
   triggerEmailSync: () =>
     request<{ status: string; task_id?: string; message?: string }>("/api/v1/email-sync/trigger", {
+      method: "POST",
+    }),
+  getSyncSchedule: () =>
+    request<SyncScheduleSettings>("/api/v1/settings/sync-schedule"),
+  updateSyncSchedule: (data: Partial<SyncScheduleSettings>) =>
+    request<SyncScheduleSettings>("/api/v1/settings/sync-schedule", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  triggerTldvSync: () =>
+    request<{ status: string }>("/api/v1/settings/sync-schedule/tldv-now", {
       method: "POST",
     }),
 };

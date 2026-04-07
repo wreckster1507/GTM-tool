@@ -2,9 +2,12 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
+from sqlalchemy import or_, select
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.models.activity import Activity, ActivityCreate, ActivityRead, ActivityUpdate
+from app.models.deal import Deal
+from app.models.meeting import Meeting
 from app.repositories.activity import ActivityRepository
 from app.schemas.common import PaginatedResponse
 
@@ -17,6 +20,7 @@ async def list_activities(
     pagination: Pagination,
     deal_id: Optional[UUID] = Query(default=None),
     contact_id: Optional[UUID] = Query(default=None),
+    company_id: Optional[UUID] = Query(default=None),
     type: Optional[str] = Query(default=None),
 ):
     repo = ActivityRepository(session)
@@ -25,6 +29,19 @@ async def list_activities(
         filters.append(Activity.deal_id == deal_id)
     if contact_id:
         filters.append(Activity.contact_id == contact_id)
+    if company_id:
+        # Activities linked via deals belonging to this company,
+        # or via meetings mapped to this company
+        company_deal_ids = select(Deal.id).where(Deal.company_id == company_id)
+        meeting_ext_ids = select(
+            ("tldv:meeting:" + Meeting.external_source_id)
+        ).where(Meeting.company_id == company_id, Meeting.external_source_id.isnot(None))
+        filters.append(
+            or_(
+                Activity.deal_id.in_(company_deal_ids),
+                Activity.external_source_id.in_(meeting_ext_ids),
+            )
+        )
     if type:
         filters.append(Activity.type == type)
     items, total = await repo.list_paginated(

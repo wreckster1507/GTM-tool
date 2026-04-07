@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Sparkles, Trash2 } from "lucide-react";
+import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Sparkles, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { tasksApi } from "../lib/api";
@@ -129,6 +129,7 @@ function TaskWorkspaceCard({
   onComplete,
   onDismiss,
   onDelete,
+  onReschedule,
   canDelete,
 }: {
   task: TaskWorkspaceItem;
@@ -139,15 +140,32 @@ function TaskWorkspaceCard({
   onComplete: () => void;
   onDismiss: () => void;
   onDelete: () => void;
+  onReschedule: (newDate: string) => void;
   canDelete: boolean;
 }) {
   const priorityStyle = PRIORITY_STYLE[task.priority as keyof typeof PRIORITY_STYLE] ?? PRIORITY_STYLE.normal;
   const typeStyle = TYPE_STYLE[task.task_type];
   const isOpen = task.status === "open";
+  const [showReschedule, setShowReschedule] = useState(false);
 
   return (
     <div className="crm-panel" style={{ padding: 18, borderRadius: 16, boxShadow: "none", display: "grid", gap: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "start" }}>
+          {isOpen && (
+            <input
+              type="checkbox"
+              checked={false}
+              onChange={() => task.task_type === "manual" ? onComplete() : onAccept()}
+              title={task.task_type === "manual" ? "Complete task" : task.recommended_action ? "Accept recommendation" : "Mark reviewed"}
+              style={{ width: 20, height: 20, marginTop: 2, cursor: "pointer", accentColor: task.task_type === "system" ? "#7c3aed" : colors.green, flexShrink: 0 }}
+            />
+          )}
+          {!isOpen && (
+            <div style={{ width: 20, height: 20, marginTop: 2, borderRadius: 4, background: task.status === "completed" ? colors.greenSoft : "#eef2f7", border: `2px solid ${task.status === "completed" ? colors.green : "#cbd5e1"}`, display: "grid", placeItems: "center", flexShrink: 0 }}>
+              {task.status === "completed" && <CheckCircle2 size={14} color={colors.green} />}
+            </div>
+          )}
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ borderRadius: 999, padding: "4px 9px", background: typeStyle.bg, border: `1px solid ${typeStyle.border}`, color: typeStyle.color, fontSize: 11, fontWeight: 800 }}>
@@ -173,9 +191,26 @@ function TaskWorkspaceCard({
           </div>
           {task.description ? <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{task.description}</div> : null}
         </div>
+        </div>
         <div style={{ display: "grid", gap: 4, justifyItems: "end", color: colors.faint, fontSize: 12 }}>
           <div>{formatDate(task.updated_at)}</div>
           {task.due_at ? <div>Due {formatDate(task.due_at)}</div> : null}
+          {isOpen && (
+            showReschedule ? (
+              <input
+                type="date"
+                autoFocus
+                defaultValue={task.due_at ? task.due_at.slice(0, 10) : ""}
+                onBlur={(e) => { setShowReschedule(false); if (e.target.value) onReschedule(e.target.value); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { setShowReschedule(false); if ((e.target as HTMLInputElement).value) onReschedule((e.target as HTMLInputElement).value); } if (e.key === "Escape") setShowReschedule(false); }}
+                style={{ fontSize: 12, border: `1px solid ${colors.border}`, borderRadius: 6, padding: "3px 6px" }}
+              />
+            ) : (
+              <button type="button" onClick={() => setShowReschedule(true)} style={{ background: "none", border: `1px solid ${colors.border}`, borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 700, color: colors.primary, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <Calendar size={11} />Reschedule
+              </button>
+            )
+          )}
           <div>{task.assigned_to_name || "Unassigned"}</div>
           <div>{task.created_by_name ? `Created by ${task.created_by_name}` : (task.source || "Beacon")}</div>
           {canDelete ? (
@@ -404,6 +439,7 @@ export default function TasksPage() {
               onAccept={() => acceptTask(task.id)}
               onComplete={() => patchTask(task.id, { status: "completed" })}
               onDismiss={() => patchTask(task.id, { status: "dismissed" })}
+              onReschedule={(newDate) => patchTask(task.id, { due_at: new Date(newDate).toISOString() })}
               onDelete={() => deleteTask(task)}
               canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
             />

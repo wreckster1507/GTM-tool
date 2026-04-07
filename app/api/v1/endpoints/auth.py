@@ -4,13 +4,13 @@ Authentication endpoints — Google OAuth2 login, token exchange, user managemen
 The first user to sign in is automatically granted the 'admin' role.
 Subsequent users default to 'sdr'.
 """
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Query
 from fastapi.responses import RedirectResponse
-from sqlmodel import func, select
+from sqlmodel import SQLModel, func, select
 
 from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
@@ -178,3 +178,58 @@ async def update_user(
     await session.commit()
     await session.refresh(user)
     return user
+
+
+class SeedUserPayload(SQLModel):
+    email: str
+    name: str
+    role: str = "ae"
+
+
+class SeedUsersRequest(SQLModel):
+    users: list[SeedUserPayload]
+
+
+class SeedUsersResponse(SQLModel):
+    created: int
+    skipped: int
+    users: list[UserRead]
+
+
+@router.post("/users/seed", response_model=SeedUsersResponse)
+async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: AdminUser):
+    """Bulk-create team members so they can be matched during imports (ClickUp, CSV, etc.)."""
+    created = 0
+    skipped = 0
+    all_users: list[User] = []
+
+    for entry in payload.users:
+        email = entry.email.strip().lower()
+        existing = (
+            await session.execute(select(User).where(func.lower(User.email) == email).limit(1))
+        ).scalar_one_or_none()
+        if existing:
+            skipped += 1
+            all_users.append(existing)
+            continue
+
+        if entry.role not in ALLOWED_USER_ROLES:
+            continue
+
+        user = User(
+            email=email,
+            name=entry.name.strip(),
+            google_id=f"seed_{email}",
+            role=entry.role,
+            is_active=True,
+        )
+        session.add(user)
+        await session.flush()
+        created += 1
+        all_users.append(user)
+
+    await session.commit()
+    for u in all_users:
+        await session.refresh(u)
+
+    return SeedUsersResponse(created=created, skipped=skipped, users=all_users)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, Upload, UserCircle2 } from "lucide-react";
+import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, Trash2, Upload, UserCircle2 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
@@ -525,7 +525,7 @@ function LoadingCard({ kind }: { kind: "deal" | "prospect" }) {
   );
 }
 
-function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd }: { contact: Contact; company?: Company; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void }) {
+function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDelete }: { contact: Contact; company?: Company; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void; onDelete?: () => void }) {
   return (
     <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
@@ -534,6 +534,11 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd }: { co
           <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.3 }}>{contactName(contact)}</div>
           <div style={{ fontSize: 11, color: "#5e738b", marginTop: 2 }}>{contact.title || contact.persona || "Prospect"}</div>
         </div>
+        {onDelete && (
+          <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); onDelete(); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onDelete(); } }} style={{ width: 18, height: 18, borderRadius: 5, display: "grid", placeItems: "center", color: "#94a3b8", cursor: "pointer", flexShrink: 0 }} title="Delete prospect">
+            <Trash2 size={11} />
+          </span>
+        )}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#5e738b" }}><Building2 size={11} /><span>{contact.company_name || company?.name || "Unknown company"}</span></div>
       {contact.tracking_summary && <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.35 }}>{contact.tracking_summary}</div>}
@@ -585,7 +590,9 @@ function ProspectDetailDrawer({
   loading,
   onConvert,
   converting,
+  stages,
   onClose,
+  onUpdated,
 }: {
   contact: Contact;
   company?: Company;
@@ -593,11 +600,16 @@ function ProspectDetailDrawer({
   loading: boolean;
   onConvert?: () => Promise<void>;
   converting?: boolean;
+  stages: StageMeta[];
   onClose: () => void;
+  onUpdated?: () => void;
 }) {
   const fullName = contactName(contact);
   const stage = prospectStage(contact);
-  const stageLabel = PROSPECT_STAGES.find((item) => item.id === stage)?.label ?? stage;
+  const stageLabel = stages.find((item) => item.id === stage)?.label ?? stage;
+  const [editEmail, setEditEmail] = useState(contact.email ?? "");
+  const [editPhone, setEditPhone] = useState(contact.phone ?? "");
+  const [savingContact, setSavingContact] = useState(false);
   const canConvert = stage === "meeting_booked";
   const positiveSignals = activities.filter((item) => {
     const text = `${item.ai_summary ?? ""} ${item.content ?? ""} ${item.call_outcome ?? ""}`.toLowerCase();
@@ -642,11 +654,52 @@ function ProspectDetailDrawer({
           </div>
 
           <div style={{ border: "1px solid #e8eef5", borderRadius: 16, background: "#fff", padding: 18 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#1f2d3d", marginBottom: 12 }}>Contact Actions</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {contact.email && <a href={`mailto:${contact.email}`} style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 12, border: "1px solid #cfe0fb", background: "#eef5ff", color: "#1f6feb", padding: "10px 12px", fontSize: 13, fontWeight: 700 }}><Mail size={14} />Email</a>}
-              {contact.phone && <button type="button" onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)} style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 12, border: "1px solid #bfe8d1", background: "#e8f8f0", color: "#1f8f5f", padding: "10px 12px", fontSize: 13, fontWeight: 700 }}><Phone size={14} />Call</button>}
-              {contact.linkedin_url && <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 12, border: "1px solid #d9e1ec", background: "#fff", color: "#55657a", padding: "10px 12px", fontSize: 13, fontWeight: 700 }}><Globe size={14} />LinkedIn</a>}
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#1f2d3d", marginBottom: 12 }}>Contact Info</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Mail size={14} color="#6b7f95" />
+                <input
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="Add email..."
+                  style={{ flex: 1, height: 36, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }}
+                />
+                {editEmail && <a href={`mailto:${editEmail}`} style={{ color: "#1f6feb", fontSize: 12, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>Send</a>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Phone size={14} color="#6b7f95" />
+                <input
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  placeholder="Add phone..."
+                  style={{ flex: 1, height: 36, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }}
+                />
+                {editPhone && <button type="button" onClick={() => window.__aircallDial?.(editPhone, fullName || undefined)} style={{ color: "#1f8f5f", fontSize: 12, fontWeight: 700, background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>Call</button>}
+              </div>
+              {(editEmail !== (contact.email ?? "") || editPhone !== (contact.phone ?? "")) && (
+                <button
+                  type="button"
+                  disabled={savingContact}
+                  onClick={async () => {
+                    setSavingContact(true);
+                    try {
+                      await contactsApi.update(contact.id, { email: editEmail.trim() || undefined, phone: editPhone.trim() || undefined });
+                      onUpdated?.();
+                    } finally {
+                      setSavingContact(false);
+                    }
+                  }}
+                  style={{ justifySelf: "end", borderRadius: 10, border: "1px solid #2563eb", background: "#2563eb", color: "#fff", padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: savingContact ? "wait" : "pointer" }}
+                >
+                  {savingContact ? "Saving..." : "Save changes"}
+                </button>
+              )}
+              {contact.linkedin_url && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Globe size={14} color="#6b7f95" />
+                  <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: "#55657a", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>LinkedIn Profile</a>
+                </div>
+              )}
             </div>
           </div>
 
@@ -692,6 +745,92 @@ function ProspectDetailDrawer({
   );
 }
 
+function AddProspectModal({ companies, onClose, onCreated }: { companies: Company[]; onClose: () => void; onCreated: () => void }) {
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", title: "", company_id: "", linkedin_url: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleCreate = async () => {
+    if (!form.first_name.trim() && !form.last_name.trim()) {
+      setError("First or last name is required");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await contactsApi.create({
+        first_name: form.first_name.trim() || undefined,
+        last_name: form.last_name.trim() || undefined,
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        title: form.title.trim() || undefined,
+        company_id: form.company_id || undefined,
+        linkedin_url: form.linkedin_url.trim() || undefined,
+      } as Partial<Contact>);
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create prospect");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.25)", zIndex: 40 }} onClick={onClose} />
+      <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "grid", placeItems: "center", padding: 16 }}>
+        <div style={{ width: "100%", maxWidth: 480, borderRadius: 20, background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", padding: 28 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1f2d3d" }}>Add Prospect</h3>
+            <button className="crm-button soft" onClick={onClose}>Close</button>
+          </div>
+          {error && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12, fontWeight: 600 }}>{error}</div>}
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>First Name</label>
+                <input value={form.first_name} onChange={(e) => setForm((f) => ({ ...f, first_name: e.target.value }))} style={modalInputStyle} placeholder="Jane" />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Last Name</label>
+                <input value={form.last_name} onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))} style={modalInputStyle} placeholder="Smith" />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Email</label>
+              <input value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} style={modalInputStyle} placeholder="jane@company.com" type="email" />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Phone</label>
+              <input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} style={modalInputStyle} placeholder="+1 555 123 4567" />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Job Title</label>
+              <input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} style={modalInputStyle} placeholder="VP Engineering" />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Company</label>
+              <select value={form.company_id} onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value }))} style={modalInputStyle}>
+                <option value="">No company</option>
+                {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
+              <input value={form.linkedin_url} onChange={(e) => setForm((f) => ({ ...f, linkedin_url: e.target.value }))} style={modalInputStyle} placeholder="https://linkedin.com/in/..." />
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+            <button className="crm-button soft" onClick={onClose} disabled={saving}>Cancel</button>
+            <button className="crm-button primary" onClick={handleCreate} disabled={saving}>{saving ? "Creating..." : "Add Prospect"}</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Pipeline() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -725,10 +864,12 @@ export default function Pipeline() {
   );
   const [savingFunnelSettings, setSavingFunnelSettings] = useState(false);
   const [dealStages, setDealStages] = useState<StageMeta[]>(DEFAULT_DEAL_STAGES);
+  const [prospectStageMeta, setProspectStageMeta] = useState<StageMeta[]>(PROSPECT_STAGES);
   const [showCrmImport, setShowCrmImport] = useState(false);
   const [importingCrm, setImportingCrm] = useState(false);
   const [crmImportResult, setCrmImportResult] = useState<CrmImportResponse | null>(null);
   const [crmImportError, setCrmImportError] = useState("");
+  const [showAddProspect, setShowAddProspect] = useState(false);
   const prospectImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
@@ -747,6 +888,10 @@ export default function Pipeline() {
       }));
     return [...configured, ...extras];
   }, [dealBoard, dealStages]);
+
+  const effectiveProspectStages = useMemo(() => {
+    return prospectStageMeta.length ? prospectStageMeta : PROSPECT_STAGES;
+  }, [prospectStageMeta]);
 
   const loadDealBoard = async () => {
     setLoadingDeals(true);
@@ -770,8 +915,17 @@ export default function Pipeline() {
   const loadProspectBoard = async () => {
     setLoadingProspects(true);
     try {
-      const contactList = await contactsApi.list(0, 500);
+      const [contactList, prospectStageSettings] = await Promise.all([
+        contactsApi.list(0, 500),
+        settingsApi.getProspectStages().catch(() => ({ stages: PROSPECT_STAGES as DealStageSetting[] })),
+      ]);
       setContacts(contactList);
+      setProspectStageMeta((prospectStageSettings.stages ?? PROSPECT_STAGES).map((stage) => ({
+        id: stage.id,
+        label: stage.label,
+        group: stage.group,
+        color: stage.color ?? STAGE_COLOR[stage.id] ?? "#94a3b8",
+      })));
     } finally {
       setLoadingProspects(false);
     }
@@ -884,23 +1038,32 @@ export default function Pipeline() {
     };
   }, [effectiveDealStages, filteredDealBoard, pipelineSummaryConfig.deal]);
 
-  const prospectSummary = useMemo(() => ({
-    total: Object.values(filteredProspects).flat().length,
-    active: filteredProspects.outreach.length + filteredProspects.in_progress.length + filteredProspects.meeting_booked.length,
-    closed: filteredProspects.negative_response.length + filteredProspects.no_response.length + filteredProspects.not_a_fit.length,
-    tofu: Array.from(new Set(pipelineSummaryConfig.prospect.tofu)).reduce(
-      (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
-      0,
-    ),
-    mofu: Array.from(new Set(pipelineSummaryConfig.prospect.mofu)).reduce(
-      (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
-      0,
-    ),
-    bofu: Array.from(new Set(pipelineSummaryConfig.prospect.bofu)).reduce(
-      (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
-      0,
-    ),
-  }), [filteredProspects, pipelineSummaryConfig.prospect]);
+  const prospectSummary = useMemo(() => {
+    const activeStageIds = new Set(effectiveProspectStages.filter((s) => s.group === "active").map((s) => s.id));
+    const closedStageIds = new Set(effectiveProspectStages.filter((s) => s.group === "closed").map((s) => s.id));
+    const allProspects = Object.values(filteredProspects).flat();
+    return {
+      total: allProspects.length,
+      active: Object.entries(filteredProspects)
+        .filter(([stageId]) => activeStageIds.has(stageId))
+        .reduce((sum, [, items]) => sum + items.length, 0),
+      closed: Object.entries(filteredProspects)
+        .filter(([stageId]) => closedStageIds.has(stageId))
+        .reduce((sum, [, items]) => sum + items.length, 0),
+      tofu: Array.from(new Set(pipelineSummaryConfig.prospect.tofu)).reduce(
+        (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
+        0,
+      ),
+      mofu: Array.from(new Set(pipelineSummaryConfig.prospect.mofu)).reduce(
+        (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
+        0,
+      ),
+      bofu: Array.from(new Set(pipelineSummaryConfig.prospect.bofu)).reduce(
+        (sum, stageId) => sum + (filteredProspects[stageId as ProspectStageId]?.length ?? 0),
+        0,
+      ),
+    };
+  }, [effectiveProspectStages, filteredProspects, pipelineSummaryConfig.prospect]);
 
   const summary = tab === "deal" ? dealSummary : prospectSummary;
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
@@ -909,8 +1072,8 @@ export default function Pipeline() {
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
   const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0;
-  const stages = tab === "deal" ? effectiveDealStages : PROSPECT_STAGES;
-  const stageOptions = (tab === "deal" ? effectiveDealStages : PROSPECT_STAGES).map((stage) => ({ value: stage.id, label: stage.label }));
+  const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
+  const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
   const geographyOptions = GEO_OPTIONS.map((option) => ({ value: option, label: option }));
   const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
@@ -924,7 +1087,7 @@ export default function Pipeline() {
     tab === "deal"
       ? "Choose which deal stages count toward ToFU, MoFU, and BoFU in the shared summary cards."
       : "Choose which prospect lanes count toward ToFU, MoFU, and BoFU in the shared summary cards.";
-  const funnelModalStages = tab === "deal" ? effectiveDealStages : PROSPECT_STAGES;
+  const funnelModalStages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
 
   const resetFilters = () => {
     setSearch("");
@@ -961,6 +1124,26 @@ export default function Pipeline() {
   };
 
   const handleDealCreated = (deal: Deal) => setDealBoard((current) => ({ ...current, [deal.stage]: [...(current[deal.stage] ?? []), deal] }));
+
+  const handleDeleteProspect = async (contactId: string) => {
+    if (!window.confirm("Delete this prospect? This cannot be undone.")) return;
+    try {
+      await contactsApi.delete(contactId);
+      setContacts((current) => current.filter((contact) => contact.id !== contactId));
+      if (selectedProspect?.id === contactId) setSelectedProspect(null);
+    } catch { /* swallow */ }
+  };
+
+  const handleBulkDeleteProspects = async () => {
+    if (!window.confirm("Delete ALL prospects? This cannot be undone.")) return;
+    try {
+      await contactsApi.bulkDelete();
+      setContacts([]);
+      setSelectedProspect(null);
+      void loadProspectBoard();
+    } catch { /* swallow */ }
+  };
+
   const clearDragState = () => setDragItem(null);
 
   useEffect(() => {
@@ -1208,9 +1391,17 @@ export default function Pipeline() {
                   event.currentTarget.value = "";
                 }}
               />
+              <button className="crm-button primary" onClick={() => setShowAddProspect(true)} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}>
+                <Plus size={14} />Add Prospect
+              </button>
               <button className="crm-button soft" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 <Target size={14} />Open Prospecting
               </button>
+              {isAdmin && (
+                <button className="crm-button soft" onClick={handleBulkDeleteProspects} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "#dc2626", borderColor: "#fecaca" }}>
+                  <Trash2 size={14} />Delete All Prospects
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1229,8 +1420,8 @@ export default function Pipeline() {
 
           <div style={{ flex: 1, overflowX: "auto", padding: "16px 16px 16px 20px" }}>
             <div style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%" }}>
-              {(tab === "deal" ? stages : PROSPECT_STAGES).map((stage, index) => {
-                const divider = index > 0 && (tab === "deal" ? effectiveDealStages[index - 1]?.group : PROSPECT_STAGES[index - 1]?.group) === "active" && stage.group === "closed";
+              {(tab === "deal" ? stages : effectiveProspectStages).map((stage, index) => {
+                const divider = index > 0 && (tab === "deal" ? effectiveDealStages[index - 1]?.group : effectiveProspectStages[index - 1]?.group) === "active" && stage.group === "closed";
                 const dealItems = filteredDealBoard[stage.id] ?? [];
                 const prospectItems = filteredProspects[stage.id as ProspectStageId] ?? [];
                 return (
@@ -1251,7 +1442,7 @@ export default function Pipeline() {
                           }, { replace: true });
                         }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
-                        prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
+                        prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
                     </BoardColumn>
                   </div>
@@ -1271,7 +1462,7 @@ export default function Pipeline() {
           return next;
         }, { replace: true });
       }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
-      {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} onClose={() => setSelectedProspect(null)} />}
+      {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
       {pendingConvertProspect && (
         <>
           <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.22)", zIndex: 60 }} onClick={() => setPendingConvertProspect(null)} />
@@ -1314,6 +1505,13 @@ export default function Pipeline() {
             if (!importingCrm) setShowCrmImport(false);
           }}
           onImport={handleImportFromCrm}
+        />
+      )}
+      {showAddProspect && (
+        <AddProspectModal
+          companies={companies}
+          onClose={() => setShowAddProspect(false)}
+          onCreated={() => { setShowAddProspect(false); loadProspectBoard(); }}
         />
       )}
     </>

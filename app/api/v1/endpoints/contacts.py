@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from sqlalchemy import func
 from sqlmodel import SQLModel, select
 
-from app.core.dependencies import CurrentUser, DBSession, Pagination
+from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
@@ -160,6 +160,13 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     contact.updated_at = datetime.utcnow()
     saved = await repo.save(contact)
     return await to_contact_read(session, saved)
+
+
+@router.delete("/bulk", status_code=204)
+async def bulk_delete_contacts(session: DBSession, _admin: AdminUser):
+    """Delete all contacts. Admin only."""
+    repo = ContactRepository(session)
+    await repo.delete_all()
 
 
 @router.delete("/{contact_id}", status_code=204)

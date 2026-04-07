@@ -140,6 +140,10 @@ export default function Contacts() {
   const [filterStrength, setFilterStrength] = useState<number>(0);
   const [showAddInvestor, setShowAddInvestor] = useState(false);
   const [newInvestor, setNewInvestor] = useState({ name: "", current_role: "", current_company: "" });
+  const [showAddProspect, setShowAddProspect] = useState(false);
+  const [addProspectForm, setAddProspectForm] = useState({ first_name: "", last_name: "", email: "", phone: "", title: "", linkedin_url: "" });
+  const [addProspectSaving, setAddProspectSaving] = useState(false);
+  const [addProspectError, setAddProspectError] = useState("");
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
 
@@ -589,6 +593,20 @@ export default function Contacts() {
                     Clear
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setShowAddProspect(true)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: "1px solid #c7d5e5", background: "#fff",
+                    color: "#175089", fontSize: 13, fontWeight: 700,
+                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  <Plus size={14} />
+                  Add Prospect
+                </button>
               </>
             )}
 
@@ -1540,6 +1558,79 @@ export default function Contacts() {
             </div>
           </div>
         </div>
+      )}
+
+      {showAddProspect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.25)", zIndex: 40 }} onClick={() => setShowAddProspect(false)} />
+          <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "grid", placeItems: "center", padding: 16 }}>
+            <div style={{ width: "100%", maxWidth: 480, borderRadius: 20, background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", padding: 28 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1d2b3c" }}>Add Prospect</h3>
+                <button type="button" onClick={() => setShowAddProspect(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7f8fa5", fontSize: 18 }}>x</button>
+              </div>
+              {addProspectError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12, fontWeight: 600 }}>{addProspectError}</div>}
+              <div style={{ display: "grid", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>First Name</label>
+                    <input value={addProspectForm.first_name} onChange={(e) => setAddProspectForm((f) => ({ ...f, first_name: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="Jane" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Last Name</label>
+                    <input value={addProspectForm.last_name} onChange={(e) => setAddProspectForm((f) => ({ ...f, last_name: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="Smith" />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Email</label>
+                  <input value={addProspectForm.email} onChange={(e) => setAddProspectForm((f) => ({ ...f, email: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="jane@company.com" type="email" />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Phone</label>
+                  <input value={addProspectForm.phone} onChange={(e) => setAddProspectForm((f) => ({ ...f, phone: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="+1 555 123 4567" />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Job Title</label>
+                  <input value={addProspectForm.title} onChange={(e) => setAddProspectForm((f) => ({ ...f, title: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="VP Engineering" />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
+                  <input value={addProspectForm.linkedin_url} onChange={(e) => setAddProspectForm((f) => ({ ...f, linkedin_url: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="https://linkedin.com/in/..." />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+                <button type="button" onClick={() => setShowAddProspect(false)} disabled={addProspectSaving} style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "1px solid #d9e1ec", background: "#fff", color: "#5e738b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+                <button type="button" disabled={addProspectSaving} onClick={async () => {
+                  if (!addProspectForm.first_name.trim() && !addProspectForm.last_name.trim()) {
+                    setAddProspectError("First or last name is required");
+                    return;
+                  }
+                  setAddProspectSaving(true);
+                  setAddProspectError("");
+                  try {
+                    await contactsApi.create({
+                      first_name: addProspectForm.first_name.trim() || undefined,
+                      last_name: addProspectForm.last_name.trim() || undefined,
+                      email: addProspectForm.email.trim() || undefined,
+                      phone: addProspectForm.phone.trim() || undefined,
+                      title: addProspectForm.title.trim() || undefined,
+                      linkedin_url: addProspectForm.linkedin_url.trim() || undefined,
+                    } as Partial<Contact>);
+                    setShowAddProspect(false);
+                    setAddProspectForm({ first_name: "", last_name: "", email: "", phone: "", title: "", linkedin_url: "" });
+                    loadContacts();
+                  } catch (err) {
+                    setAddProspectError(err instanceof Error ? err.message : "Failed to create prospect");
+                  } finally {
+                    setAddProspectSaving(false);
+                  }
+                }} style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "none", background: "#175089", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  {addProspectSaving ? "Creating..." : "Add Prospect"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </>
   );
