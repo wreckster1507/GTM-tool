@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
-  Activity as ActivityIcon, Phone, Mail, Video, FileText,
+  Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle,
 } from "lucide-react";
 import { dealsApi, contactsApi, settingsApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
@@ -81,6 +81,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
 
   // Tag input
   const [tagInput, setTagInput] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const [companyContacts, setCompanyContacts] = useState<Contact[]>([]);
 
@@ -364,30 +365,6 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 style={{ height: 30, fontSize: 12, marginLeft: "auto" }}
               >
                 Convert to Deal
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={handleDeleteDeal}
-                style={{
-                  height: 30,
-                  marginLeft: onConvert && deal.stage === "in_progress" ? 0 : "auto",
-                  borderRadius: 10,
-                  border: "1px solid #fecaca",
-                  background: "#fff1f2",
-                  color: "#b42336",
-                  padding: "0 10px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                <Trash2 size={12} />
-                Delete
               </button>
             )}
           </div>
@@ -825,6 +802,44 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               );
             })()}
           </div>
+
+          {/* ── Danger zone ──────────────────────────────────────── */}
+          {isAdmin && (
+            <div style={{ borderTop: "1px solid #fee2e2", paddingTop: 16, marginTop: 8 }}>
+              {confirmDelete ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12, background: "#fff1f2", border: "1px solid #fecaca", flexWrap: "wrap" }}>
+                  <AlertTriangle size={16} style={{ color: "#b42336", flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, color: "#7f1d1d", fontWeight: 600, flex: 1 }}>This will permanently delete the deal and all activity. Are you sure?</span>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "1px solid #e2eaf2", background: "#fff", color: "#4d6178", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteDeal}
+                      style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "none", background: "#b42336", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                    >
+                      <Trash2 size={13} />
+                      Yes, delete
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "1px solid #fecaca", background: "#fff8f8", color: "#b42336", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <Trash2 size={13} />
+                  Delete this deal
+                </button>
+              )}
+            </div>
+          )}
 
             </>
           ) : activeTab === "meddpicc" ? (

@@ -131,21 +131,32 @@ function MultiSelectFilter({
   allLabel: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [filterText, setFilterText] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
       if (!ref.current?.contains(event.target as Node)) {
         setOpen(false);
+        setFilterText("");
       }
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 40);
+  }, [open]);
+
   const toggle = (value: string) => {
     onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   };
+
+  const visibleOptions = filterText
+    ? options.filter((option) => option.label.toLowerCase().includes(filterText.toLowerCase()))
+    : options;
 
   const displayLabel =
     values.length === 0
@@ -167,20 +178,41 @@ function MultiSelectFilter({
           <ChevronDown size={12} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#7a96b0" }} />
         </button>
         {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 10, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 10px 28px rgba(15,23,42,0.12)", padding: 8, display: "grid", gap: 4, maxHeight: 220, overflowY: "auto" }}>
-            <button
-              type="button"
-              onClick={() => onChange([])}
-              style={{ border: "none", background: values.length === 0 ? "#f0f6ff" : "transparent", color: values.length === 0 ? "#175089" : "#4d6178", borderRadius: 8, padding: "7px 8px", textAlign: "left", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-            >
-              {allLabel}
-            </button>
-            {options.map((option) => (
-              <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "7px 8px", background: values.includes(option.value) ? "#f8fbff" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer" }}>
-                <input type="checkbox" checked={values.includes(option.value)} onChange={() => toggle(option.value)} />
-                <span>{option.label}</span>
-              </label>
-            ))}
+          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 10, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 10px 28px rgba(15,23,42,0.12)", padding: 8, display: "flex", flexDirection: "column", gap: 4, maxHeight: 260 }}>
+            {/* Search input */}
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <Search size={11} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }} />
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder={`Search ${label.toLowerCase()}…`}
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: "100%", height: 30, borderRadius: 7, border: "1px solid #e2eaf2", background: "#f8fafc", paddingLeft: 26, paddingRight: 8, fontSize: 11, outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+            {/* Scrollable list */}
+            <div style={{ overflowY: "auto", maxHeight: 190, display: "flex", flexDirection: "column", gap: 2 }}>
+              {!filterText && (
+                <button
+                  type="button"
+                  onClick={() => onChange([])}
+                  style={{ border: "none", background: values.length === 0 ? "#f0f6ff" : "transparent", color: values.length === 0 ? "#175089" : "#4d6178", borderRadius: 8, padding: "7px 8px", textAlign: "left", fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
+                >
+                  {allLabel}
+                </button>
+              )}
+              {visibleOptions.length === 0 && (
+                <div style={{ padding: "8px 10px", fontSize: 11, color: "#94a3b8" }}>No matches</div>
+              )}
+              {visibleOptions.map((option) => (
+                <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "7px 8px", background: values.includes(option.value) ? "#f8fbff" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+                  <input type="checkbox" checked={values.includes(option.value)} onChange={() => toggle(option.value)} />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -278,6 +310,25 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
   const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority: "normal", assigned_to_id: "", geography: "", tags: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [companySearch, setCompanySearch] = useState("");
+  const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
+  const companyDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (!companyDropdownRef.current?.contains(event.target as Node)) {
+        setCompanyDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filteredCompanies = companySearch
+    ? companies.filter((c) => c.name.toLowerCase().includes(companySearch.toLowerCase()))
+    : companies;
+
+  const selectedCompanyName = companies.find((c) => c.id === form.company_id)?.name ?? "";
 
   const handleCreate = async () => {
     if (!form.name.trim()) {
@@ -320,10 +371,56 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <input style={modalInputStyle} placeholder="Deal name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
-            <select style={{ ...modalInputStyle, background: "#fff" }} value={form.company_id} onChange={(event) => setForm((current) => ({ ...current, company_id: event.target.value }))}>
-              <option value="">Select company</option>
-              {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
-            </select>
+            {/* Searchable company combobox */}
+            <div ref={companyDropdownRef} style={{ position: "relative" }}>
+              <div
+                onClick={() => setCompanyDropdownOpen((o) => !o)}
+                style={{ ...modalInputStyle, background: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+              >
+                <span style={{ color: form.company_id ? "#1f2d3d" : "#94a3b8", fontSize: 14 }}>
+                  {form.company_id ? selectedCompanyName : "Select company"}
+                </span>
+                <ChevronDown size={14} style={{ color: "#94a3b8", flexShrink: 0 }} />
+              </div>
+              {companyDropdownOpen && (
+                <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 60, borderRadius: 12, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 12px 32px rgba(15,23,42,0.14)", display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: "8px 8px 4px", flexShrink: 0, position: "relative" }}>
+                    <Search size={13} style={{ position: "absolute", left: 18, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none", marginTop: 2 }} />
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="Search companies…"
+                      value={companySearch}
+                      onChange={(e) => setCompanySearch(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ width: "100%", height: 34, borderRadius: 8, border: "1px solid #e2eaf2", background: "#f8fafc", paddingLeft: 32, paddingRight: 10, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                    />
+                  </div>
+                  <div style={{ overflowY: "auto", maxHeight: 220 }}>
+                    <button
+                      type="button"
+                      onClick={() => { setForm((c) => ({ ...c, company_id: "" })); setCompanySearch(""); setCompanyDropdownOpen(false); }}
+                      style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: !form.company_id ? "#f0f6ff" : "transparent", color: !form.company_id ? "#175089" : "#4d6178", cursor: "pointer", fontWeight: 500 }}
+                    >
+                      No company
+                    </button>
+                    {filteredCompanies.length === 0 && (
+                      <div style={{ padding: "10px 14px", fontSize: 12, color: "#94a3b8" }}>No matches</div>
+                    )}
+                    {filteredCompanies.map((company) => (
+                      <button
+                        key={company.id}
+                        type="button"
+                        onClick={() => { setForm((c) => ({ ...c, company_id: company.id })); setCompanySearch(""); setCompanyDropdownOpen(false); }}
+                        style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: form.company_id === company.id ? "#f0f6ff" : "transparent", color: form.company_id === company.id ? "#175089" : "#1f2d3d", cursor: "pointer", fontWeight: form.company_id === company.id ? 600 : 400 }}
+                      >
+                        {company.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.stage} onChange={(event) => setForm((current) => ({ ...current, stage: event.target.value }))}>
                 {stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.label}</option>)}

@@ -1412,6 +1412,47 @@ async def re_enrich_company(company_id: UUID, session: DBSession = None):
     }
 
 
+@router.post("/companies/bulk-enrich")
+async def bulk_enrich_companies(
+    unenriched_only: bool = Query(default=False, description="Only queue companies with no enriched_at timestamp"),
+    session: DBSession = None,
+    _: AdminUser = None,
+):
+    """Queue ICP research for all (or unenriched-only) sourced companies.
+
+    Returns counts of how many tasks were queued and skipped.
+    """
+    stmt = select(Company).where(
+        ~Company.enrichment_sources.contains({"clickup_import": {}}),
+        ~Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+    )
+    if unenriched_only:
+        stmt = stmt.where(Company.enriched_at.is_(None))
+
+    result = await session.execute(stmt)
+    companies = result.scalars().all()
+
+    try:
+        from app.tasks.enrichment import icp_research_single_task
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Enrichment task not available") from exc
+
+    queued = 0
+    for company in companies:
+        try:
+            icp_research_single_task.delay(str(company.id))
+            queued += 1
+        except Exception:
+            pass
+
+    return {
+        "queued": queued,
+        "total": len(companies),
+        "unenriched_only": unenriched_only,
+        "message": f"Queued {queued} companies for enrichment",
+    }
+
+
 @router.post("/companies/{company_id}/icp-research")
 async def icp_research_company(company_id: UUID, session: DBSession = None):
     """Run the full ICP intelligence pipeline for a single company.

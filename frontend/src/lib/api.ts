@@ -783,6 +783,12 @@ export const accountSourcingApi = {
       { method: "POST" }
     ),
 
+  bulkEnrichAll: (unenrichedOnly = false) =>
+    request<{ queued: number; total: number; unenriched_only: boolean; message: string }>(
+      `/api/v1/account-sourcing/companies/bulk-enrich?unenriched_only=${unenrichedOnly}`,
+      { method: "POST" }
+    ),
+
   icpResearch: (companyId: string) =>
     request<{ company_id: string; task_id: string; status: string; message: string }>(
       `/api/v1/account-sourcing/companies/${companyId}/icp-research`,

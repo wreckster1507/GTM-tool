@@ -474,6 +474,8 @@ export default function AccountSourcing() {
   const [createForm, setCreateForm] = useState({ companiesText: "" });
   const [creatingCompany, setCreatingCompany] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [bulkEnriching, setBulkEnriching] = useState(false);
+  const [bulkEnrichResult, setBulkEnrichResult] = useState<string | null>(null);
   const { isAdmin } = useAuth();
 
   useEffect(() => {
@@ -838,6 +840,40 @@ export default function AccountSourcing() {
                 {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                 Export CSV
               </button>
+              {isAdmin && (
+                <button
+                  onClick={async () => {
+                    if (!window.confirm("Queue enrichment for all sourced accounts? This may take a while depending on how many companies you have.")) return;
+                    setBulkEnriching(true);
+                    setBulkEnrichResult(null);
+                    try {
+                      const result = await accountSourcingApi.bulkEnrichAll(false);
+                      setBulkEnrichResult(`Queued ${result.queued} of ${result.total} accounts for enrichment`);
+                    } catch (e) {
+                      setBulkEnrichResult(e instanceof Error ? e.message : "Failed to queue enrichment");
+                    } finally {
+                      setBulkEnriching(false);
+                    }
+                  }}
+                  disabled={bulkEnriching}
+                  style={{
+                    border: `1px solid #c8daf0`,
+                    background: "#eaf2ff",
+                    color: "#175089",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontWeight: 700,
+                    cursor: bulkEnriching ? "not-allowed" : "pointer",
+                    opacity: bulkEnriching ? 0.7 : 1,
+                  }}
+                >
+                  {bulkEnriching ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                  Enrich All Accounts
+                </button>
+              )}
               <button
                 onClick={load}
                 style={{
@@ -858,6 +894,13 @@ export default function AccountSourcing() {
             </div>
           </div>
         </div>
+
+        {bulkEnrichResult && (
+          <div style={{ borderRadius: 12, border: "1px solid #c8daf0", background: "#eaf2ff", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ fontSize: 13, color: "#175089", fontWeight: 600 }}>{bulkEnrichResult}</span>
+            <button onClick={() => setBulkEnrichResult(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a96b0" }}><X size={14} /></button>
+          </div>
+        )}
 
         <div
           style={{
