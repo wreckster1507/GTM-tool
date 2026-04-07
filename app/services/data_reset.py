@@ -14,6 +14,7 @@ from app.models.custom_demo import CustomDemo
 from app.models.deal import Deal
 from app.models.meeting import Meeting
 from app.models.outreach import OutreachSequence
+from app.models.reminder import Reminder
 from app.models.signal import Signal
 from app.models.sourcing_batch import SourcingBatch
 from app.repositories.company import CompanyRepository
@@ -83,6 +84,7 @@ async def reset_account_sourcing_data(session: AsyncSession) -> dict[str, int]:
 async def reset_prospecting_data(session: AsyncSession) -> dict[str, int]:
     sequence_result = await session.execute(delete(OutreachSequence))
     activity_result = await session.execute(delete(Activity).where(Activity.contact_id.isnot(None)))
+    reminders_result = await session.execute(delete(Reminder).where(Reminder.contact_id.isnot(None)))
     contact_result = await session.execute(delete(Contact))
     await session.commit()
 
@@ -102,6 +104,7 @@ async def reset_prospecting_data(session: AsyncSession) -> dict[str, int]:
         "contacts_deleted": _count_deleted(contact_result),
         "outreach_sequences_deleted": _count_deleted(sequence_result),
         "activities_deleted": _count_deleted(activity_result),
+        "reminders_deleted": _count_deleted(reminders_result),
         "companies_refreshed": refreshed_companies,
     }
 
@@ -112,6 +115,7 @@ async def reset_workspace_data(session: AsyncSession) -> dict[str, int]:
     signals_result = await session.execute(delete(Signal))
     activities_result = await session.execute(delete(Activity))
     sequences_result = await session.execute(delete(OutreachSequence))
+    reminders_result = await session.execute(delete(Reminder))
     deals_result = await session.execute(delete(Deal))
     contacts_result = await session.execute(delete(Contact))
     companies_result = await session.execute(delete(Company))
@@ -125,6 +129,7 @@ async def reset_workspace_data(session: AsyncSession) -> dict[str, int]:
         "deals_deleted": _count_deleted(deals_result),
         "activities_deleted": _count_deleted(activities_result),
         "outreach_sequences_deleted": _count_deleted(sequences_result),
+        "reminders_deleted": _count_deleted(reminders_result),
         "signals_deleted": _count_deleted(signals_result),
         "meetings_deleted": _count_deleted(meetings_result),
         "custom_demos_deleted": _count_deleted(custom_demos_result),
