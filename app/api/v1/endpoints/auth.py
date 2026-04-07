@@ -56,8 +56,10 @@ async def google_callback(
     # user's identity details that our app stores locally.
     try:
         google_info = await exchange_google_code(code, settings.GOOGLE_REDIRECT_URI)
-    except Exception:
-        raise UnauthorizedError("Failed to authenticate with Google")
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("Google OAuth exchange failed: %s", exc)
+        raise UnauthorizedError(f"Failed to authenticate with Google: {exc}")
 
     email = google_info["email"]
     # Domain restriction removed — any Google account can sign in for testing.

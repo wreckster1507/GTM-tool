@@ -117,6 +117,11 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "contact_last_name": ["last", "last name"],
     "contact_title":  ["title", "job title", "job", "role"],
     "contact_email":  ["email", "work email"],
+    "contact_phone":  [
+        "direct mobile personal", "mobile", "phone", "phone number",
+        "direct phone", "cell", "cell phone", "personal phone",
+        "hq direct line", "direct line",
+    ],
     "linkedin_url":   ["linkedin", "linkedin url", "linkedin profile"],
     "next_steps":     ["next steps", "recommended next step"],
     "ownership_stage": ["ownership stage"],
@@ -903,6 +908,7 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     title = _find(row, "contact_title")
     email = _clean_email(_find(row, "contact_email"))
     linkedin_url = _find(row, "linkedin_url") or None
+    phone = _find(row, "contact_phone") or None
 
     if not first and not last and contact_name:
         first, last = _split_contact_name(contact_name)
@@ -928,6 +934,7 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         "first_name": first[:120],
         "last_name": last[:160],
         "email": email or None,
+        "phone": phone,
         "title": title or None,
         "linkedin_url": linkedin_url,
         "assigned_rep_email": company_fields.get("assigned_rep_email"),
@@ -1693,6 +1700,42 @@ def _read_xlsx_shared_strings(archive: zipfile.ZipFile) -> list[str]:
     return strings
 
 
+def _read_xlsx_hyperlinks(archive: zipfile.ZipFile, sheet_path: str) -> dict[str, str]:
+    """Return a mapping of cell reference (e.g. 'C3') → URL for hyperlinks in a sheet.
+
+    xlsx stores hyperlinks in two places:
+    - The sheet XML lists which cells have hyperlinks and their relationship IDs.
+    - The sheet's .rels file maps relationship IDs to actual URLs.
+    """
+    # Build rel_id → url from the sheet's rels file
+    rels_path = sheet_path.replace("worksheets/sheet", "worksheets/_rels/sheet").replace(".xml", ".xml.rels")
+    if rels_path not in archive.namelist():
+        return {}
+
+    _rels_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    rels_root = ET.fromstring(archive.read(rels_path))
+    rel_id_to_url: dict[str, str] = {}
+    for rel in rels_root.findall(f"{{{_rels_ns}}}Relationship"):
+        if rel.attrib.get("Type", "").endswith("/hyperlink"):
+            rel_id_to_url[rel.attrib["Id"]] = rel.attrib.get("Target", "")
+
+    if not rel_id_to_url:
+        return {}
+
+    # Map cell references to URLs from the sheet's <hyperlinks> section
+    sheet_root = ET.fromstring(archive.read(sheet_path))
+    _r_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    cell_to_url: dict[str, str] = {}
+    for hl in sheet_root.findall(".//main:hyperlinks/main:hyperlink", _XLSX_NS):
+        cell_ref = hl.attrib.get("ref", "")
+        rel_id = hl.attrib.get(f"{{{_r_ns}}}id", "")
+        url = rel_id_to_url.get(rel_id, "")
+        if cell_ref and url:
+            # ref can be a range like "C3:C3" — take just the first cell
+            cell_to_url[cell_ref.split(":")[0]] = url
+    return cell_to_url
+
+
 def _sheet_entries(archive: zipfile.ZipFile) -> list[tuple[str, str]]:
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
@@ -1801,13 +1844,59 @@ def parse_prospect_xlsx(content: bytes) -> list[dict[str, str]]:
         if len(sheet_rows) < 3:
             return []
 
+        # row index 1 (0-based) is the actual header row in this workbook
         headers = [_normalize_header(value) for value in sheet_rows[1]]
+
+        # Build cell_ref → url map and figure out which columns carry hyperlinks
+        # that are LinkedIn profile URLs. We also detect which column index holds
+        # the contact name so we can assign hyperlinks on name cells to linkedin.
+        cell_to_url = _read_xlsx_hyperlinks(archive, sheet_path)
+
+        # Find which 0-based column indices are "name-like" contact columns
+        name_col_indices: set[int] = set()
+        for col_idx, header in enumerate(headers):
+            if header in _ALIASES["contact_name"] or header in _ALIASES["contact_first_name"]:
+                name_col_indices.add(col_idx)
+
+        # Build a mapping: excel_row_number (1-based) → linkedin_url
+        # by scanning all hyperlinks that point to linkedin.com
+        def _col_letter(idx: int) -> str:
+            """Convert 0-based column index to Excel letter(s) e.g. 0→A, 2→C."""
+            result = ""
+            idx += 1
+            while idx:
+                idx, rem = divmod(idx - 1, 26)
+                result = chr(65 + rem) + result
+            return result
+
+        # Pre-build: for each excel data row, extract linkedin URLs from hyperlinked cells
+        # Data rows start at excel row 3 (1-based) = sheet_rows index 2 (0-based)
         rows: list[dict[str, str]] = []
-        for values in sheet_rows[2:]:
+        for data_idx, values in enumerate(sheet_rows[2:]):
             if not any((value or "").strip() for value in values):
                 continue
 
             cleaned = _normalize_row(headers, values)
+
+            # Excel row number for this data row (row 1 = grouped labels, row 2 = headers, row 3+ = data)
+            excel_row = data_idx + 3
+
+            # Pull LinkedIn URL from any hyperlink on this row:
+            # 1. Prefer an explicit "linkedin" column hyperlink
+            # 2. Fall back to a hyperlink on a name column that points to linkedin.com
+            linkedin_url = ""
+            for col_idx in range(max(len(headers), len(values))):
+                cell_ref = f"{_col_letter(col_idx)}{excel_row}"
+                url = cell_to_url.get(cell_ref, "")
+                if not url:
+                    continue
+                if "linkedin.com" in url:
+                    linkedin_url = url
+                    break  # first linkedin hyperlink wins
+
+            if linkedin_url and not cleaned.get("linkedin"):
+                cleaned["linkedin"] = linkedin_url
+
             has_company = any(cleaned.get(alias) for alias in _ALIASES["name"])
             has_contact = any(
                 cleaned.get(alias)
