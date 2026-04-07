@@ -63,6 +63,29 @@ async function requestPaginated<T>(path: string): Promise<Paginated<T>> {
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 
+const ISO_DATETIME_NO_TZ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+
+function normalizeUtcDateStrings<T>(value: T): T {
+  if (value == null) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeUtcDateStrings(item)) as T;
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const normalized: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(obj)) {
+      normalized[key] = normalizeUtcDateStrings(item);
+    }
+    return normalized as T;
+  }
+  if (typeof value === "string" && ISO_DATETIME_NO_TZ.test(value)) {
+    // Backend stores many timestamps as UTC without an explicit offset.
+    // Appending Z ensures browsers interpret these as UTC before local display.
+    return `${value}Z` as T;
+  }
+  return value;
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem("beacon_token");
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -85,7 +108,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(err.detail ?? "Request failed");
   }
   if (res.status === 204) return undefined as T;
-  return res.json();
+  const payload = await res.json();
+  return normalizeUtcDateStrings(payload) as T;
 }
 
 export const companiesApi = {
