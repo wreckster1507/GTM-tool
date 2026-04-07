@@ -1130,20 +1130,45 @@ def _build_competitive_landscape_cards(company_name: str, icp: dict[str, Any]) -
     category = _clip_text(icp.get("category"), 140)
     core_focus = _clip_text(icp.get("core_focus"), 280)
     beacon_angle = _clip_text(icp.get("beacon_angle"), 320)
+    recommended_strategy = _clip_text(icp.get("recommended_outreach_strategy"), 280)
+    implementation_cycle = _clip_text(icp.get("implementation_cycle"), 220)
+
+    raw_open_gaps = icp.get("open_gaps")
+    open_gaps: list[str] = []
+    if isinstance(raw_open_gaps, list):
+        open_gaps = [
+            _clip_text(item, 160)
+            for item in raw_open_gaps
+            if _clip_text(item, 160)
+        ]
+
+    differentiation_tracks = [
+        "de-risk implementation execution",
+        "shorten time-to-value with fewer handoffs",
+        "reduce services dependency and delivery overhead",
+        "improve cross-functional rollout coordination",
+    ]
+
+    context_snippets = [
+        snippet
+        for snippet in [beacon_angle, recommended_strategy, implementation_cycle, *(open_gaps[:2])]
+        if snippet
+    ]
 
     cards: list[dict[str, str]] = []
-    for name in competitors[:4]:
+    for idx, name in enumerate(competitors[:4]):
         summary_parts = [f"{name} is a comparable option buyers evaluate alongside {company_name}."]
         if category:
             summary_parts.append(f"Category context: {category}.")
         if core_focus:
             summary_parts.append(core_focus)
 
-        pitch_angle = (
-            f"Against {name}, position Beacon on faster implementation cycles and lower delivery overhead."
-        )
-        if beacon_angle:
-            pitch_angle = f"Against {name}: {beacon_angle}"
+        track = differentiation_tracks[idx % len(differentiation_tracks)]
+        if context_snippets:
+            context = context_snippets[idx % len(context_snippets)]
+            pitch_angle = f"Against {name}: focus on how Beacon can {track}. {context}"
+        else:
+            pitch_angle = f"Against {name}: focus on how Beacon can {track}."
 
         cards.append(
             {

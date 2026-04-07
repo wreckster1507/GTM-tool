@@ -15,6 +15,7 @@ Endpoints:
 """
 import csv
 import io
+import re
 from datetime import datetime
 from uuid import UUID
 
@@ -565,7 +566,27 @@ async def _build_competitive_landscape(session, company: Company) -> list[dict[s
             if len(normalized_cards) >= 4:
                 break
         if normalized_cards:
-            return normalized_cards
+            # Older cached cards used a single generic pitch across all competitors.
+            # If we detect that shape, rebuild from fresher AI/DB signals instead.
+            pitch_values = [str(card.get("pitch_angle") or "").strip().lower() for card in normalized_cards]
+            pitch_values = [value for value in pitch_values if value]
+            pitch_bodies: set[str] = set()
+            for card in normalized_cards:
+                name = str(card.get("name") or "").strip().lower()
+                pitch = str(card.get("pitch_angle") or "").strip().lower()
+                if not pitch:
+                    continue
+                body = pitch
+                if name:
+                    body = re.sub(rf"^against\s+{re.escape(name)}\s*[:,\-]?\s*", "", body)
+                pitch_bodies.add(body)
+
+            has_repeated_generic_pitch = (
+                len(normalized_cards) > 1
+                and (len(set(pitch_values)) <= 1 or len(pitch_bodies) <= 1)
+            )
+            if not has_repeated_generic_pitch:
+                return normalized_cards
 
     ai_entry = cache.get("ai_summary") if isinstance(cache.get("ai_summary"), dict) else {}
     ai_data = ai_entry.get("data") if isinstance(ai_entry.get("data"), dict) else {}
@@ -574,6 +595,39 @@ async def _build_competitive_landscape(session, company: Company) -> list[dict[s
         label = str(item or "").strip()
         if label:
             seed_names.append(label)
+
+    seed_pitch_tracks = [
+        "Highlight faster implementation cycles with fewer delivery handoffs.",
+        "Emphasize lower services overhead and clearer rollout ownership.",
+        "Position Beacon as the safer path for complex cross-team deployments.",
+        "Lead with deployment-risk reduction and measurable time-to-value gains.",
+    ]
+
+    if seed_names:
+        category = str(company.vertical or company.industry or "").strip()
+        seeded_cards: list[dict[str, str]] = []
+        seen_seed: set[str] = set()
+        for idx, label in enumerate(seed_names):
+            key = label.lower()
+            if key in seen_seed:
+                continue
+            seen_seed.add(key)
+            summary = f"{label} is a comparable option buyers evaluate alongside {company.name}."
+            if category:
+                summary = f"{summary} Category context: {category}."
+            seeded_cards.append(
+                {
+                    "name": label,
+                    "website": "",
+                    "summary": summary[:320],
+                    "pitch_angle": f"Against {label}: {seed_pitch_tracks[idx % len(seed_pitch_tracks)]}",
+                    "source": "research",
+                }
+            )
+            if len(seeded_cards) >= 4:
+                break
+        if seeded_cards:
+            return seeded_cards
 
     # Try specific filters first, then broaden
     base = select(Company).where(Company.id != company.id)
@@ -645,7 +699,7 @@ async def _build_competitive_landscape(session, company: Company) -> list[dict[s
         if len(results) >= 4:
             return results
 
-    for label in seed_names:
+    for idx, label in enumerate(seed_names):
         key = label.lower()
         if key in seen:
             continue
@@ -655,7 +709,7 @@ async def _build_competitive_landscape(session, company: Company) -> list[dict[s
                 "name": label,
                 "website": "",
                 "summary": "Mentioned in Beacon's lightweight competitive scan.",
-                "pitch_angle": "Use Beacon to reduce implementation drag versus incumbent-heavy approaches.",
+                "pitch_angle": f"Against {label}: {seed_pitch_tracks[idx % len(seed_pitch_tracks)]}",
                 "source": "research",
             }
         )
