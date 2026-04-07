@@ -1,5 +1,5 @@
 """Reminders — per-stakeholder follow-up reminders for sales reps."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -15,6 +15,15 @@ from app.models.reminder import Reminder, ReminderCreate, ReminderRead, Reminder
 from app.models.user import User
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
+
+
+def _normalize_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
+    """Persist datetimes as naive UTC for TIMESTAMP WITHOUT TIME ZONE columns."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 async def _to_read(session: AsyncSession, r: Reminder) -> ReminderRead:
@@ -67,7 +76,7 @@ async def create_reminder(payload: ReminderCreate, session: DBSession):
         company_id=payload.company_id or contact.company_id,
         assigned_to_id=payload.assigned_to_id,
         note=payload.note,
-        due_at=payload.due_at,
+        due_at=_normalize_utc_naive(payload.due_at),
     )
     session.add(reminder)
     await session.commit()
@@ -82,6 +91,10 @@ async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: D
         raise NotFoundError(f"Reminder {reminder_id} not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if "due_at" in data:
+        data["due_at"] = _normalize_utc_naive(data["due_at"])
+    if "completed_at" in data:
+        data["completed_at"] = _normalize_utc_naive(data["completed_at"])
     if "status" in data:
         if data["status"] not in ("pending", "completed", "dismissed"):
             raise ValidationError("Status must be pending, completed, or dismissed")

@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from sqlalchemy import and_, case, or_, select
+from sqlalchemy import and_, case, delete, or_, select
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
@@ -363,10 +363,8 @@ async def delete_task(task_id: UUID, session: DBSession, current_user: CurrentUs
     if not _can_delete_task(task, current_user):
         raise ForbiddenError("Only admins or the user who created this task can delete it")
 
-    comments = (
-        await session.execute(select(TaskComment).where(TaskComment.task_id == task_id))
-    ).scalars().all()
-    for comment in comments:
-        await session.delete(comment)
+    # Delete dependent comments first to satisfy FK constraints reliably.
+    await session.execute(delete(TaskComment).where(TaskComment.task_id == task_id))
+    await session.flush()
     await session.delete(task)
     await session.commit()
