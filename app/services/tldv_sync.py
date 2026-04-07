@@ -18,6 +18,7 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
+from app.models.settings import WorkspaceSettings
 from app.services.tasks import refresh_system_tasks_for_entity
 
 
@@ -298,6 +299,12 @@ async def _match_recent_gmail_deal(session: AsyncSession, attendee_emails: list[
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _is_tldv_sync_enabled(session: AsyncSession) -> bool:
+    row = (await session.execute(select(WorkspaceSettings).where(WorkspaceSettings.id == 1))).scalar_one_or_none()
+    cfg = row.sync_schedule_settings if row and isinstance(row.sync_schedule_settings, dict) else {}
+    return bool(cfg.get("tldv_sync_enabled", True))
 
 
 def _meeting_highlights_text(highlights_payload: dict[str, Any] | None) -> str:
@@ -881,12 +888,28 @@ async def sync_tldv_history(
     if client.mock:
         raise ValueError("tl;dv API key is not configured")
 
+    if not await _is_tldv_sync_enabled(session):
+        return {
+            "processed": 0,
+            "stopped": True,
+            "reason": "disabled",
+            **TldvSyncStats().as_dict(),
+        }
+
     stats = TldvSyncStats()
     cutoff = datetime.utcnow() - timedelta(days=lookback_days or settings.TLDV_SYNC_LOOKBACK_DAYS)
     page = 1
     processed = 0
 
     while True:
+        if not await _is_tldv_sync_enabled(session):
+            return {
+                "processed": processed,
+                "stopped": True,
+                "reason": "disabled_during_run",
+                **stats.as_dict(),
+            }
+
         payload = await client.list_meetings(page=page, page_size=page_size)
         results = payload.get("results") or []
         if not results:

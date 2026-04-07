@@ -1234,6 +1234,10 @@ export const settingsApi = {
     request<{ status: string }>("/api/v1/settings/sync-schedule/tldv-now", {
       method: "POST",
     }),
+  stopTldvSync: () =>
+    request<{ status: string; tldv_sync_enabled: boolean }>("/api/v1/settings/sync-schedule/tldv-stop", {
+      method: "POST",
+    }),
 };
 
 export const aircallApi = {

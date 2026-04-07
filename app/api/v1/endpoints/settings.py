@@ -628,6 +628,17 @@ async def trigger_tldv_sync_now(_admin: AdminUser):
     return {"status": "queued"}
 
 
+@router.post("/sync-schedule/tldv-stop", response_model=dict)
+async def stop_tldv_sync(session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    current = {**SYNC_DEFAULTS, **(row.sync_schedule_settings or {})}
+    current["tldv_sync_enabled"] = False
+    row.sync_schedule_settings = current
+    session.add(row)
+    await session.commit()
+    return {"status": "stopped", "tldv_sync_enabled": False}
+
+
 @router.get("/email-sync", response_model=GmailSettingsRead)
 async def get_gmail_settings(session: DBSession, _user: CurrentUser):
     return await _gmail_status(session)

@@ -81,6 +81,7 @@ export default function SettingsPage() {
   const [syncSchedule, setSyncSchedule] = useState<SyncScheduleSettings | null>(null);
   const [savingSyncSchedule, setSavingSyncSchedule] = useState(false);
   const [triggeringTldv, setTriggeringTldv] = useState(false);
+  const [stoppingTldv, setStoppingTldv] = useState(false);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingInbox, setSavingInbox] = useState(false);
@@ -220,6 +221,21 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to trigger sync");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleStopTldvSync = async () => {
+    setStoppingTldv(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await settingsApi.stopTldvSync();
+      await loadSettings();
+      setMessage("tl;dv sync stop requested. Current run will stop between meetings and future scheduled runs are disabled.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stop tl;dv sync");
+    } finally {
+      setStoppingTldv(false);
     }
   };
 
@@ -1144,10 +1160,16 @@ export default function SettingsPage() {
               {/* Actions */}
               {isAdmin ? (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <button className="crm-button soft" type="button" onClick={handleTriggerTldvSync} disabled={triggeringTldv}>
-                    {triggeringTldv ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-                    Sync tl;dv now
-                  </button>
+                  <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+                    <button className="crm-button soft" type="button" onClick={handleTriggerTldvSync} disabled={triggeringTldv || stoppingTldv}>
+                      {triggeringTldv ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                      Sync tl;dv now
+                    </button>
+                    <button className="crm-button soft" type="button" onClick={handleStopTldvSync} disabled={stoppingTldv || triggeringTldv}>
+                      {stoppingTldv ? <RefreshCw size={15} className="animate-spin" /> : <AlertTriangle size={15} />}
+                      Stop tl;dv sync
+                    </button>
+                  </div>
                   <button className="crm-button primary" type="button" onClick={handleSaveSyncSchedule} disabled={savingSyncSchedule || !syncSchedule}>
                     {savingSyncSchedule ? <RefreshCw size={15} className="animate-spin" /> : <Clock size={15} />}
                     Save sync schedule
