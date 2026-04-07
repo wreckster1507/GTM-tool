@@ -74,21 +74,40 @@ async def google_callback(
     ).scalar_one_or_none()
 
     if user is None:
-        # Bootstrap rule: the very first user can administer the system without a
-        # manual seed step; everyone after that starts as an SDR.
-        user_count = (await session.execute(select(func.count(User.id)))).scalar_one()
-        role = "admin" if user_count == 0 else "sdr"
+        # Check if a placeholder account already exists for this email (e.g. seeded
+        # from ClickUp import with google_id='clickup_import_...' or 'seed_...').
+        # If so, claim it by updating the google_id rather than creating a duplicate
+        # which would violate the unique email constraint.
+        existing_by_email = (
+            await session.execute(
+                select(User).where(User.email == google_info["email"])
+            )
+        ).scalar_one_or_none()
 
-        user = User(
-            email=google_info["email"],
-            name=google_info["name"],
-            avatar_url=google_info.get("avatar_url"),
-            google_id=google_info["google_id"],
-            role=role,
-        )
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
+        if existing_by_email is not None:
+            # Upgrade the placeholder: bind the real Google ID and refresh profile.
+            existing_by_email.google_id = google_info["google_id"]
+            existing_by_email.name = google_info["name"]
+            existing_by_email.avatar_url = google_info.get("avatar_url")
+            session.add(existing_by_email)
+            await session.commit()
+            await session.refresh(existing_by_email)
+            user = existing_by_email
+        else:
+            # Genuinely new user — first user becomes admin, everyone else sdr.
+            user_count = (await session.execute(select(func.count(User.id)))).scalar_one()
+            role = "admin" if user_count == 0 else "sdr"
+
+            user = User(
+                email=google_info["email"],
+                name=google_info["name"],
+                avatar_url=google_info.get("avatar_url"),
+                google_id=google_info["google_id"],
+                role=role,
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
     else:
         # Keep profile fields in sync with Google so name/avatar changes show up
         # without requiring a separate profile-edit flow in this app.
