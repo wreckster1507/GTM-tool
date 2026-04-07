@@ -102,10 +102,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    environment:
-      VITE_API_URL: http://localhost:8000
     ports:
-      - "8080:5173"
+      - "8080:80"
 
 volumes:
   postgres_data:
