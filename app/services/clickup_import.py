@@ -107,15 +107,29 @@ class ClickUpClient:
             if cache_path.exists():
                 return json.loads(cache_path.read_text(encoding="utf-8"))
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(f"{self._base_url}{path}", headers=self._headers, params=params)
-            response.raise_for_status()
-            payload = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.get(f"{self._base_url}{path}", headers=self._headers, params=params)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in {401, 403}:
+                raise RuntimeError("ClickUp API authentication failed. Check CLICKUP_API_TOKEN.") from exc
+            if status == 404:
+                raise RuntimeError("ClickUp list not found. Verify the Deals List ID in Settings -> ClickUp CRM.") from exc
+            raise RuntimeError(f"ClickUp API request failed with status {status}.") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError("ClickUp API request failed due to a network/timeout issue.") from exc
 
         if self._cache_dir and cache_name:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
             cache_path = self._cache_dir / cache_name
-            cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            try:
+                cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            except OSError:
+                # Cache writes are best-effort only; import should continue if FS is restricted.
+                logger.warning("clickup import cache write failed for %s", cache_path)
 
         return payload
 
