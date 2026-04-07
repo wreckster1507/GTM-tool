@@ -93,6 +93,8 @@ async def get_or_create_workspace_settings_row(session):
 def filter_funnel_config_to_stage_ids(config: dict[str, list[str]] | None, allowed_stage_ids: list[str], fallback: dict[str, list[str]]) -> dict[str, list[str]]:
     allowed = set(allowed_stage_ids)
     return {
+        "active": [stage for stage in (config or {}).get("active", fallback.get("active", [])) if stage in allowed] or [stage for stage in fallback.get("active", []) if stage in allowed],
+        "inactive": [stage for stage in (config or {}).get("inactive", fallback.get("inactive", [])) if stage in allowed] or [stage for stage in fallback.get("inactive", []) if stage in allowed],
         "tofu": [stage for stage in (config or {}).get("tofu", fallback.get("tofu", [])) if stage in allowed] or [stage for stage in fallback.get("tofu", []) if stage in allowed],
         "mofu": [stage for stage in (config or {}).get("mofu", fallback.get("mofu", [])) if stage in allowed] or [stage for stage in fallback.get("mofu", []) if stage in allowed],
         "bofu": [stage for stage in (config or {}).get("bofu", fallback.get("bofu", [])) if stage in allowed] or [stage for stage in fallback.get("bofu", []) if stage in allowed],

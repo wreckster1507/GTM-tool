@@ -288,6 +288,10 @@ async def _async_icp_research_batch(batch_id: UUID) -> None:
                 return
 
             batch.status = "processing"
+            meta = dict(batch.meta or {})
+            meta["current_stage"] = "research_running"
+            meta["progress_message"] = "Research started"
+            batch.meta = meta
             batch.updated_at = datetime.utcnow()
             session.add(batch)
             await session.commit()
@@ -329,6 +333,10 @@ async def _async_icp_research_batch(batch_id: UUID) -> None:
                             return
                         progress_batch.processed_rows = processed
                         progress_batch.failed_rows = failed
+                        progress_meta = dict(progress_batch.meta or {})
+                        progress_meta["current_stage"] = "research_running"
+                        progress_meta["progress_message"] = f"Processed {processed} of {len(company_ids)} accounts"
+                        progress_batch.meta = progress_meta
                         if error_payload:
                             existing_errors = list(progress_batch.error_log or [])
                             existing_errors.append(error_payload)
@@ -344,6 +352,10 @@ async def _async_icp_research_batch(batch_id: UUID) -> None:
             if batch:
                 batch.failed_rows = failed
                 batch.status = "failed" if failed == len(company_ids) and company_ids else "completed"
+                meta = dict(batch.meta or {})
+                meta["current_stage"] = "completed" if batch.status == "completed" else "failed"
+                meta["progress_message"] = "Research complete" if batch.status == "completed" else "Research failed"
+                batch.meta = meta
                 batch.updated_at = datetime.utcnow()
                 session.add(batch)
                 await session.commit()

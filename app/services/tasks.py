@@ -527,7 +527,7 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
             description="Aircall logged a missed connection with this prospect. Retry the call or follow up while the context is still fresh.",
             priority="high",
             source="aircall",
-            recommended_action=None,
+            recommended_action="retry_contact_call",
             action_payload={"contact_id": str(contact.id), "next_step": "retry_call"},
             assigned_role="sdr",
         )
@@ -544,7 +544,7 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
             description="A voicemail was left for this prospect. Send a short follow-up note that references the call and proposes the next step.",
             priority="medium",
             source="aircall",
-            recommended_action=None,
+            recommended_action="follow_up_voicemail",
             action_payload={"contact_id": str(contact.id), "next_step": "follow_up_voicemail"},
             assigned_role="sdr",
         )
@@ -576,7 +576,7 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
             description=recap_description,
             priority="medium",
             source=recap_source,
-            recommended_action=None,
+            recommended_action="send_contact_call_recap",
             action_payload={"contact_id": str(contact.id), "next_step": "send_call_recap"},
             assigned_role="sdr",
         )
@@ -677,36 +677,35 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             for activity in activity_rows
         )
     )
+    move_recommendation_created = False
 
     for activity in activity_rows:
         text = _activity_signal_text(activity)
         if not text:
             continue
         suggestion = _deal_signal_task(text, deal.stage)
-        if not suggestion:
-            pass
-        else:
+        if suggestion and not move_recommendation_created:
             target_stage, title, description = suggestion
             system_key = f"deal_move_{target_stage}"
-            if system_key not in created_keys:
-                created_keys.add(system_key)
-                await _upsert_system_task(
-                    session,
-                    entity_type="deal",
-                    entity_id=deal.id,
-                    system_key=system_key,
-                    title=title,
-                    description=description,
-                    priority="high" if target_stage in {"poc_agreed", "msa_review"} else "medium",
-                    source=activity.source or "system",
-                    recommended_action="move_deal_stage",
-                    action_payload={
-                        "deal_id": str(deal.id),
-                        "stage": target_stage,
-                        "activity_id": str(activity.id),
-                    },
-                    assigned_role="ae",
-                )
+            created_keys.add(system_key)
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key=system_key,
+                title=title,
+                description=description,
+                priority="high" if target_stage in {"poc_agreed", "msa_review"} else "medium",
+                source=activity.source or "system",
+                recommended_action="move_deal_stage",
+                action_payload={
+                    "deal_id": str(deal.id),
+                    "stage": target_stage,
+                    "activity_id": str(activity.id),
+                },
+                assigned_role="ae",
+            )
+            move_recommendation_created = True
 
         if _contains_any(text, ["security review", "security questionnaire", "procurement", "legal review", "msa", "redline"]):
             legal_signal = True
@@ -796,7 +795,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             description="Recent buyer language suggests they want pricing, a quote, or commercial terms. Send the commercial package and keep the thread moving.",
             priority="high",
             source=pricing_request_source,
-            recommended_action=None,
+            recommended_action="send_pricing_package",
             action_payload={"deal_id": str(deal.id), "next_step": "send_pricing"},
             assigned_role="ae",
         )
@@ -812,7 +811,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             description="Buyer activity points to a workshop or working session. Lock in the session and make sure the right technical stakeholders are present.",
             priority="medium",
             source=workshop_signal_source,
-            recommended_action=None,
+            recommended_action="book_workshop_session",
             action_payload={"deal_id": str(deal.id), "next_step": "book_workshop"},
             assigned_role="ae",
         )
@@ -846,7 +845,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             description="Aircall logged a missed buyer call on this deal. Retry the call or send a short follow-up before the thread goes cold.",
             priority="high",
             source="aircall",
-            recommended_action=None,
+            recommended_action="retry_deal_call",
             action_payload={"deal_id": str(deal.id), "next_step": "retry_call"},
             assigned_role="ae",
         )
@@ -864,7 +863,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             description="A voicemail was left on this deal. Follow up while the call attempt is still fresh and reference the message if needed.",
             priority="medium",
             source="aircall",
-            recommended_action=None,
+            recommended_action="follow_up_deal_voicemail",
             action_payload={"deal_id": str(deal.id), "next_step": "follow_up_voicemail"},
             assigned_role="ae",
         )
@@ -889,7 +888,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             description=recap_description,
             priority="medium",
             source="aircall",
-            recommended_action=None,
+            recommended_action="send_deal_call_recap",
             action_payload={"deal_id": str(deal.id), "next_step": "send_call_recap"},
             assigned_role="ae",
         )
@@ -917,7 +916,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             ),
             priority="high",
             source="tldv",
-            recommended_action=None,
+            recommended_action="send_meeting_follow_up",
             action_payload={
                 "deal_id": str(deal.id),
                 "next_step": "send_meeting_follow_up",
@@ -945,7 +944,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             description="Beacon sees an outbound email with no newer buyer reply for 5+ days. Send a follow-up so the deal does not stall quietly.",
             priority="high",
             source="system",
-            recommended_action=None,
+            recommended_action="follow_up_buyer_thread",
             action_payload={"deal_id": str(deal.id), "next_step": "follow_up"},
             assigned_role="ae",
         )
@@ -1235,5 +1234,81 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
         contact_id = str(payload["contact_id"])
         re_enrich_contact_task.delay(contact_id)
         return {"message": "Prospect re-enrichment queued"}
+
+    if action in {
+        "send_pricing_package",
+        "book_workshop_session",
+        "retry_deal_call",
+        "follow_up_deal_voicemail",
+        "send_deal_call_recap",
+        "send_meeting_follow_up",
+        "follow_up_buyer_thread",
+    }:
+        deal_id = UUID(str(payload["deal_id"]))
+        deal = await session.get(Deal, deal_id)
+        if not deal:
+            raise ValueError("Deal no longer exists")
+
+        action_text = {
+            "send_pricing_package": "Sent pricing/commercial package",
+            "book_workshop_session": "Booked technical workshop session",
+            "retry_deal_call": "Retried buyer call",
+            "follow_up_deal_voicemail": "Sent voicemail follow-up",
+            "send_deal_call_recap": "Sent post-call recap",
+            "send_meeting_follow_up": "Sent post-meeting follow-up",
+            "follow_up_buyer_thread": "Sent buyer thread follow-up",
+        }[action]
+
+        stage_update: str | None = None
+        if action == "send_pricing_package" and not _stage_reached(deal.stage, "commercial_negotiation"):
+            stage_update = "commercial_negotiation"
+        elif action == "book_workshop_session" and not _stage_reached(deal.stage, "workshop"):
+            stage_update = "workshop"
+
+        if stage_update:
+            deal.stage = stage_update
+            deal.stage_entered_at = datetime.utcnow()
+            deal.days_in_stage = 0
+
+        next_step = str(payload.get("next_step") or "").strip()
+        if next_step:
+            deal.next_step = next_step.replace("_", " ").capitalize()
+        deal.updated_at = datetime.utcnow()
+        session.add(deal)
+
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content=f"{action_text} via accepted Beacon task",
+                created_by_id=user.id,
+            )
+        )
+        return {"message": action_text}
+
+    if action in {"retry_contact_call", "follow_up_voicemail", "send_contact_call_recap"}:
+        contact_id = UUID(str(payload["contact_id"]))
+        contact = await session.get(Contact, contact_id)
+        if not contact:
+            raise ValueError("Prospect no longer exists")
+
+        action_text = {
+            "retry_contact_call": "Retried prospect call",
+            "follow_up_voicemail": "Sent voicemail follow-up",
+            "send_contact_call_recap": "Sent post-call recap",
+        }[action]
+        session.add(
+            Activity(
+                contact_id=contact_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content=f"{action_text} via accepted Beacon task",
+                created_by_id=user.id,
+            )
+        )
+        return {"message": action_text}
 
     return {"message": "No automatic action configured"}

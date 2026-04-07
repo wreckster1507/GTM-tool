@@ -487,33 +487,20 @@ async def _batch_current_stage(session, batch_id: UUID, batch: SourcingBatch) ->
         return "tal_review", "Waiting for approval before running enrichment"
     if batch.status == "cancelled":
         return "cancelled", "Import saved without enrichment"
+    if batch.status == "pending":
+        return "queued", str(meta.get("progress_message") or "Queued for research")
+    if batch.status == "processing":
+        total = int(batch.total_rows or 0)
+        processed = int(batch.processed_rows or 0)
+        fallback = (
+            f"Processed {processed} of {total} accounts" if total > 0 else "Research in progress"
+        )
+        return str(meta.get("current_stage") or "research_running"), str(meta.get("progress_message") or fallback)
     if batch.status == "completed":
         return "completed", "Research complete"
-
-    latest_company = (
-        await session.execute(
-            select(Company)
-            .where(Company.sourcing_batch_id == batch_id)
-            .order_by(Company.updated_at.desc())
-            .limit(1)
-        )
-    ).scalars().first()
-    if not latest_company:
-        return meta.get("current_stage"), meta.get("progress_message")
-
-    cache = latest_company.enrichment_cache if isinstance(latest_company.enrichment_cache, dict) else {}
-    pipeline = cache.get("pipeline") if isinstance(cache.get("pipeline"), dict) else {}
-    stage = pipeline.get("current_stage")
-    status = pipeline.get("status")
-    detail = None
-    events = pipeline.get("events") if isinstance(pipeline.get("events"), list) else []
-    if events:
-        latest_event = events[-1] if isinstance(events[-1], dict) else {}
-        detail = latest_event.get("detail")
-
-    if isinstance(stage, str):
-        return stage, detail or status or f"{stage.replace('_', ' ').title()} in progress"
-    return meta.get("current_stage"), meta.get("progress_message")
+    if batch.status == "failed":
+        return "failed", str(meta.get("progress_message") or "Research failed")
+    return str(meta.get("current_stage") or "unknown"), str(meta.get("progress_message") or "")
 
 
 async def _build_batch_read(session, batch: SourcingBatch) -> SourcingBatchRead:
@@ -556,6 +543,30 @@ async def _queue_batch_enrichment(session, batch: SourcingBatch) -> None:
 
 async def _build_competitive_landscape(session, company: Company) -> list[dict[str, str]]:
     cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+
+    cached_cards = cache.get("competitive_landscape_v2")
+    if isinstance(cached_cards, list) and cached_cards:
+        normalized_cards: list[dict[str, str]] = []
+        for item in cached_cards:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            normalized_cards.append(
+                {
+                    "name": name,
+                    "website": str(item.get("website") or "").strip(),
+                    "summary": str(item.get("summary") or "").strip()[:320],
+                    "pitch_angle": str(item.get("pitch_angle") or "").strip()[:320],
+                    "source": str(item.get("source") or "icp_analysis"),
+                }
+            )
+            if len(normalized_cards) >= 4:
+                break
+        if normalized_cards:
+            return normalized_cards
+
     ai_entry = cache.get("ai_summary") if isinstance(cache.get("ai_summary"), dict) else {}
     ai_data = ai_entry.get("data") if isinstance(ai_entry.get("data"), dict) else {}
     seed_names = []

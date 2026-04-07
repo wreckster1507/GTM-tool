@@ -217,11 +217,16 @@ async def list_workspace_tasks(
     include_closed: bool = Query(default=False),
     task_type: str | None = Query(default=None),
     entity_type: str | None = Query(default=None),
+    scope: str = Query(default="mine"),
 ):
     if task_type and task_type not in {"manual", "system"}:
         raise ValidationError("task_type must be one of: ['manual', 'system']")
     if entity_type:
         _validate_entity_type(entity_type)
+    if scope not in {"mine", "team"}:
+        raise ValidationError("scope must be one of: ['mine', 'team']")
+    if scope == "team" and current_user.role != "admin":
+        raise ForbiddenError("Only admins can access the team queue")
 
     status_rank = case(
         (Task.status == "open", 0),
@@ -237,7 +242,7 @@ async def list_workspace_tasks(
     stmt = select(Task).order_by(status_rank, priority_rank, Task.updated_at.desc())
     await backfill_open_task_assignments(session)
     await session.commit()
-    if current_user.role != "admin":
+    if scope == "mine" or current_user.role != "admin":
         stmt = stmt.where(Task.assigned_to_id == current_user.id)
     if not include_closed:
         stmt = stmt.where(Task.status == "open")

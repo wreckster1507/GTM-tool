@@ -95,14 +95,6 @@ class ContactRepository(BaseRepository[Contact]):
             base_stmt = base_stmt.where(email_filter)
             count_stmt = count_stmt.where(email_filter)
 
-        # Exclude ClickUp placeholder contacts (company-name records, not real people)
-        placeholder_filter = or_(
-            Contact.enrichment_data.is_(None),
-            Contact.enrichment_data["source"].as_string() != "clickup_import_placeholder",
-        )
-        base_stmt = base_stmt.where(placeholder_filter)
-        count_stmt = count_stmt.where(placeholder_filter)
-
         total = (await self.session.execute(count_stmt)).scalar_one()
 
         rows = (

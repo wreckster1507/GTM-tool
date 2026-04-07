@@ -381,6 +381,7 @@ You MUST respond with valid JSON containing these exact keys:
   ],
   "committee_coverage": "which buying committee roles we have contacts for, and which are OPEN GAPS — be specific",
   "open_gaps": ["list of specific missing personas we need to find"],
+    "competitive_landscape": ["top 3-5 direct competitors by name"],
 
   "implementation_cycle": {
     "enterprise": "e.g. '6-18 months with Big 4 SI involvement'",
@@ -1092,6 +1093,71 @@ def _build_sales_play(icp: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _extract_competitor_names(icp: dict[str, Any]) -> list[str]:
+    raw_candidates = []
+    for key in ("competitive_landscape", "competitors"):
+        value = icp.get(key)
+        if isinstance(value, list):
+            raw_candidates.extend(value)
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in raw_candidates:
+        if isinstance(item, dict):
+            text = _clip_text(item.get("name") or item.get("competitor"), 200)
+        else:
+            text = _clip_text(item, 200)
+        if not text:
+            continue
+        cleaned = re.sub(r"\s+", " ", text).strip(" ,.-")
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(cleaned)
+        if len(names) >= 6:
+            break
+    return names
+
+
+def _build_competitive_landscape_cards(company_name: str, icp: dict[str, Any]) -> list[dict[str, str]]:
+    competitors = _extract_competitor_names(icp)
+    if not competitors:
+        return []
+
+    category = _clip_text(icp.get("category"), 140)
+    core_focus = _clip_text(icp.get("core_focus"), 280)
+    beacon_angle = _clip_text(icp.get("beacon_angle"), 320)
+
+    cards: list[dict[str, str]] = []
+    for name in competitors[:4]:
+        summary_parts = [f"{name} is a comparable option buyers evaluate alongside {company_name}."]
+        if category:
+            summary_parts.append(f"Category context: {category}.")
+        if core_focus:
+            summary_parts.append(core_focus)
+
+        pitch_angle = (
+            f"Against {name}, position Beacon on faster implementation cycles and lower delivery overhead."
+        )
+        if beacon_angle:
+            pitch_angle = f"Against {name}: {beacon_angle}"
+
+        cards.append(
+            {
+                "name": name,
+                "website": "",
+                "summary": " ".join(summary_parts)[:320],
+                "pitch_angle": pitch_angle[:320],
+                "source": "icp_analysis",
+            }
+        )
+
+    return cards
+
+
 def _parse_arr_estimate(value: Any) -> float | None:
     if value is None:
         return None
@@ -1312,11 +1378,12 @@ async def research_company_and_update(
                     icp.get("why_now"),
                 ] if item
             ],
-            "competitive_landscape": [],
+            "competitive_landscape": _extract_competitor_names(icp),
             "tech_stack_signals": [],
         },
         "fetched_at": analyzed_at,
     }
+    cache["competitive_landscape_v2"] = _build_competitive_landscape_cards(company.name, icp)
     company.enrichment_cache = cache
 
     # Store structured analyst data in enrichment_sources.import without losing

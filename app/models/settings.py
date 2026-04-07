@@ -89,11 +89,17 @@ class WorkspaceSettings(SQLModel, table=True):
         ),
     )
     deal_funnel_config: dict = Field(
-        default={"tofu": ["qualified_lead", "poc_agreed"], "mofu": ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"], "bofu": ["closed_won"]},
+        default={
+            "active": ["reprospect", "demo_scheduled", "demo_done", "qualified_lead", "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review"],
+            "inactive": ["closed_won", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
+            "tofu": ["qualified_lead", "poc_agreed"],
+            "mofu": ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
+            "bofu": ["closed_won"],
+        },
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"]}',
+            server_default='{"active":["reprospect","demo_scheduled","demo_done","qualified_lead","poc_agreed","poc_wip","poc_done","commercial_negotiation","msa_review"],"inactive":["closed_won","churned","not_a_fit","cold","closed_lost","on_hold","nurture","closed"],"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"]}',
         ),
     )
     deal_stage_settings: list[dict] = Field(
@@ -179,11 +185,17 @@ class WorkspaceSettings(SQLModel, table=True):
     )
     clickup_crm_settings: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     prospect_funnel_config: dict = Field(
-        default={"tofu": ["outreach"], "mofu": ["in_progress"], "bofu": ["meeting_booked"]},
+        default={
+            "active": ["outreach", "in_progress", "meeting_booked"],
+            "inactive": ["negative_response", "no_response", "not_a_fit"],
+            "tofu": ["outreach"],
+            "mofu": ["in_progress"],
+            "bofu": ["meeting_booked"],
+        },
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"tofu":["outreach"],"mofu":["in_progress"],"bofu":["meeting_booked"]}',
+            server_default='{"active":["outreach","in_progress","meeting_booked"],"inactive":["negative_response","no_response","not_a_fit"],"tofu":["outreach"],"mofu":["in_progress"],"bofu":["meeting_booked"]}',
         ),
     )
 
@@ -240,6 +252,8 @@ class DealFunnelSettingsUpdate(SQLModel):
 
 
 class StageBucketSettings(SQLModel):
+    active: list[str] = Field(default_factory=list)
+    inactive: list[str] = Field(default_factory=list)
     tofu: list[str]
     mofu: list[str]
     bofu: list[str]

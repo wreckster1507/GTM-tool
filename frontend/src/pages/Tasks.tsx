@@ -119,6 +119,7 @@ function MeetingFollowUpBlock({ task }: { task: TaskWorkspaceItem }) {
 type TaskStatusFilter = "open" | "completed" | "dismissed" | "all";
 type TaskTypeFilter = "all" | "manual" | "system";
 type EntityFilter = "all" | "company" | "contact" | "deal";
+type QueueScope = "mine" | "team";
 
 function TaskWorkspaceCard({
   task,
@@ -295,7 +296,9 @@ export default function TasksPage() {
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>("open");
   const [typeFilter, setTypeFilter] = useState<TaskTypeFilter>("all");
   const [entityFilter, setEntityFilter] = useState<EntityFilter>("all");
+  const [queueScope, setQueueScope] = useState<QueueScope>("mine");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const isAdmin = user?.role === "admin";
 
   const load = async () => {
     setLoading(true);
@@ -304,6 +307,7 @@ export default function TasksPage() {
         includeClosed: true,
         taskType: typeFilter === "all" ? undefined : typeFilter,
         entityType: entityFilter === "all" ? undefined : entityFilter,
+        scope: isAdmin ? queueScope : "mine",
       });
       setTasks(rows);
     } finally {
@@ -313,7 +317,7 @@ export default function TasksPage() {
 
   useEffect(() => {
     void load();
-  }, [typeFilter, entityFilter]);
+  }, [typeFilter, entityFilter, queueScope, isAdmin]);
 
   const visibleTasks = useMemo(() => {
     if (statusFilter === "all") return tasks;
@@ -359,7 +363,7 @@ export default function TasksPage() {
             <h2 style={{ fontSize: 28, fontWeight: 800, color: colors.text, marginBottom: 8 }}>Tasks</h2>
             <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
               {user?.role === "admin"
-                ? "The full workspace task queue in one place. Beacon recommendations stay alongside manual follow-ups so you can review what the team should tackle next."
+                ? "Use My Queue for daily execution and Team Queue for coaching. Beacon recommendations stay alongside manual follow-ups so you can drive the right next actions."
                 : `Everything assigned to ${user?.name || "you"} in one place. Beacon recommendations stay alongside manual follow-ups so reps can triage work quickly and then jump into the right company, prospect, or deal.`}
             </p>
           </div>
@@ -399,6 +403,34 @@ export default function TasksPage() {
           <Filter size={15} />
           <span>Filters</span>
         </div>
+        {isAdmin ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => setQueueScope("mine")}
+              className="crm-button soft"
+              style={{
+                borderColor: queueScope === "mine" ? "#d5e5ff" : colors.border,
+                background: queueScope === "mine" ? colors.primarySoft : "#fff",
+                color: queueScope === "mine" ? colors.primary : colors.sub,
+              }}
+            >
+              My Queue
+            </button>
+            <button
+              type="button"
+              onClick={() => setQueueScope("team")}
+              className="crm-button soft"
+              style={{
+                borderColor: queueScope === "team" ? "#eadbff" : colors.border,
+                background: queueScope === "team" ? colors.violetSoft : "#fff",
+                color: queueScope === "team" ? colors.violet : colors.sub,
+              }}
+            >
+              Team Queue
+            </button>
+          </div>
+        ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 220px))", gap: 12 }}>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as TaskStatusFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="open">Open only</option>

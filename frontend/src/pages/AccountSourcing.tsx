@@ -104,6 +104,22 @@ function ts(date?: string) {
   });
 }
 
+function formatBatchStage(stage?: string, status?: string): string {
+  const key = (stage || status || "").toLowerCase();
+  const labels: Record<string, string> = {
+    upload_received: "Upload Received",
+    tal_review: "Awaiting TAL Approval",
+    queued: "Queued",
+    research_running: "Research Running",
+    processing: "Research Running",
+    pending: "Queued",
+    completed: "Completed",
+    failed: "Failed",
+    cancelled: "Cancelled",
+  };
+  return labels[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) || "Unknown";
+}
+
 function getIcpAnalysis(company: Company): Record<string, unknown> | undefined {
   const cache = company.enrichment_cache;
   if (!cache || typeof cache !== "object") return undefined;
@@ -559,6 +575,28 @@ export default function AccountSourcing() {
       : latestVisibleBatch?.status === "completed"
         ? "Finished"
         : "Estimating...";
+  const batchInFlight = Boolean(latestVisibleBatch && ["pending", "processing"].includes(latestVisibleBatch.status));
+  const latestProgressMessage = latestVisibleBatch
+    ? latestVisibleBatch.progress_message ||
+      (latestVisibleBatch.total_rows > 0
+        ? `Processed ${latestVisibleBatch.processed_rows} of ${latestVisibleBatch.total_rows} accounts`
+        : "Research in progress")
+    : "";
+  const progressPercent = latestVisibleBatch
+    ? latestVisibleBatch.status === "completed"
+      ? 100
+      : latestVisibleBatch.total_rows
+        ? Math.min(100, Math.round((latestVisibleBatch.processed_rows / latestVisibleBatch.total_rows) * 100))
+        : 0
+    : 0;
+
+  useEffect(() => {
+    if (!batchInFlight) return;
+    const id = window.setInterval(() => {
+      void load();
+    }, 8000);
+    return () => window.clearInterval(id);
+  }, [batchInFlight, load]);
 
   const downloadTemplate = useCallback(() => {
     const template = [
@@ -963,7 +1001,7 @@ export default function AccountSourcing() {
                   <span style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>{latestVisibleBatch.filename}</span>
                 </div>
                 <div style={{ color: colors.sub, fontSize: 13 }}>
-                  {latestVisibleBatch.progress_message || "Tracking enrichment progress"}
+                  {latestProgressMessage || "Tracking research progress"}
                   {latestVisibleBatch.created_by_name ? ` • Uploaded by ${latestVisibleBatch.created_by_name}` : ""}
                   {` • ${ts(latestVisibleBatch.created_at)}`}
                 </div>
@@ -1066,7 +1104,7 @@ export default function AccountSourcing() {
               <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
                 <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CURRENT STEP</div>
                 <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 16 }}>
-                  {(latestVisibleBatch.current_stage || latestVisibleBatch.status).replace(/_/g, " ")}
+                  {formatBatchStage(latestVisibleBatch.current_stage, latestVisibleBatch.status)}
                 </div>
                 <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>{etaText}</div>
               </div>
@@ -1083,7 +1121,7 @@ export default function AccountSourcing() {
             <div style={{ height: 8, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
               <div
                 style={{
-                  width: `${latestVisibleBatch.total_rows ? Math.round((latestVisibleBatch.processed_rows / latestVisibleBatch.total_rows) * 100) : 0}%`,
+                  width: `${progressPercent}%`,
                   height: "100%",
                   background: latestVisibleBatch.status === "completed" ? colors.green : colors.primary,
                 }}

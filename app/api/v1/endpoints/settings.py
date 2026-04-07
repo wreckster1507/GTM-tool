@@ -106,11 +106,25 @@ _DEFAULT_OUTREACH_CONTENT = {
     ],
 }
 _DEFAULT_DEAL_FUNNEL = {
+    "active": [
+        "reprospect",
+        "demo_scheduled",
+        "demo_done",
+        "qualified_lead",
+        "poc_agreed",
+        "poc_wip",
+        "poc_done",
+        "commercial_negotiation",
+        "msa_review",
+    ],
+    "inactive": ["closed_won", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
     "tofu": ["qualified_lead", "poc_agreed"],
     "mofu": ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
     "bofu": ["closed_won"],
 }
 _DEFAULT_PROSPECT_FUNNEL = {
+    "active": ["outreach", "in_progress", "meeting_booked"],
+    "inactive": ["negative_response", "no_response", "not_a_fit"],
     "tofu": ["outreach"],
     "mofu": ["in_progress"],
     "bofu": ["meeting_booked"],
@@ -196,6 +210,8 @@ def _normalized_clickup_crm_settings(value: dict | None) -> ClickUpCrmSettingsRe
 def _normalized_bucket_config(value: dict | None, default: dict[str, list[str]]) -> StageBucketSettings:
     raw = value if isinstance(value, dict) else {}
     return StageBucketSettings(
+        active=list(raw.get("active") or default.get("active") or []),
+        inactive=list(raw.get("inactive") or default.get("inactive") or []),
         tofu=list(raw.get("tofu") or default["tofu"]),
         mofu=list(raw.get("mofu") or default["mofu"]),
         bofu=list(raw.get("bofu") or default["bofu"]),
@@ -490,18 +506,22 @@ async def update_pipeline_summary_settings(
     _admin: AdminUser,
 ):
     allowed_deal_stage_ids = await get_configured_deal_stage_ids(session)
-    for bucket in (body.deal.tofu, body.deal.mofu, body.deal.bofu):
+    for bucket in (body.deal.active, body.deal.inactive, body.deal.tofu, body.deal.mofu, body.deal.bofu):
         _validate_funnel_stage_ids(bucket, allowed_deal_stage_ids, "deal")
-    for bucket in (body.prospect.tofu, body.prospect.mofu, body.prospect.bofu):
+    for bucket in (body.prospect.active, body.prospect.inactive, body.prospect.tofu, body.prospect.mofu, body.prospect.bofu):
         _validate_funnel_stage_ids(bucket, _PROSPECT_STAGES, "prospect")
 
     row = await _get_or_create(session)
     row.deal_funnel_config = {
+        "active": body.deal.active,
+        "inactive": body.deal.inactive,
         "tofu": body.deal.tofu,
         "mofu": body.deal.mofu,
         "bofu": body.deal.bofu,
     }
     row.prospect_funnel_config = {
+        "active": body.prospect.active,
+        "inactive": body.prospect.inactive,
         "tofu": body.prospect.tofu,
         "mofu": body.prospect.mofu,
         "bofu": body.prospect.bofu,

@@ -492,6 +492,8 @@ export interface OutreachContentSettings {
 }
 
 export interface StageBucketSettings {
+  active: string[];
+  inactive: string[];
   tofu: string[];
   mofu: string[];
   bofu: string[];

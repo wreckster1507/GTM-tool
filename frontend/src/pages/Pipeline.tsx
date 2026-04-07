@@ -11,7 +11,7 @@ type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
 type DragItem = { kind: "deal"; id: string; fromStage: string } | { kind: "prospect"; id: string; fromStage: ProspectStageId };
 type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
-type FunnelKey = "tofu" | "mofu" | "bofu";
+type FunnelKey = "active" | "inactive" | "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
 
 const DEFAULT_DEAL_STAGES: StageMeta[] = [
@@ -52,11 +52,15 @@ const STAGE_COLOR: Record<string, string> = {
   outreach: "#2563eb", in_progress: "#7c3aed", meeting_booked: "#0ea5e9", negative_response: "#ef4444", no_response: "#94a3b8",
 };
 const DEFAULT_FUNNEL: FunnelConfig = {
+  active: ["reprospect", "demo_scheduled", "demo_done", "qualified_lead", "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review"],
+  inactive: ["closed_won", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
   tofu: ["qualified_lead", "poc_agreed"],
   mofu: ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
   bofu: ["closed_won"],
 };
 const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
+  active: ["outreach", "in_progress", "meeting_booked"],
+  inactive: ["negative_response", "no_response", "not_a_fit"],
   tofu: ["outreach"],
   mofu: ["in_progress"],
   bofu: ["meeting_booked"],
@@ -65,6 +69,8 @@ const GEO_OPTIONS = ["Americas", "India", "APAC", "Rest of World"] as const;
 
 function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, defaults: FunnelConfig): FunnelConfig {
   return {
+    active: Array.isArray(value?.active) ? value.active : defaults.active,
+    inactive: Array.isArray(value?.inactive) ? value.inactive : defaults.inactive,
     tofu: Array.isArray(value?.tofu) ? value.tofu : defaults.tofu,
     mofu: Array.isArray(value?.mofu) ? value.mofu : defaults.mofu,
     bofu: Array.isArray(value?.bofu) ? value.bofu : defaults.bofu,
@@ -231,7 +237,7 @@ function FunnelSettingsModal({
     <>
       <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.25)", zIndex: 60 }} onClick={onClose} />
       <div style={{ position: "fixed", inset: 0, zIndex: 61, display: "grid", placeItems: "center", padding: 16 }}>
-        <div style={{ width: "100%", maxWidth: 620, background: "#fff", borderRadius: 20, border: "1px solid #dbe6f2", boxShadow: "0 20px 60px rgba(15,23,42,0.15)", padding: 24 }}>
+        <div style={{ width: "100%", maxWidth: 1080, background: "#fff", borderRadius: 20, border: "1px solid #dbe6f2", boxShadow: "0 20px 60px rgba(15,23,42,0.15)", padding: 24 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
             <div>
               <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1f2d3d" }}>{title}</h3>
@@ -240,10 +246,12 @@ function FunnelSettingsModal({
             <button className="crm-button soft" onClick={onClose} disabled={saving}>Close</button>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
-            {(["tofu", "mofu", "bofu"] as FunnelKey[]).map((bucket) => (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14 }}>
+            {(["active", "inactive", "tofu", "mofu", "bofu"] as FunnelKey[]).map((bucket) => (
               <div key={bucket} style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: 14, background: "#fbfdff" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", marginBottom: 10, textTransform: "uppercase" }}>{bucket}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", marginBottom: 10, textTransform: "uppercase" }}>
+                  {bucket === "inactive" ? "inactive" : bucket}
+                </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {stages.map((stage) => (
                     <label key={`${bucket}-${stage.id}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#41566d" }}>
@@ -1028,19 +1036,21 @@ export default function Pipeline() {
 
   const dealSummary = useMemo(() => {
     const visible = Object.values(filteredDealBoard).flat();
+    const activeStageIds = new Set(pipelineSummaryConfig.deal.active);
+    const inactiveStageIds = new Set(pipelineSummaryConfig.deal.inactive);
     return {
       total: visible.length,
-      active: visible.filter((deal) => effectiveDealStages.find((stage) => stage.id === deal.stage)?.group === "active").length,
-      closed: visible.filter((deal) => effectiveDealStages.find((stage) => stage.id === deal.stage)?.group === "closed").length,
+      active: visible.filter((deal) => activeStageIds.has(deal.stage)).length,
+      closed: visible.filter((deal) => inactiveStageIds.has(deal.stage)).length,
       tofu: visible.filter((deal) => pipelineSummaryConfig.deal.tofu.includes(deal.stage)).length,
       mofu: visible.filter((deal) => pipelineSummaryConfig.deal.mofu.includes(deal.stage)).length,
       bofu: visible.filter((deal) => pipelineSummaryConfig.deal.bofu.includes(deal.stage)).length,
     };
-  }, [effectiveDealStages, filteredDealBoard, pipelineSummaryConfig.deal]);
+  }, [filteredDealBoard, pipelineSummaryConfig.deal]);
 
   const prospectSummary = useMemo(() => {
-    const activeStageIds = new Set(effectiveProspectStages.filter((s) => s.group === "active").map((s) => s.id));
-    const closedStageIds = new Set(effectiveProspectStages.filter((s) => s.group === "closed").map((s) => s.id));
+    const activeStageIds = new Set(pipelineSummaryConfig.prospect.active);
+    const closedStageIds = new Set(pipelineSummaryConfig.prospect.inactive);
     const allProspects = Object.values(filteredProspects).flat();
     return {
       total: allProspects.length,
@@ -1063,7 +1073,7 @@ export default function Pipeline() {
         0,
       ),
     };
-  }, [effectiveProspectStages, filteredProspects, pipelineSummaryConfig.prospect]);
+  }, [filteredProspects, pipelineSummaryConfig.prospect]);
 
   const summary = tab === "deal" ? dealSummary : prospectSummary;
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
@@ -1184,7 +1194,7 @@ export default function Pipeline() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, dealBoard, currentBoardLoading, selectedDeal, setSearchParams]);
+  }, [searchParams, dealBoard, currentBoardLoading, setSearchParams]);
 
   const handleDealDrop = async (targetStage: string) => {
     if (!dragItem || dragItem.kind !== "deal") return;
@@ -1325,7 +1335,7 @@ export default function Pipeline() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <SummaryCard label="Active" value={summary.active} tone="accent" />
-            <SummaryCard label="Closed" value={summary.closed} />
+            <SummaryCard label="Inactive" value={summary.closed} />
             <SummaryCard label="ToFU" value={summary.tofu} />
             <SummaryCard label="MoFU" value={summary.mofu} />
             <SummaryCard label="BoFU" value={summary.bofu} tone="success" />
