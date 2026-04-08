@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
-  Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle,
+  Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search,
 } from "lucide-react";
 import { dealsApi, contactsApi, settingsApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
@@ -82,6 +82,22 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   // Tag input
   const [tagInput, setTagInput] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Company searchable combobox
+  const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
+  const [companySearch, setCompanySearch] = useState("");
+  const companyDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (!companyDropdownRef.current?.contains(e.target as Node)) {
+        setCompanyDropdownOpen(false);
+        setCompanySearch("");
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   const [companyContacts, setCompanyContacts] = useState<Contact[]>([]);
 
@@ -410,14 +426,59 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             {/* Company */}
             <FieldRow label="Company" icon={<Building2 size={13} />}>
-              <select
-                value={deal.company_id ?? ""}
-                onChange={(e) => patchDeal({ company_id: e.target.value || undefined } as Partial<Deal>)}
-                style={{ ...fieldInputStyle }}
-              >
-                <option value="">None</option>
-                {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <div ref={companyDropdownRef} style={{ position: "relative", width: "100%" }}>
+                <div
+                  onClick={() => { setCompanyDropdownOpen(o => !o); setCompanySearch(""); }}
+                  style={{ ...fieldInputStyle, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: deal.company_id ? "#1a202c" : "#a0aec0" }}>
+                    {companies.find(c => c.id === deal.company_id)?.name ?? "None"}
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0, marginLeft: 4 }}>
+                    <path d="M2 4l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                {companyDropdownOpen && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: "1px solid #e2eaf2", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.10)", zIndex: 200, overflow: "hidden" }}>
+                    <div style={{ padding: "8px 8px 4px", borderBottom: "1px solid #f1f5f9" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#f8fafc", borderRadius: 7, padding: "0 8px" }}>
+                        <Search size={12} color="#94a3b8" />
+                        <input
+                          autoFocus
+                          value={companySearch}
+                          onChange={e => setCompanySearch(e.target.value)}
+                          placeholder="Search companies..."
+                          style={{ border: "none", outline: "none", background: "transparent", fontSize: 12, padding: "6px 0", width: "100%" }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                      <div
+                        onClick={() => { patchDeal({ company_id: undefined } as Partial<Deal>); setCompanyDropdownOpen(false); }}
+                        style={{ padding: "8px 12px", fontSize: 13, color: "#a0aec0", cursor: "pointer" }}
+                        onMouseEnter={e => (e.currentTarget.style.background = "#f8fafc")}
+                        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                      >
+                        None
+                      </div>
+                      {companies
+                        .filter(c => c.name.toLowerCase().includes(companySearch.toLowerCase()))
+                        .map(c => (
+                          <div
+                            key={c.id}
+                            onClick={() => { patchDeal({ company_id: c.id } as Partial<Deal>); setCompanyDropdownOpen(false); }}
+                            style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", background: deal.company_id === c.id ? "#eff6ff" : "transparent", color: deal.company_id === c.id ? "#2563eb" : "#1a202c", fontWeight: deal.company_id === c.id ? 500 : 400 }}
+                            onMouseEnter={e => { if (deal.company_id !== c.id) e.currentTarget.style.background = "#f8fafc"; }}
+                            onMouseLeave={e => { if (deal.company_id !== c.id) e.currentTarget.style.background = "transparent"; }}
+                          >
+                            {c.name}
+                          </div>
+                        ))
+                      }
+                    </div>
+                  </div>
+                )}
+              </div>
             </FieldRow>
 
             {/* Assigned rep */}

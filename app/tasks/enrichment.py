@@ -369,6 +369,37 @@ async def _async_icp_research_batch(batch_id: UUID) -> None:
 
 
 @celery_app.task(
+    name="app.tasks.enrichment.icp_research_free_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def icp_research_free_task(self, company_id: str) -> dict:
+    """Run ICP research using only free data sources (no Apollo/Hunter credits)."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_async_icp_research_free(UUID(company_id)))
+        finally:
+            loop.close()
+        return {"status": "completed", "company_id": company_id}
+    except Exception as exc:
+        logger.error(f"Free ICP research task failed for {company_id}: {exc}")
+        raise self.retry(exc=exc)
+
+
+async def _async_icp_research_free(company_id: UUID) -> None:
+    from app.services.icp_intelligence import research_company_and_update_free
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await research_company_and_update_free(company_id, session)
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(
     name="app.tasks.enrichment.icp_research_single_task",
     bind=True,
     max_retries=2,

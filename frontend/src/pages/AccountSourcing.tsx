@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import {
   AlertCircle,
+  Brain,
   Building2,
   CheckCircle2,
   ChevronRight,
@@ -476,6 +477,8 @@ export default function AccountSourcing() {
   const [createError, setCreateError] = useState("");
   const [bulkEnriching, setBulkEnriching] = useState(false);
   const [bulkEnrichResult, setBulkEnrichResult] = useState<string | null>(null);
+  const [bulkIcpRunning, setBulkIcpRunning] = useState(false);
+  const [bulkIcpResult, setBulkIcpResult] = useState<string | null>(null);
   const { isAdmin } = useAuth();
 
   useEffect(() => {
@@ -841,38 +844,72 @@ export default function AccountSourcing() {
                 Export CSV
               </button>
               {isAdmin && (
-                <button
-                  onClick={async () => {
-                    if (!window.confirm("Queue enrichment for all sourced accounts? This may take a while depending on how many companies you have.")) return;
-                    setBulkEnriching(true);
-                    setBulkEnrichResult(null);
-                    try {
-                      const result = await accountSourcingApi.bulkEnrichAll(false);
-                      setBulkEnrichResult(`Queued ${result.queued} of ${result.total} accounts for enrichment`);
-                    } catch (e) {
-                      setBulkEnrichResult(e instanceof Error ? e.message : "Failed to queue enrichment");
-                    } finally {
-                      setBulkEnriching(false);
-                    }
-                  }}
-                  disabled={bulkEnriching}
-                  style={{
-                    border: `1px solid #c8daf0`,
-                    background: "#eaf2ff",
-                    color: "#175089",
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontWeight: 700,
-                    cursor: bulkEnriching ? "not-allowed" : "pointer",
-                    opacity: bulkEnriching ? 0.7 : 1,
-                  }}
-                >
-                  {bulkEnriching ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                  Enrich All Accounts
-                </button>
+                <>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm("Run ICP research for all sourced accounts? Uses web search + Claude AI — no Apollo or Hunter credits.\n\nThis may take 15-30s per company.")) return;
+                      setBulkIcpRunning(true);
+                      setBulkIcpResult(null);
+                      try {
+                        const result = await accountSourcingApi.bulkIcpResearch(false);
+                        setBulkIcpResult(`Queued ${result.queued} of ${result.total} accounts for ICP research`);
+                      } catch (e) {
+                        setBulkIcpResult(e instanceof Error ? e.message : "Failed to queue ICP research");
+                      } finally {
+                        setBulkIcpRunning(false);
+                      }
+                    }}
+                    disabled={bulkIcpRunning}
+                    style={{
+                      border: `1px solid #c3dfc0`,
+                      background: "#edfaeb",
+                      color: "#1a6b2a",
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: bulkIcpRunning ? "not-allowed" : "pointer",
+                      opacity: bulkIcpRunning ? 0.7 : 1,
+                    }}
+                  >
+                    {bulkIcpRunning ? <Loader2 size={15} className="animate-spin" /> : <Brain size={15} />}
+                    Run ICP Research
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm("Queue enrichment for all sourced accounts? This may take a while depending on how many companies you have.")) return;
+                      setBulkEnriching(true);
+                      setBulkEnrichResult(null);
+                      try {
+                        const result = await accountSourcingApi.bulkEnrichAll(false);
+                        setBulkEnrichResult(`Queued ${result.queued} of ${result.total} accounts for enrichment`);
+                      } catch (e) {
+                        setBulkEnrichResult(e instanceof Error ? e.message : "Failed to queue enrichment");
+                      } finally {
+                        setBulkEnriching(false);
+                      }
+                    }}
+                    disabled={bulkEnriching}
+                    style={{
+                      border: `1px solid #c8daf0`,
+                      background: "#eaf2ff",
+                      color: "#175089",
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: bulkEnriching ? "not-allowed" : "pointer",
+                      opacity: bulkEnriching ? 0.7 : 1,
+                    }}
+                  >
+                    {bulkEnriching ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                    Enrich All Accounts
+                  </button>
+                </>
               )}
               <button
                 onClick={load}
@@ -895,6 +932,12 @@ export default function AccountSourcing() {
           </div>
         </div>
 
+        {bulkIcpResult && (
+          <div style={{ borderRadius: 12, border: "1px solid #c3dfc0", background: "#edfaeb", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ fontSize: 13, color: "#1a6b2a", fontWeight: 600 }}>{bulkIcpResult}</span>
+            <button onClick={() => setBulkIcpResult(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#4a8c5a" }}><X size={14} /></button>
+          </div>
+        )}
         {bulkEnrichResult && (
           <div style={{ borderRadius: 12, border: "1px solid #c8daf0", background: "#eaf2ff", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <span style={{ fontSize: 13, color: "#175089", fontWeight: 600 }}>{bulkEnrichResult}</span>

@@ -1412,6 +1412,47 @@ async def re_enrich_company(company_id: UUID, session: DBSession = None):
     }
 
 
+@router.post("/companies/bulk-icp-research")
+async def bulk_icp_research_companies(
+    unenriched_only: bool = Query(default=False, description="Only queue companies with no enriched_at timestamp"),
+    session: DBSession = None,
+    _: AdminUser = None,
+):
+    """Queue free ICP research (no Apollo/Hunter credits) for all sourced companies.
+
+    Uses existing DB contacts + web research + Claude analysis.
+    """
+    stmt = select(Company).where(
+        ~Company.enrichment_sources.contains({"clickup_import": {}}),
+        ~Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+    )
+    if unenriched_only:
+        stmt = stmt.where(Company.enriched_at.is_(None))
+
+    result = await session.execute(stmt)
+    companies = result.scalars().all()
+
+    try:
+        from app.tasks.enrichment import icp_research_free_task
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="ICP research task not available") from exc
+
+    queued = 0
+    for company in companies:
+        try:
+            icp_research_free_task.delay(str(company.id))
+            queued += 1
+        except Exception:
+            pass
+
+    return {
+        "queued": queued,
+        "total": len(companies),
+        "unenriched_only": unenriched_only,
+        "message": f"Queued {queued} companies for free ICP research (no Apollo/Hunter credits)",
+    }
+
+
 @router.post("/companies/bulk-enrich")
 async def bulk_enrich_companies(
     unenriched_only: bool = Query(default=False, description="Only queue companies with no enriched_at timestamp"),

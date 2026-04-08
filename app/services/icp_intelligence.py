@@ -1591,3 +1591,409 @@ async def research_company_and_update(
     )
 
     return icp
+
+
+# ── Free ICP Research (no Apollo/Hunter credits) ─────────────────────────────
+
+async def research_company_free(
+    company_name: str,
+    domain: str = "",
+    extra_context: dict[str, Any] | None = None,
+    db_contacts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    ICP research pipeline that uses only free data sources.
+    Skips Apollo and Hunter — relies on web scraping, Serper searches, news,
+    and any contacts already stored in the database.
+    """
+    from app.clients.web_search import WebSearchClient
+
+    ws = WebSearchClient()
+
+    domain = domain.strip().lower() if domain else ""
+    has_domain = bool(domain) and not domain.endswith(".unknown")
+
+    if not has_domain:
+        domain = await _resolve_domain(ws, company_name)
+        has_domain = bool(domain) and not domain.endswith(".unknown")
+
+    # Run only free collection tasks (no Apollo, no Hunter)
+    collected = await _collect_free_data(ws, company_name, domain, has_domain)
+
+    # Inject existing DB contacts so Claude can factor them into coverage analysis
+    if db_contacts:
+        collected["all_contacts"] = db_contacts
+        collected["db_contacts"] = db_contacts
+    else:
+        collected["all_contacts"] = []
+
+    icp_analysis = await _run_icp_analysis(
+        company_name=company_name,
+        domain=domain,
+        collected=collected,
+        extra_context=extra_context,
+    )
+
+    return {
+        "company_name": company_name,
+        "domain": domain,
+        "collected_at": datetime.utcnow().isoformat(),
+        "raw_data": {
+            "scraped_pages": collected.get("scraped", {}).get("pages_scraped", 0),
+            "search_results_count": len(collected.get("general_search") or []),
+            "apollo_found": False,
+            "contacts_found": len(db_contacts or []),
+            "hunter_contacts_found": 0,
+            "news_results": (collected.get("news") or {}).get("total_articles", 0)
+            if isinstance(collected.get("news"), dict)
+            else len(collected.get("news") or []),
+        },
+        "icp_analysis": icp_analysis,
+        "_all_contacts": db_contacts or [],
+        "_collected": collected,
+    }
+
+
+async def _collect_free_data(
+    ws, company_name: str, domain: str, has_domain: bool
+) -> dict[str, Any]:
+    """Run all free (non-paid-API) data collection tasks in parallel."""
+    tasks: dict[str, Any] = {}
+    domain_hint = f" {domain}" if has_domain and domain and not domain.endswith(".unknown") else ""
+
+    if has_domain:
+        tasks["scraped"] = ws.scrape_company_pages(domain)
+
+    tasks["general_search"] = ws.search(
+        f'"{company_name}"{domain_hint} company enterprise SaaS what they do', max_results=5
+    )
+    tasks["ps_hiring"] = ws.search(
+        f'"{company_name}"{domain_hint} hiring "professional services" OR "implementation" OR '
+        f'"solutions engineer" OR "delivery" OR "onboarding" OR "customer success"',
+        max_results=4,
+    )
+    tasks["leadership"] = ws.search(
+        f'"{company_name}"{domain_hint} "VP" OR "hired" OR "appointed" OR "new CTO" OR '
+        f'"Chief" OR "Head of" leadership 2025 OR 2026',
+        max_results=4,
+    )
+    tasks["funding"] = ws.search(
+        f'"{company_name}"{domain_hint} funding OR raised OR acquisition OR partnership OR '
+        f'expansion OR "Series" OR IPO 2024 OR 2025 OR 2026',
+        max_results=5,
+    )
+    tasks["reviews"] = ws.search(
+        f'"{company_name}"{domain_hint} site:g2.com OR "case study" OR "implementation" OR '
+        f'"took months" OR "complex" OR "configuration" OR review',
+        max_results=4,
+    )
+    tasks["events"] = ws.search(
+        f'"{company_name}"{domain_hint} conference OR webinar OR summit OR "thought leadership" '
+        f'OR keynote 2025 OR 2026',
+        max_results=3,
+    )
+    tasks["ai_overlap"] = ws.search(
+        f'"{company_name}"{domain_hint} "AI" OR "agentic" OR "automation" OR "built-in" OR '
+        f'"internal AI" OR "machine learning" implementation',
+        max_results=3,
+    )
+
+    from app.clients.news import NewsClient
+    news_client = NewsClient()
+    tasks["news"] = news_client.get_company_signals(company_name, domain)
+
+    keys = list(tasks.keys())
+    coros = list(tasks.values())
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*coros, return_exceptions=True),
+            timeout=45,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"Free data collection timed out for {company_name}")
+        results = [None] * len(coros)
+
+    collected: dict[str, Any] = {}
+    for key, result in zip(keys, results):
+        if isinstance(result, Exception):
+            logger.warning(f"Free research task '{key}' failed for {company_name}: {result}")
+            collected[key] = [] if key != "scraped" else {"text": "", "pages_scraped": 0}
+        else:
+            collected[key] = result
+
+    collected["_company_name"] = company_name
+    collected["_domain"] = domain
+    return collected
+
+
+async def research_company_and_update_free(
+    company_id: UUID,
+    session,
+) -> dict[str, Any] | None:
+    """
+    Run ICP research without spending Apollo or Hunter credits.
+
+    Uses web research (Serper/scraping/news) + Claude analysis.
+    Pulls any contacts already in the DB for this company and passes them
+    to Claude so committee coverage is informed by existing stakeholders,
+    prospects, and deal contacts.
+    """
+    from app.models.company import Company
+    from app.models.contact import Contact
+    from app.services.account_sourcing import (
+        _build_committee_coverage,
+        _build_prospecting_priorities,
+        refresh_company_prospecting_fields,
+        refresh_contact_sequence_plan,
+    )
+    from app.services.icp_scorer import score_company
+    from sqlmodel import select
+
+    company = await session.get(Company, company_id)
+    if not company:
+        logger.warning(f"ICP free research: company {company_id} not found")
+        return None
+
+    # Pull existing contacts from DB (prospects, stakeholders, deal contacts)
+    contact_rows = (
+        await session.execute(select(Contact).where(Contact.company_id == company_id))
+    ).scalars().all()
+
+    db_contacts = [
+        {
+            "first_name": c.first_name or "",
+            "last_name": c.last_name or "",
+            "name": c.name or "",
+            "email": c.email or "",
+            "title": c.title or "",
+            "linkedin_url": c.linkedin_url or "",
+            "phone": c.phone or "",
+            "_source": "database",
+        }
+        for c in contact_rows
+    ]
+
+    extra_context = _build_extra_context(company)
+    if db_contacts:
+        extra_context["existing_contacts"] = "; ".join(
+            f"{c['name']} ({c['title']})" for c in db_contacts if c.get("name") or c.get("title")
+        )
+
+    result = await research_company_free(
+        company_name=company.name,
+        domain=company.domain,
+        extra_context=extra_context if extra_context else None,
+        db_contacts=db_contacts,
+    )
+
+    icp = result.get("icp_analysis", {})
+    if not icp:
+        return None
+
+    collected = result.get("_collected", {}) if isinstance(result.get("_collected"), dict) else {}
+    research_quality = _research_quality_snapshot(result, icp)
+    icp = _calibrate_icp_output(icp, research_quality)
+    icp["sources"] = _build_research_sources(collected)
+    positive_signals, negative_signals = _analysis_signals(icp)
+    sales_play = _build_sales_play(icp)
+    analyzed_at = datetime.utcnow().isoformat()
+
+    # Update domain if resolved
+    resolved_domain = result.get("domain", "")
+    if (
+        resolved_domain
+        and not resolved_domain.endswith(".unknown")
+        and (company.domain.endswith(".unknown") or company.domain != resolved_domain)
+    ):
+        company.domain = resolved_domain
+
+    if icp.get("company_overview"):
+        company.description = str(icp["company_overview"])[:2000]
+    if icp.get("industry") and icp["industry"] != "Unknown":
+        company.industry = str(icp["industry"])[:200]
+    if icp.get("category"):
+        company.vertical = str(icp["category"])[:200]
+    if icp.get("employee_count"):
+        try:
+            company.employee_count = int(icp["employee_count"])
+        except (TypeError, ValueError):
+            pass
+    if icp.get("funding_stage"):
+        company.funding_stage = str(icp["funding_stage"])[:100]
+    arr_estimate = _parse_arr_estimate(icp.get("arr_estimate"))
+    if arr_estimate and not company.arr_estimate:
+        company.arr_estimate = arr_estimate
+    if icp.get("region") and icp["region"] not in ("Unknown", "unknown", ""):
+        company.region = str(icp["region"])[:50]
+    if icp.get("headquarters") and icp["headquarters"] not in ("Unknown", "unknown", ""):
+        company.headquarters = str(icp["headquarters"])[:200]
+    if icp.get("account_thesis"):
+        company.account_thesis = str(icp["account_thesis"])[:2000]
+    if icp.get("why_now"):
+        company.why_now = str(icp["why_now"])[:2000]
+    if icp.get("beacon_angle"):
+        company.beacon_angle = str(icp["beacon_angle"])[:2000]
+    if icp.get("recommended_outreach_strategy"):
+        company.recommended_outreach_lane = str(icp["recommended_outreach_strategy"])[:500]
+
+    cache = copy.deepcopy(company.enrichment_cache or {})
+    cache["icp_analysis"] = {
+        "data": icp,
+        "raw_data_summary": result.get("raw_data", {}),
+        "research_quality": research_quality,
+        "sales_play": sales_play,
+        "analyzed_at": analyzed_at,
+    }
+    cache["research_quality"] = {"data": research_quality, "fetched_at": analyzed_at}
+    scraped = collected.get("scraped")
+    if isinstance(scraped, dict):
+        cache["web_scrape"] = {"data": scraped, "fetched_at": analyzed_at}
+    intent_signal_snapshot = {
+        k: collected.get(k) if isinstance(collected.get(k), list) else []
+        for k in ("general_search", "ps_hiring", "leadership", "funding", "reviews", "events", "ai_overlap", "news")
+    }
+    cache["intent_signals"] = {"data": intent_signal_snapshot, "fetched_at": analyzed_at}
+    cache["ai_summary"] = {
+        "data": {
+            "description": icp.get("company_overview"),
+            "icp_fit_reasoning": icp.get("icp_why"),
+            "intent_signals_summary": icp.get("intent_why"),
+            "recommended_approach": icp.get("recommended_outreach_strategy"),
+            "pain_points": sales_play.get("proof_points", []),
+            "talking_points": [
+                item for item in [
+                    icp.get("conversation_starter"),
+                    icp.get("beacon_angle"),
+                    icp.get("why_now"),
+                ] if item
+            ],
+            "competitive_landscape": _extract_competitor_names(icp),
+            "tech_stack_signals": [],
+        },
+        "fetched_at": analyzed_at,
+    }
+    cache["competitive_landscape_v2"] = _build_competitive_landscape_cards(company.name, icp)
+    company.enrichment_cache = cache
+
+    enrichment_sources = copy.deepcopy(company.enrichment_sources or {})
+    import_data = enrichment_sources.get("import", {}) if isinstance(enrichment_sources.get("import"), dict) else {}
+    existing_uploaded_analyst = import_data.get("uploaded_analyst") if isinstance(import_data.get("uploaded_analyst"), dict) else {}
+    if not existing_uploaded_analyst:
+        analyst_block = import_data.get("analyst") if isinstance(import_data.get("analyst"), dict) else {}
+        if analyst_block:
+            import_data["uploaded_analyst"] = copy.deepcopy(analyst_block)
+
+    generated_analyst = {
+        k: icp.get(k) for k in (
+            "classification", "fit_type", "confidence", "icp_fit_score", "intent_score",
+            "icp_why", "intent_why", "category", "core_focus", "revenue_funding",
+            "company_overview", "industry", "financial_capacity_met", "employee_count",
+            "funding_stage", "arr_estimate", "committee_coverage", "open_gaps",
+            "account_thesis", "why_now", "beacon_angle", "recommended_outreach_strategy",
+            "conversation_starter", "next_steps", "implementation_cycle",
+        )
+    }
+    import_data["generated_analyst"] = generated_analyst
+    merged_analyst = dict(generated_analyst)
+    for key, value in (import_data.get("uploaded_analyst") or {}).items():
+        if value is not None and value != "":
+            merged_analyst[key] = value
+    import_data["analyst"] = merged_analyst
+    import_data["generated_signals"] = {"positive": positive_signals, "negative": negative_signals}
+    if not import_data.get("uploaded_signals"):
+        import_data["uploaded_signals"] = {"positive": positive_signals, "negative": negative_signals}
+    enrichment_sources["import"] = import_data
+    company.enrichment_sources = enrichment_sources
+
+    intent_signals = copy.deepcopy(company.intent_signals or {})
+    intent_signals.update({
+        "uploaded_intent_score": intent_signals.get("uploaded_intent_score", icp.get("intent_score")),
+        "uploaded_fit_type": intent_signals.get("uploaded_fit_type", icp.get("fit_type")),
+        "uploaded_classification": intent_signals.get("uploaded_classification", icp.get("classification")),
+        "uploaded_confidence": intent_signals.get("uploaded_confidence", icp.get("confidence")),
+        "positive_signal_count": intent_signals.get("positive_signal_count", len(positive_signals or [])),
+        "negative_signal_count": intent_signals.get("negative_signal_count", len(negative_signals or [])),
+        "uploaded_signals": intent_signals.get("uploaded_signals") or {"positive": positive_signals, "negative": negative_signals},
+        "generated_intent_score": icp.get("intent_score"),
+        "generated_fit_type": icp.get("fit_type"),
+        "generated_classification": icp.get("classification"),
+        "generated_confidence": icp.get("confidence"),
+        "generated_positive_signal_count": len(positive_signals or []),
+        "generated_negative_signal_count": len(negative_signals or []),
+        "generated_signals": {"positive": positive_signals, "negative": negative_signals},
+        "research_evidence_level": research_quality.get("evidence_level"),
+    })
+    company.intent_signals = intent_signals
+
+    profile = copy.deepcopy(company.prospecting_profile or {})
+    for key in ("recommended_outreach_strategy", "conversation_starter", "icp_personas",
+                "committee_coverage", "open_gaps", "next_steps"):
+        if icp.get(key):
+            profile[key] = icp[key]
+    profile["sales_play"] = sales_play
+    profile["proof_points"] = sales_play.get("proof_points", [])
+    profile["risk_flags"] = sales_play.get("risk_flags", [])
+    profile["best_entry_persona"] = sales_play.get("best_persona")
+    profile["research_quality"] = research_quality
+    profile["contact_discovery_status"] = "db_only"
+    profile["contact_discovery_note"] = (
+        f"Used {len(db_contacts)} existing contact(s) from database. "
+        "No Apollo/Hunter credits spent."
+    )
+    company.prospecting_profile = profile
+
+    company.icp_score, company.icp_tier = score_company(company)
+    company.enriched_at = datetime.utcnow()
+    company.updated_at = datetime.utcnow()
+    session.add(company)
+    await session.flush()
+
+    try:
+        await session.commit()
+    except Exception as exc:
+        logger.warning(f"Failed to persist free ICP research for {company.name}: {exc}")
+        await session.rollback()
+        return None
+
+    await session.refresh(company)
+
+    committee_coverage = await _build_committee_coverage(company, session)
+    cache = copy.deepcopy(company.enrichment_cache or {})
+    cache["committee_coverage"] = {"data": committee_coverage, "fetched_at": datetime.utcnow().isoformat()}
+    priorities = _build_prospecting_priorities(
+        company,
+        committee_coverage,
+        company.intent_signals if isinstance(company.intent_signals, dict) else {},
+    )
+    cache["prospecting_priorities"] = {"data": priorities, "fetched_at": datetime.utcnow().isoformat()}
+    company.enrichment_cache = cache
+
+    refreshed_profile = copy.deepcopy(company.prospecting_profile or {})
+    if icp.get("committee_coverage"):
+        refreshed_profile["committee_coverage"] = icp.get("committee_coverage")
+    refreshed_profile["priorities"] = priorities
+    refreshed_profile["committee_snapshot"] = committee_coverage
+    company.prospecting_profile = refreshed_profile
+
+    contacts_all = (
+        await session.execute(select(Contact).where(Contact.company_id == company.id))
+    ).scalars().all()
+    company = refresh_company_prospecting_fields(company, contacts_all)
+    for contact in contacts_all:
+        refresh_contact_sequence_plan(contact, company)
+        session.add(contact)
+
+    company.icp_score, company.icp_tier = score_company(company)
+    company.enriched_at = datetime.utcnow()
+    company.updated_at = datetime.utcnow()
+    session.add(company)
+    await session.commit()
+    await session.refresh(company)
+
+    logger.info(
+        f"Free ICP research complete: {company.name} ({company.domain}) "
+        f"— Score {company.icp_score} ({company.icp_tier}), "
+        f"DB contacts used: {len(db_contacts)}"
+    )
+    return icp

@@ -6,6 +6,12 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
+
+# VITE_API_URL must be baked in at build time (Vite replaces import.meta.env.* statically).
+# Pass it via docker-compose build args. Defaults to empty string (relative URLs).
+ARG VITE_API_URL=""
+ENV VITE_API_URL=$VITE_API_URL
+
 RUN npm run build
 
 FROM nginx:1.27-alpine
