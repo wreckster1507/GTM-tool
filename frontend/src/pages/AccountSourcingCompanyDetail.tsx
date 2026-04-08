@@ -585,6 +585,8 @@ export default function AccountSourcingCompanyDetail() {
   const [showDealModal, setShowDealModal] = useState(false);
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [showTasksModal, setShowTasksModal] = useState(false);
+  const [noteInput, setNoteInput] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
   const [dealForm, setDealForm] = useState({
@@ -1529,24 +1531,79 @@ export default function AccountSourcingCompanyDetail() {
                 <X size={16} />
               </button>
             </div>
+            <div style={{ padding: "14px 18px 0", borderBottom: `1px solid ${colors.border}`, background: "#fff" }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <textarea
+                  value={noteInput}
+                  onChange={(e) => setNoteInput(e.target.value)}
+                  placeholder="Add a note..."
+                  rows={2}
+                  style={{
+                    flex: 1, resize: "vertical", border: `1px solid ${colors.border}`,
+                    borderRadius: 10, padding: "9px 12px", fontSize: 13, color: colors.text,
+                    fontFamily: "inherit", outline: "none",
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      if (!noteInput.trim() || noteSaving || !company) return;
+                      setNoteSaving(true);
+                      accountSourcingApi.addCompanyNote(company.id, noteInput.trim()).then((res) => {
+                          setCompany((prev) => prev ? { ...prev, enrichment_cache: { ...(prev.enrichment_cache || {}), activity_log: res.activity_log } } : prev);
+                        setNoteInput("");
+                      }).catch(() => {}).finally(() => setNoteSaving(false));
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!noteInput.trim() || noteSaving}
+                  onClick={async () => {
+                    if (!noteInput.trim() || noteSaving || !company) return;
+                    setNoteSaving(true);
+                    try {
+                      const res = await accountSourcingApi.addCompanyNote(company.id, noteInput.trim());
+                      setCompany((prev) => prev ? { ...prev, enrichment_cache: { ...(prev.enrichment_cache || {}), activity_log: res.activity_log } } : prev);
+                      setNoteInput("");
+                    } catch { /* ignore */ } finally { setNoteSaving(false); }
+                  }}
+                  style={{
+                    padding: "0 16px", borderRadius: 10, border: "none", cursor: noteInput.trim() ? "pointer" : "not-allowed",
+                    background: noteInput.trim() ? colors.primary : colors.border,
+                    color: noteInput.trim() ? "#fff" : colors.faint,
+                    fontWeight: 700, fontSize: 13, alignSelf: "flex-end", height: 38, flexShrink: 0,
+                  }}
+                >
+                  {noteSaving ? "..." : "Save"}
+                </button>
+              </div>
+              <div style={{ color: colors.faint, fontSize: 11, padding: "4px 2px 10px" }}>⌘↵ or Ctrl+↵ to save quickly</div>
+            </div>
             <div style={{ overflowY: "auto", padding: 18, background: "#fbfdff", display: "grid", gap: 10 }}>
               {activityEntries.length === 0 ? (
                 <div style={{ color: colors.faint, padding: "8px 4px" }}>No account activity captured yet.</div>
               ) : (
-                activityEntries.map((entry, idx) => (
-                  <div key={`activity-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#ffffff", borderRadius: 14, padding: "12px 14px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ color: colors.text, fontWeight: 700 }}>
-                        {`${String(entry.message || entry.action || "Update")}${entry.actor_name ? ` by ${String(entry.actor_name)}` : ""}`}
+                [...activityEntries].reverse().map((entry, idx) => {
+                  const isNote = String(entry.action) === "note";
+                  return (
+                    <div key={`activity-${idx}`} style={{
+                      border: `1px solid ${isNote ? "#d0e8ff" : colors.border}`,
+                      background: isNote ? "#f0f7ff" : "#ffffff",
+                      borderRadius: 14, padding: "12px 14px",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ color: colors.text, fontWeight: isNote ? 500 : 700, fontSize: isNote ? 13.5 : 13, lineHeight: 1.55 }}>
+                          {isNote ? String(entry.message || "") : `${String(entry.message || entry.action || "Update")}`}
+                        </div>
+                        <div style={{ color: colors.faint, fontSize: 12 }}>{typeof entry.at === "string" ? ts(String(entry.at)) : "-"}</div>
                       </div>
-                      <div style={{ color: colors.faint, fontSize: 12 }}>{typeof entry.at === "string" ? ts(String(entry.at)) : "-"}</div>
+                      <div style={{ color: colors.sub, fontSize: 12.5, marginTop: 4 }}>
+                        {entry.actor_name ? `${isNote ? "Note by" : "By"} ${String(entry.actor_name)}` : "By system"}
+                        {entry.actor_email ? ` • ${String(entry.actor_email)}` : ""}
+                      </div>
                     </div>
-                    <div style={{ color: colors.sub, fontSize: 12.5, marginTop: 6 }}>
-                      {entry.actor_name ? `By ${String(entry.actor_name)}` : "By system"}
-                      {entry.actor_email ? ` • ${String(entry.actor_email)}` : ""}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>

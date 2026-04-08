@@ -24,6 +24,7 @@ import {
 import { accountSourcingApi } from "../lib/api";
 import { getAccountPrioritySnapshot } from "../lib/utils";
 import type { AccountSourcingSummary, Company, SourcingBatch } from "../types";
+import AssignDropdown from "../components/AssignDropdown";
 
 const colors = {
   bg: "#f4f7fb",
@@ -380,7 +381,7 @@ function UploadPanel({
   );
 }
 
-function CompanyCard({ company }: { company: Company }) {
+function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (userId: string | null, userName: string | null) => void }) {
   const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
@@ -388,7 +389,6 @@ function CompanyCard({ company }: { company: Company }) {
   const icpAnalysis = getIcpAnalysis(company);
   const salesPlay = getSalesPlay(company);
   const talVerdict = asText(salesPlay?.tal_verdict) || (typeof icpAnalysis?.classification === "string" ? icpAnalysis.classification : undefined);
-  const owner = company.assigned_rep_email || company.assigned_rep_name || company.assigned_rep || "";
   const disposition = company.disposition || "";
 
   return (
@@ -432,11 +432,29 @@ function CompanyCard({ company }: { company: Company }) {
           </span>
         ) : null}
       </div>
-      {owner ? (
-        <div style={{ color: colors.sub, fontSize: 12, fontWeight: 600, flexShrink: 0, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {owner}
-        </div>
-      ) : null}
+      {/* AE / SDR assign — stop propagation so clicking doesn't navigate */}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+        <AssignDropdown
+          entityType="company"
+          entityId={company.id}
+          role="ae"
+          currentAssignedId={company.assigned_to_id ?? null}
+          currentAssignedName={company.assigned_rep_name || company.assigned_rep || company.assigned_rep_email || null}
+          onAssigned={onAssigned}
+          compact
+          label="AE"
+        />
+        <AssignDropdown
+          entityType="company"
+          entityId={company.id}
+          role="sdr"
+          currentAssignedId={company.sdr_id ?? null}
+          currentAssignedName={company.sdr_name || company.sdr_email || null}
+          onAssigned={onAssigned}
+          compact
+          label="SDR"
+        />
+      </div>
       <ChevronRight size={16} color={colors.faint} style={{ flexShrink: 0 }} />
     </div>
   );
@@ -1335,7 +1353,7 @@ export default function AccountSourcing() {
         ) : (
           <div style={{ display: "grid", gap: 14 }}>
             {companies.map((c) => (
-              <CompanyCard key={c.id} company={c} />
+              <CompanyCard key={c.id} company={c} onAssigned={() => load()} />
             ))}
             <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ color: colors.sub, fontSize: 13 }}>

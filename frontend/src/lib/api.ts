@@ -458,6 +458,8 @@ export const tasksApi = {
     request<void>(`/api/v1/tasks/${id}`, {
       method: "DELETE",
     }),
+  countOpen: () =>
+    request<{ open: number }>("/api/v1/tasks/count"),
 };
 
 export const signalsApi = {
@@ -827,6 +829,18 @@ export const accountSourcingApi = {
     request<{ company_id: string; contacts_pushed: number; results: unknown[] }>(
       `/api/v1/account-sourcing/companies/${companyId}/push-instantly?campaign_id=${campaignId}`,
       { method: "POST" }
+    ),
+
+  addCompanyNote: (companyId: string, body: string) =>
+    request<{ activity_log: unknown[] }>(
+      `/api/v1/account-sourcing/companies/${companyId}/notes`,
+      { method: "POST", body: JSON.stringify({ body }) }
+    ),
+
+  addContactNote: (contactId: string, body: string) =>
+    request<{ notes_log: unknown[] }>(
+      `/api/v1/account-sourcing/contacts/${contactId}/notes`,
+      { method: "POST", body: JSON.stringify({ body }) }
     ),
 
   exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string; batchId?: string }) => {

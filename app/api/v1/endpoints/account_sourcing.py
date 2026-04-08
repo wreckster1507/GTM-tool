@@ -1589,6 +1589,67 @@ async def update_company_contact(contact_id: UUID, payload: ContactUpdate, sessi
     return await to_contact_read(session, contact)
 
 
+# ── Notes ─────────────────────────────────────────────────────────────────────
+
+class NoteCreate(BaseModel):
+    body: str
+
+
+@router.post("/companies/{company_id}/notes")
+async def add_company_note(company_id: UUID, payload: NoteCreate, session: DBSession, current_user: CurrentUser):
+    """Append a manual note to the company's activity log."""
+    company = await session.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    body = (payload.body or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Note body cannot be empty")
+    append_company_activity_log(
+        company,
+        action="note",
+        actor_name=current_user.name,
+        actor_email=current_user.email,
+        message=body,
+        metadata={"type": "manual_note"},
+    )
+    company.updated_at = datetime.utcnow()
+    session.add(company)
+    await session.commit()
+    await session.refresh(company)
+    cache = company.enrichment_cache or {}
+    return {"activity_log": cache.get("activity_log", [])}
+
+
+@router.post("/contacts/{contact_id}/notes")
+async def add_contact_note(contact_id: UUID, payload: NoteCreate, session: DBSession, current_user: CurrentUser):
+    """Append a manual note to a contact stored in the enrichment_data JSON field."""
+    contact = await session.get(Contact, contact_id)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    body = (payload.body or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Note body cannot be empty")
+    import copy
+    data = copy.deepcopy(contact.enrichment_data or {})
+    existing = data.get("notes_log")
+    entries = list(existing) if isinstance(existing, list) else []
+    entries.append({
+        "action": "note",
+        "message": body,
+        "actor_name": current_user.name,
+        "actor_email": current_user.email,
+        "at": datetime.utcnow().isoformat(),
+        "metadata": {"type": "manual_note"},
+    })
+    data["notes_log"] = entries[-40:]
+    contact.enrichment_data = data
+    contact.updated_at = datetime.utcnow()
+    session.add(contact)
+    await session.commit()
+    await session.refresh(contact)
+    return {"notes_log": (contact.enrichment_data or {}).get("notes_log", [])}
+
+
 # ── Contact Re-enrich ─────────────────────────────────────────────────────────
 
 @router.post("/contacts/{contact_id}/re-enrich")

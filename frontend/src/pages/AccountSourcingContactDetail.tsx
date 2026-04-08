@@ -333,6 +333,8 @@ export default function AccountSourcingContactDetail() {
   const [commsLog, setCommsLog] = useState<Activity[]>([]);
   const [showTasksModal, setShowTasksModal] = useState(false);
   const [showEngagementTimeline, setShowEngagementTimeline] = useState(false);
+  const [noteInput, setNoteInput] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -849,6 +851,79 @@ export default function AccountSourcingContactDetail() {
                 </div>
               )}
             </Section>}
+
+            <Section title="Notes" icon={<MessageSquare size={15} color={colors.primary} />}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <textarea
+                  value={noteInput}
+                  onChange={(e) => setNoteInput(e.target.value)}
+                  placeholder="Add a note about this prospect..."
+                  rows={2}
+                  style={{
+                    flex: 1, resize: "vertical", border: `1px solid ${colors.border}`,
+                    borderRadius: 10, padding: "9px 12px", fontSize: 13, color: colors.text,
+                    fontFamily: "inherit", outline: "none",
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      if (!noteInput.trim() || noteSaving || !contact) return;
+                      setNoteSaving(true);
+                      accountSourcingApi.addContactNote(contact.id, noteInput.trim()).then((res) => {
+                        const updated = { ...(contact.enrichment_data || {}), notes_log: res.notes_log };
+                        setContact((prev) => prev ? { ...prev, enrichment_data: updated } : prev);
+                        setNoteInput("");
+                      }).catch(() => {}).finally(() => setNoteSaving(false));
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!noteInput.trim() || noteSaving}
+                  onClick={async () => {
+                    if (!noteInput.trim() || noteSaving || !contact) return;
+                    setNoteSaving(true);
+                    try {
+                      const res = await accountSourcingApi.addContactNote(contact.id, noteInput.trim());
+                      const updated = { ...(contact.enrichment_data || {}), notes_log: res.notes_log };
+                      setContact((prev) => prev ? { ...prev, enrichment_data: updated } : prev);
+                      setNoteInput("");
+                    } catch { /* ignore */ } finally { setNoteSaving(false); }
+                  }}
+                  style={{
+                    padding: "0 16px", borderRadius: 10, border: "none",
+                    cursor: noteInput.trim() ? "pointer" : "not-allowed",
+                    background: noteInput.trim() ? colors.primary : colors.border,
+                    color: noteInput.trim() ? "#fff" : colors.faint,
+                    fontWeight: 700, fontSize: 13, alignSelf: "flex-end", height: 38, flexShrink: 0,
+                  }}
+                >
+                  {noteSaving ? "..." : "Save"}
+                </button>
+              </div>
+              <div style={{ color: colors.faint, fontSize: 11, marginBottom: 10 }}>⌘↵ or Ctrl+↵ to save quickly</div>
+              {(() => {
+                const notesLog = Array.isArray((contact?.enrichment_data as Record<string, unknown> | null)?.notes_log)
+                  ? ([...((contact?.enrichment_data as Record<string, unknown>)?.notes_log as unknown[])] as Record<string, unknown>[]).reverse()
+                  : [];
+                if (notesLog.length === 0) {
+                  return <div style={{ color: colors.faint, fontSize: 13 }}>No notes yet. Add the first one above.</div>;
+                }
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {notesLog.map((entry, idx) => (
+                      <div key={idx} style={{ border: `1px solid #d0e8ff`, background: "#f0f7ff", borderRadius: 12, padding: "10px 14px" }}>
+                        <div style={{ color: colors.text, fontSize: 13.5, lineHeight: 1.55 }}>{String(entry.message || "")}</div>
+                        <div style={{ color: colors.sub, fontSize: 12, marginTop: 4 }}>
+                          {entry.actor_name ? `Note by ${String(entry.actor_name)}` : "By system"}
+                          {entry.at ? ` · ${new Date(String(entry.at)).toLocaleString()}` : ""}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </Section>
 
             <Section title="Sales Playbook" icon={<Send size={15} color={colors.primary} />}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>

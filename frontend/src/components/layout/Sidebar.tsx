@@ -11,7 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
-import { settingsApi } from "../../lib/api";
+import { settingsApi, tasksApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 
 const NAV = [
@@ -25,6 +25,7 @@ const NAV = [
 export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { isAdmin, user } = useAuth();
   const [canManageTeam, setCanManageTeam] = useState(isAdmin);
+  const [openTaskCount, setOpenTaskCount] = useState(0);
 
   useEffect(() => {
     if (isAdmin) {
@@ -54,6 +55,22 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
     };
   }, [isAdmin, user]);
 
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const fetchCount = () => {
+      tasksApi.countOpen().then((res) => {
+        if (!cancelled) setOpenTaskCount(res.open);
+      }).catch(() => {});
+    };
+    fetchCount();
+    const interval = window.setInterval(fetchCount, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [user]);
+
   return (
     <aside className={`crm-sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="crm-brand">
@@ -77,6 +94,8 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
         <p className="crm-nav-section-label">Workspace</p>
         {NAV.map((item) => {
           const Icon = item.icon;
+          const isTasksItem = item.to === "/tasks";
+          const showBadge = isTasksItem && openTaskCount > 0;
           return (
             <NavLink
               key={item.to}
@@ -84,10 +103,33 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
               className={({ isActive }) => `crm-nav-link ${isActive ? "active" : ""}`}
               title={collapsed ? item.label : undefined}
             >
-              <span className="crm-nav-icon">
+              <span className="crm-nav-icon" style={{ position: "relative" }}>
                 <Icon size={16} />
+                {showBadge && collapsed && (
+                  <span style={{
+                    position: "absolute", top: -5, right: -5,
+                    background: "#e53e3e", color: "#fff",
+                    borderRadius: "50%", fontSize: 9, fontWeight: 700,
+                    minWidth: 14, height: 14, display: "flex", alignItems: "center",
+                    justifyContent: "center", padding: "0 3px", lineHeight: 1,
+                  }}>
+                    {openTaskCount > 99 ? "99+" : openTaskCount}
+                  </span>
+                )}
               </span>
-              <span className="crm-nav-link-label">{item.label}</span>
+              <span className="crm-nav-link-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {item.label}
+                {showBadge && !collapsed && (
+                  <span style={{
+                    background: "#e53e3e", color: "#fff",
+                    borderRadius: 10, fontSize: 10, fontWeight: 700,
+                    minWidth: 18, height: 18, display: "inline-flex", alignItems: "center",
+                    justifyContent: "center", padding: "0 5px", lineHeight: 1,
+                  }}>
+                    {openTaskCount > 99 ? "99+" : openTaskCount}
+                  </span>
+                )}
+              </span>
             </NavLink>
           );
         })}

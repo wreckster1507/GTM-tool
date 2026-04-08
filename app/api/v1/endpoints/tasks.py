@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from sqlalchemy import and_, case, delete, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
@@ -208,6 +208,22 @@ async def list_tasks(
 
     tasks = (await session.execute(stmt)).scalars().all()
     return await _build_task_reads(session, tasks)
+
+
+@router.get("/count")
+async def get_task_count(session: DBSession, current_user: CurrentUser):
+    """Return the number of open tasks assigned to the current user."""
+    await backfill_open_task_assignments(session)
+    await session.commit()
+    count = (
+        await session.execute(
+            select(func.count(Task.id)).where(
+                Task.assigned_to_id == current_user.id,
+                Task.status == "open",
+            )
+        )
+    ).scalar_one()
+    return {"open": count}
 
 
 @router.get("/workspace", response_model=list[TaskWorkspaceRead])
