@@ -30,6 +30,8 @@ class ContactRepository(BaseRepository[Contact]):
         outreach_lane: Optional[str] = None,
         sequence_status: Optional[str] = None,
         email_state: Optional[str] = None,
+        ae_id: Optional[UUID] = None,
+        sdr_id: Optional[UUID] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ContactRead], int]:
@@ -94,6 +96,14 @@ class ContactRepository(BaseRepository[Contact]):
         if email_filter is not None:
             base_stmt = base_stmt.where(email_filter)
             count_stmt = count_stmt.where(email_filter)
+
+        if ae_id:
+            base_stmt = base_stmt.where(Contact.assigned_to_id == ae_id)
+            count_stmt = count_stmt.where(Contact.assigned_to_id == ae_id)
+
+        if sdr_id:
+            base_stmt = base_stmt.where(Contact.sdr_id == sdr_id)
+            count_stmt = count_stmt.where(Contact.sdr_id == sdr_id)
 
         total = (await self.session.execute(count_stmt)).scalar_one()
 

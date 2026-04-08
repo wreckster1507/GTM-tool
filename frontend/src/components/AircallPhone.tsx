@@ -418,13 +418,24 @@ export default function AircallPhonePanel() {
           {!minimised && (
             <div
               ref={(el) => {
-                // Move the SDK-created iframe from the hidden init div into this visible container
+                const initDiv = document.getElementById("aircall-workspace");
+                if (!initDiv) return;
                 if (el) {
-                  const initDiv = document.getElementById("aircall-workspace");
-                  if (initDiv) {
-                    while (initDiv.firstChild) {
-                      el.appendChild(initDiv.firstChild);
+                  // Mount: move SDK iframe from holding div into the visible panel
+                  while (initDiv.firstChild) {
+                    el.appendChild(initDiv.firstChild);
+                  }
+                  // Store a reference so the cleanup below can find this container
+                  (el as any).__aircallContainer = true;
+                  (initDiv as any).__visibleContainer = el;
+                } else {
+                  // Unmount: return iframe children to holding div
+                  const container = (initDiv as any).__visibleContainer as HTMLElement | undefined;
+                  if (container) {
+                    while (container.firstChild) {
+                      initDiv.appendChild(container.firstChild);
                     }
+                    delete (initDiv as any).__visibleContainer;
                   }
                 }
               }}

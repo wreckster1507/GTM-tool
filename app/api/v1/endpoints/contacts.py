@@ -114,6 +114,8 @@ async def list_contacts(
     outreach_lane: Optional[str] = Query(default=None),
     sequence_status: Optional[str] = Query(default=None),
     email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified"),
+    ae_id: Optional[UUID] = Query(default=None, description="Filter by assigned AE user ID"),
+    sdr_id: Optional[UUID] = Query(default=None, description="Filter by assigned SDR user ID"),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
@@ -127,6 +129,8 @@ async def list_contacts(
         outreach_lane=outreach_lane,
         sequence_status=sequence_status,
         email_state=email_state,
+        ae_id=ae_id,
+        sdr_id=sdr_id,
         skip=pagination.skip,
         limit=pagination.limit,
     )

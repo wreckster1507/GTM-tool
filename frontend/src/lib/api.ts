@@ -159,6 +159,8 @@ export const contactsApi = {
     outreachLane?: string;
     sequenceStatus?: string;
     emailState?: string;
+    aeId?: string;
+    sdrId?: string;
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -170,6 +172,8 @@ export const contactsApi = {
     if (params.outreachLane) search.set("outreach_lane", params.outreachLane);
     if (params.sequenceStatus) search.set("sequence_status", params.sequenceStatus);
     if (params.emailState) search.set("email_state", params.emailState);
+    if (params.aeId) search.set("ae_id", params.aeId);
+    if (params.sdrId) search.set("sdr_id", params.sdrId);
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),

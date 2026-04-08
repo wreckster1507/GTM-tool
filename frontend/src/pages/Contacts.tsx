@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { accountSourcingApi, angelMappingApi, contactsApi, settingsApi } from "../lib/api";
-import type { Contact, AngelInvestor, AngelMapping, RolePermissionsSettings } from "../types";
+import { accountSourcingApi, angelMappingApi, authApi, contactsApi, settingsApi } from "../lib/api";
+import type { Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
@@ -109,6 +109,9 @@ export default function Contacts() {
   const [laneFilter, setLaneFilter] = useState("");
   const [sequenceFilter, setSequenceFilter] = useState("");
   const [emailFilter, setEmailFilter] = useState("");
+  const [aeFilter, setAeFilter] = useState("");
+  const [sdrFilter, setSdrFilter] = useState("");
+  const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [contactsTotal, setContactsTotal] = useState(0);
@@ -157,6 +160,8 @@ export default function Contacts() {
       outreachLane: laneFilter || undefined,
       sequenceStatus: sequenceFilter || undefined,
       emailState: emailFilter || undefined,
+      aeId: aeFilter || undefined,
+      sdrId: sdrFilter || undefined,
     }).then((result) => {
       setContacts(result.items);
       setContactsTotal(result.total);
@@ -279,6 +284,10 @@ export default function Contacts() {
   }, []);
 
   useEffect(() => {
+    authApi.listUsers().then(setTeamUsers).catch(() => setTeamUsers([]));
+  }, []);
+
+  useEffect(() => {
     setTab(location.pathname === "/angel-mapping" ? "angel-mapping" : "contacts");
   }, [location.pathname]);
 
@@ -291,12 +300,12 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter]);
+  }, [debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter, aeFilter, sdrFilter]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [tab, page, debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter]);
+  }, [tab, page, debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter, aeFilter, sdrFilter]);
 
   // ── Angel mapping grouping ──────────────────────────────────────────
   const filteredMappings = mappings
@@ -435,8 +444,8 @@ export default function Contacts() {
               </div>
             </button>
 
-            {/* Angel Mapping tab */}
-            <button
+            {/* Angel Mapping tab — hidden */}
+            {false && <button
               type="button"
               onClick={() => handleTabChange("angel-mapping")}
               style={{
@@ -474,7 +483,7 @@ export default function Contacts() {
                   Warm intro paths from investors into target accounts
                 </div>
               </div>
-            </button>
+            </button>}
           </div>
 
           {/* Row 2 — contextual action bar */}
@@ -674,7 +683,7 @@ export default function Contacts() {
 
             {/* Filters */}
             {(() => {
-              const hasFilters = !!(personaFilter || laneFilter || sequenceFilter || emailFilter || search);
+              const hasFilters = !!(personaFilter || laneFilter || sequenceFilter || emailFilter || aeFilter || sdrFilter || search);
               const selectStyle = (active: boolean): CSSProperties => ({
                 appearance: "none" as const,
                 WebkitAppearance: "none" as const,
@@ -739,6 +748,38 @@ export default function Contacts() {
                     </div>
                   ))}
 
+                  {/* Owner filters */}
+                  {teamUsers.length > 0 && (
+                    <>
+                      <div style={{ position: "relative", flexShrink: 0 }}>
+                        <select
+                          value={aeFilter}
+                          onChange={(e) => setAeFilter(e.target.value)}
+                          style={selectStyle(!!aeFilter)}
+                        >
+                          <option value="">AE: All</option>
+                          {teamUsers.map((u) => (
+                            <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: aeFilter ? "#175089" : "#94a8bc", pointerEvents: "none" }} />
+                      </div>
+                      <div style={{ position: "relative", flexShrink: 0 }}>
+                        <select
+                          value={sdrFilter}
+                          onChange={(e) => setSdrFilter(e.target.value)}
+                          style={selectStyle(!!sdrFilter)}
+                        >
+                          <option value="">SDR: All</option>
+                          {teamUsers.map((u) => (
+                            <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: sdrFilter ? "#175089" : "#94a8bc", pointerEvents: "none" }} />
+                      </div>
+                    </>
+                  )}
+
                   {/* Divider */}
                   <div style={{ flex: 1 }} />
 
@@ -758,6 +799,7 @@ export default function Contacts() {
                       onClick={() => {
                         setSearch(""); setPersonaFilter("");
                         setLaneFilter(""); setSequenceFilter(""); setEmailFilter("");
+                        setAeFilter(""); setSdrFilter("");
                       }}
                       style={{
                         display: "inline-flex", alignItems: "center", gap: 5,
@@ -829,7 +871,42 @@ export default function Contacts() {
                             )}
                           </td>
                           <td>{c.title ?? <span className="text-[#96a7ba]">-</span>}</td>
-                          <td>{c.email ?? <span className="text-[#96a7ba]">-</span>}</td>
+                          <td>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                              {c.email
+                                ? <span style={{ fontSize: 13, color: "#1e3a52", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
+                                : <span className="text-[#96a7ba]">-</span>
+                              }
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                                {c.phone && (
+                                  <a
+                                    href={`tel:${c.phone}`}
+                                    title={c.phone}
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, color: "#175089", textDecoration: "none", background: "#eaf2ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 7px" }}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      if (window.__aircallDial) window.__aircallDial(c.phone!, `${c.first_name} ${c.last_name}`);
+                                    }}
+                                  >
+                                    <Phone size={11} />
+                                    {c.phone}
+                                  </a>
+                                )}
+                                {c.linkedin_url && (
+                                  <a
+                                    href={c.linkedin_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="LinkedIn profile"
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, color: "#0a66c2", textDecoration: "none", background: "#e8f2ff", border: "1px solid #b8d4f0", borderRadius: 6, padding: "2px 7px" }}
+                                  >
+                                    <Link2 size={11} />
+                                    LinkedIn
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          </td>
                           <td>
                             {(() => {
                               const tone = getProspectTrackingTone(c);

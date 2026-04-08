@@ -116,15 +116,18 @@ async def _find_contact_by_phone(session, phone: str | None) -> Optional[Contact
     if not clean:
         return None
 
+    # Try suffix match using last 9 digits — covers country code variations
+    # Fetch ALL contacts with a phone number (no LIMIT — number grows over time)
     result = await session.execute(
-        select(Contact).where(Contact.phone.isnot(None)).limit(100)
+        select(Contact).where(Contact.phone.isnot(None))
     )
     candidates = result.scalars().all()
+    suffix = clean[-9:]
     for candidate in candidates:
-        candidate_phone = _clean_phone(candidate.phone)
-        if not candidate_phone:
+        candidate_clean = _clean_phone(candidate.phone)
+        if not candidate_clean:
             continue
-        if candidate_phone == clean or candidate_phone.endswith(clean[-9:]) or clean.endswith(candidate_phone[-9:]):
+        if candidate_clean == clean or candidate_clean.endswith(suffix) or clean.endswith(candidate_clean[-9:]):
             return candidate
     return None
 
@@ -520,6 +523,9 @@ def _infer_aircall_outcome(
         return "answered"
     if answered_at or (duration or 0) > 0:
         return "answered"
+    # call.ended with duration=0 and no answered_at = no answer (outbound) or hung up before answer
+    if event == "call.ended" and not answered_at and (duration or 0) == 0:
+        return "missed"
     return None
 
 
@@ -904,7 +910,10 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
         secs = (duration or 0) % 60
         duration_str = f"{mins}m {secs}s" if mins else f"{secs}s"
         if call_outcome == "missed":
-            content = f"📵 Missed call from {raw_digits}"
+            if direction == "outbound":
+                content = f"📵 No answer — outbound call to {raw_digits} (0s)"
+            else:
+                content = f"📵 Missed call from {raw_digits}"
             if missed_reason:
                 content += f" ({missed_reason})"
         elif call_outcome == "voicemail":
