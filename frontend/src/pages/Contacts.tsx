@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, angelMappingApi, authApi, contactsApi, settingsApi } from "../lib/api";
 import type { Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
@@ -98,22 +98,23 @@ const ANGEL_TEXT = {
 export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
   const pageSize = 50;
 
-  // ── Contacts state ───────────────────────────────────────────────────
+  // ── Contacts state — initialised from URL so filters survive navigation ──
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [search, setSearch] = useState("");
-  const [personaFilter, setPersonaFilter] = useState("");
-  const [laneFilter, setLaneFilter] = useState("");
-  const [sequenceFilter, setSequenceFilter] = useState("");
-  const [emailFilter, setEmailFilter] = useState("");
-  const [aeFilter, setAeFilter] = useState("");
-  const [sdrFilter, setSdrFilter] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  const [personaFilter, setPersonaFilter] = useState(() => searchParams.get("persona") ?? "");
+  const [laneFilter, setLaneFilter] = useState(() => searchParams.get("lane") ?? "");
+  const [sequenceFilter, setSequenceFilter] = useState(() => searchParams.get("seq") ?? "");
+  const [emailFilter, setEmailFilter] = useState(() => searchParams.get("email") ?? "");
+  const [aeFilter, setAeFilter] = useState(() => searchParams.get("ae") ?? "");
+  const [sdrFilter, setSdrFilter] = useState(() => searchParams.get("sdr") ?? "");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [page, setPage] = useState(1);
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
+  const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
   const [contactsTotal, setContactsTotal] = useState(0);
   const [contactsPages, setContactsPages] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -290,6 +291,22 @@ export default function Contacts() {
   useEffect(() => {
     setTab(location.pathname === "/angel-mapping" ? "angel-mapping" : "contacts");
   }, [location.pathname]);
+
+  // Sync all filter state into URL so navigating away and back restores position
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      search.trim() ? next.set("q", search.trim()) : next.delete("q");
+      personaFilter ? next.set("persona", personaFilter) : next.delete("persona");
+      laneFilter ? next.set("lane", laneFilter) : next.delete("lane");
+      sequenceFilter ? next.set("seq", sequenceFilter) : next.delete("seq");
+      emailFilter ? next.set("email", emailFilter) : next.delete("email");
+      aeFilter ? next.set("ae", aeFilter) : next.delete("ae");
+      sdrFilter ? next.set("sdr", sdrFilter) : next.delete("sdr");
+      page > 1 ? next.set("pg", String(page)) : next.delete("pg");
+      return next;
+    }, { replace: true });
+  }, [search, personaFilter, laneFilter, sequenceFilter, emailFilter, aeFilter, sdrFilter, page]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {

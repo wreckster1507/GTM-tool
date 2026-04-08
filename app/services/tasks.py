@@ -405,6 +405,32 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
         if part
     )
 
+    # ── Pull recent Instantly email activity ──────────────────────────────────
+    instantly_rows = (
+        await session.execute(
+            select(Activity)
+            .where(
+                Activity.contact_id == contact.id,
+                Activity.source == "instantly",
+            )
+            .order_by(Activity.created_at.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+    latest_reply = next((a for a in instantly_rows if "reply" in (a.content or "").lower() or a.type == "email_reply"), None)
+    latest_open = next((a for a in instantly_rows if "opened" in (a.content or "").lower()), None)
+    latest_bounce = next((a for a in instantly_rows if "bounce" in (a.content or "").lower()), None)
+    latest_interested = next((a for a in instantly_rows if "interested" in (a.content or "").lower() and "not interested" not in (a.content or "").lower()), None)
+    latest_unsubscribed = next((a for a in instantly_rows if "unsubscribed" in (a.content or "").lower()), None)
+
+    seq_status = _normalize(contact.sequence_status)
+    has_recent_reply = bool(latest_reply and latest_reply.created_at >= datetime.utcnow() - timedelta(days=7))
+    has_recent_open = bool(latest_open and latest_open.created_at >= datetime.utcnow() - timedelta(days=3))
+    has_recent_interested = bool(latest_interested and latest_interested.created_at >= datetime.utcnow() - timedelta(days=5))
+    is_bounced = bool(latest_bounce or seq_status == "bounced")
+    is_unsubscribed = bool(latest_unsubscribed or seq_status == "unsubscribed")
+    is_not_interested = seq_status == "not_interested"
+
     if not contact.phone and bool(contact.email):
         await _upsert_system_task(
             session,
@@ -582,6 +608,125 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
         )
     else:
         await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_send_call_recap", status="dismissed")
+
+    # ── Email / Instantly signal tasks ───────────────────────────────────────
+
+    # Reply received → follow up on the reply thread (high priority, Beacon can draft)
+    if not has_deal and has_recent_reply and seq_status not in {"meeting_booked", "interested"}:
+        reply_content = (latest_reply.content or "") if latest_reply else ""
+        await _upsert_system_task(
+            session,
+            entity_type="contact",
+            entity_id=contact.id,
+            system_key="contact_follow_up_reply",
+            title="Follow up on email reply",
+            description=(
+                f"This prospect replied to an outreach email. Review their reply and send a personalised follow-up to keep momentum."
+                + (f"\n\nReply excerpt: {reply_content[:300]}" if reply_content else "")
+            ),
+            priority="high",
+            source="instantly",
+            recommended_action="draft_reply_follow_up",
+            action_payload={"contact_id": str(contact.id), "reply_excerpt": reply_content[:300], "next_step": "reply_to_prospect"},
+            assigned_role="ae",
+        )
+    else:
+        await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_follow_up_reply", status="dismissed")
+
+    # Interested signal → book a call / meeting (very high priority, convert to deal soon)
+    if not has_deal and has_recent_interested:
+        await _upsert_system_task(
+            session,
+            entity_type="contact",
+            entity_id=contact.id,
+            system_key="contact_book_call_from_interest",
+            title="Book a call — prospect expressed interest",
+            description="Instantly flagged this prospect as Interested. Strike while it's hot — propose a discovery or demo call.",
+            priority="high",
+            source="instantly",
+            recommended_action="book_call_from_interest",
+            action_payload={"contact_id": str(contact.id), "next_step": "book_call"},
+            assigned_role="ae",
+        )
+    else:
+        await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_book_call_from_interest", status="dismissed")
+
+    # Email opened (no reply yet) → send a targeted follow-up while attention is there
+    if (
+        not has_deal
+        and has_recent_open
+        and not has_recent_reply
+        and seq_status not in {"replied", "meeting_booked", "interested", "not_interested", "unsubscribed", "bounced"}
+    ):
+        await _upsert_system_task(
+            session,
+            entity_type="contact",
+            entity_id=contact.id,
+            system_key="contact_follow_up_after_open",
+            title="Send a follow-up — prospect opened the email",
+            description="This prospect opened an outreach email but hasn't replied yet. Send a short, personalised follow-up to spark a conversation.",
+            priority="medium",
+            source="instantly",
+            recommended_action="draft_open_follow_up",
+            action_payload={"contact_id": str(contact.id), "next_step": "send_follow_up"},
+            assigned_role="sdr",
+        )
+    else:
+        await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_follow_up_after_open", status="dismissed")
+
+    # Bounced email → fix the email address
+    if is_bounced:
+        await _upsert_system_task(
+            session,
+            entity_type="contact",
+            entity_id=contact.id,
+            system_key="contact_fix_bounced_email",
+            title="Fix bounced email address",
+            description="An outreach email bounced for this prospect. Re-enrich the contact to find a valid email or mark the record as unreachable.",
+            priority="high",
+            source="instantly",
+            recommended_action="re_enrich_contact",
+            action_payload={"contact_id": str(contact.id)},
+            assigned_role="sdr",
+        )
+    else:
+        await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_fix_bounced_email")
+
+    # Unsubscribed → update CRM status, stop all outreach
+    if is_unsubscribed:
+        await _upsert_system_task(
+            session,
+            entity_type="contact",
+            entity_id=contact.id,
+            system_key="contact_mark_unsubscribed",
+            title="Mark prospect as unsubscribed and pause outreach",
+            description="This prospect unsubscribed from the email sequence. Update the CRM status and ensure no further automated outreach is sent.",
+            priority="medium",
+            source="instantly",
+            recommended_action="mark_contact_unsubscribed",
+            action_payload={"contact_id": str(contact.id)},
+            assigned_role="sdr",
+        )
+    else:
+        await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_mark_unsubscribed")
+
+    # Not interested → log it and decide whether to nurture or close
+    if is_not_interested and not has_deal:
+        await _upsert_system_task(
+            session,
+            entity_type="contact",
+            entity_id=contact.id,
+            system_key="contact_handle_not_interested",
+            title="Prospect is not interested — review and decide next step",
+            description="Instantly flagged this prospect as Not Interested. Decide whether to nurture long-term, reassign, or close the record.",
+            priority="low",
+            source="instantly",
+            recommended_action="close_not_interested_contact",
+            action_payload={"contact_id": str(contact.id)},
+            assigned_role="ae",
+        )
+    else:
+        await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_handle_not_interested")
 
 
 def _deal_signal_task(text: str, current_stage: str) -> tuple[str, str, str] | None:
@@ -1310,5 +1455,78 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
             )
         )
         return {"message": action_text}
+
+    # ── Email / Instantly task actions ────────────────────────────────────────
+
+    if action in {"draft_reply_follow_up", "draft_open_follow_up", "book_call_from_interest"}:
+        contact_id = UUID(str(payload["contact_id"]))
+        contact = await session.get(Contact, contact_id)
+        if not contact:
+            raise ValueError("Prospect no longer exists")
+
+        action_text = {
+            "draft_reply_follow_up": "Followed up on email reply",
+            "draft_open_follow_up": "Sent follow-up after email open",
+            "book_call_from_interest": "Booked call with interested prospect",
+        }[action]
+
+        # For booking a call from interest — advance sequence status
+        if action == "book_call_from_interest":
+            contact.sequence_status = "meeting_booked"
+            contact.updated_at = datetime.utcnow()
+            session.add(contact)
+
+        session.add(
+            Activity(
+                contact_id=contact_id,
+                type="email",
+                source="system_task",
+                medium="email",
+                content=f"{action_text} via accepted Beacon task",
+                created_by_id=user.id,
+            )
+        )
+        return {"message": action_text}
+
+    if action == "mark_contact_unsubscribed":
+        contact_id = UUID(str(payload["contact_id"]))
+        contact = await session.get(Contact, contact_id)
+        if not contact:
+            raise ValueError("Prospect no longer exists")
+        contact.sequence_status = "unsubscribed"
+        contact.instantly_status = "unsubscribed"
+        contact.updated_at = datetime.utcnow()
+        session.add(contact)
+        session.add(
+            Activity(
+                contact_id=contact_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content="Prospect marked as unsubscribed and outreach paused via accepted Beacon task",
+                created_by_id=user.id,
+            )
+        )
+        return {"message": "Prospect marked unsubscribed"}
+
+    if action == "close_not_interested_contact":
+        contact_id = UUID(str(payload["contact_id"]))
+        contact = await session.get(Contact, contact_id)
+        if not contact:
+            raise ValueError("Prospect no longer exists")
+        contact.sequence_status = "not_interested"
+        contact.updated_at = datetime.utcnow()
+        session.add(contact)
+        session.add(
+            Activity(
+                contact_id=contact_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content="Prospect closed as Not Interested via accepted Beacon task",
+                created_by_id=user.id,
+            )
+        )
+        return {"message": "Prospect closed as not interested"}
 
     return {"message": "No automatic action configured"}

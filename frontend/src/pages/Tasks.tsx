@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Sparkles, Trash2 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { tasksApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
@@ -291,14 +291,27 @@ function TaskWorkspaceCard({
 
 export default function TasksPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState<TaskWorkspaceItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>("open");
-  const [typeFilter, setTypeFilter] = useState<TaskTypeFilter>("all");
-  const [entityFilter, setEntityFilter] = useState<EntityFilter>("all");
-  const [queueScope, setQueueScope] = useState<QueueScope>("mine");
+  const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(() => (searchParams.get("status") as TaskStatusFilter) ?? "open");
+  const [typeFilter, setTypeFilter] = useState<TaskTypeFilter>(() => (searchParams.get("type") as TaskTypeFilter) ?? "all");
+  const [entityFilter, setEntityFilter] = useState<EntityFilter>(() => (searchParams.get("entity") as EntityFilter) ?? "all");
+  const [queueScope, setQueueScope] = useState<QueueScope>(() => (searchParams.get("scope") as QueueScope) ?? "mine");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const isAdmin = user?.role === "admin";
+
+  // Sync filter state to URL
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      statusFilter !== "open" ? next.set("status", statusFilter) : next.delete("status");
+      typeFilter !== "all" ? next.set("type", typeFilter) : next.delete("type");
+      entityFilter !== "all" ? next.set("entity", entityFilter) : next.delete("entity");
+      queueScope !== "mine" ? next.set("scope", queueScope) : next.delete("scope");
+      return next;
+    }, { replace: true });
+  }, [statusFilter, typeFilter, entityFilter, queueScope]);
 
   const load = async () => {
     setLoading(true);

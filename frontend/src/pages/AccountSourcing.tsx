@@ -1,5 +1,5 @@
 import { CSSProperties, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import {
   AlertCircle,
@@ -462,16 +462,17 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
 
 export default function AccountSourcing() {
   const pageSize = 40;
+  const [searchParams, setSearchParams] = useSearchParams();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [summary, setSummary] = useState<AccountSourcingSummary | null>(null);
   const [batches, setBatches] = useState<SourcingBatch[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [tierFilter, setTierFilter] = useState("");
-  const [dispositionFilter, setDispositionFilter] = useState("");
-  const [laneFilter, setLaneFilter] = useState("");
-  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
+  const [tierFilter, setTierFilter] = useState(() => searchParams.get("tier") ?? "");
+  const [dispositionFilter, setDispositionFilter] = useState(() => searchParams.get("disp") ?? "");
+  const [laneFilter, setLaneFilter] = useState(() => searchParams.get("lane") ?? "");
+  const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
   const [companyTotal, setCompanyTotal] = useState(0);
   const [companyPages, setCompanyPages] = useState(1);
   const [exporting, setExporting] = useState(false);
@@ -545,6 +546,19 @@ export default function AccountSourcing() {
       ) ?? null,
     [batches, dismissedBatchIds]
   );
+
+  // Sync filter state to URL so navigating away and back restores the view
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      search.trim() ? next.set("q", search.trim()) : next.delete("q");
+      tierFilter ? next.set("tier", tierFilter) : next.delete("tier");
+      dispositionFilter ? next.set("disp", dispositionFilter) : next.delete("disp");
+      laneFilter ? next.set("lane", laneFilter) : next.delete("lane");
+      page > 1 ? next.set("pg", String(page)) : next.delete("pg");
+      return next;
+    }, { replace: true });
+  }, [search, tierFilter, dispositionFilter, laneFilter, page]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {

@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigationType } from "react-router-dom";
 import { AuthProvider } from "./lib/AuthContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import Layout from "./components/layout/Layout";
@@ -28,6 +29,18 @@ import ExecutionTracker from "./pages/ExecutionTracker";
 import SettingsPage from "./pages/Settings";
 import TasksPage from "./pages/Tasks";
 
+// Scroll to top on forward navigation; let browser handle back/forward scroll restoration
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  const navType = useNavigationType();
+  useEffect(() => {
+    if (navType === "PUSH") {
+      window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    }
+  }, [pathname, navType]);
+  return null;
+}
+
 function RouteScopedAircallPhone() {
   const location = useLocation();
   const pathname = location.pathname;
@@ -44,6 +57,7 @@ export default function App() {
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
+        <ScrollToTop />
         {/* Aircall phone widget — only on prospecting/contact routes */}
         <RouteScopedAircallPhone />
         <Routes>

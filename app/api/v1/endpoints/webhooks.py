@@ -698,6 +698,13 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         contact_id=contact_id,
     )
 
+    # ── Refresh system tasks based on new email signal ─────────────────────────
+    if contact_id:
+        await refresh_system_tasks_for_entity(session, "contact", contact_id)
+    if deal_id:
+        await refresh_system_tasks_for_entity(session, "deal", deal_id)
+    await session.commit()
+
     return {
         "status": "ok",
         "event_type": event_type,
