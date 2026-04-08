@@ -1072,22 +1072,29 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-                    When disabled, the daily tl;dv sync task will skip execution.
+                    When disabled, the tl;dv sync task will skip execution entirely.
                   </div>
+                  {syncSchedule?.tldv_last_synced_at ? (
+                    <div style={{ fontSize: 12, color: "#1f8f5f", background: "#e8f8f0", borderRadius: 8, padding: "5px 10px", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      Last synced: {new Date(syncSchedule.tldv_last_synced_at).toLocaleString()}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: "#7f8fa5" }}>No sync run yet</div>
+                  )}
                 </label>
 
                 <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Sync hour (UTC)</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Sync interval (minutes)</div>
                   <input
                     type="number"
-                    min={0}
-                    max={23}
-                    value={syncSchedule?.tldv_sync_hour ?? 3}
-                    onChange={(e) => updateSyncField("tldv_sync_hour", Number(e.target.value))}
+                    min={1}
+                    max={60}
+                    value={syncSchedule?.tldv_sync_interval_minutes ?? 5}
+                    onChange={(e) => updateSyncField("tldv_sync_interval_minutes", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
                     style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>Hour of the day (0–23 UTC) when sync runs. Default: <strong>3</strong></div>
+                  <div className="crm-muted" style={{ fontSize: 13 }}>How often to check for new meetings (1–60 min). Default: <strong>5</strong>. Only new meetings since the last run are fetched — very low API cost.</div>
                 </div>
               </div>
 
@@ -1097,27 +1104,27 @@ export default function SettingsPage() {
                   <input
                     type="number"
                     min={5}
-                    max={100}
-                    value={syncSchedule?.tldv_page_size ?? 20}
+                    max={50}
+                    value={syncSchedule?.tldv_page_size ?? 10}
                     onChange={(e) => updateSyncField("tldv_page_size", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
                     style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>Meetings per API page (5–100). Default: <strong>20</strong></div>
+                  <div className="crm-muted" style={{ fontSize: 13 }}>Meetings per API page (5–50). Default: <strong>10</strong>. With incremental sync, 1–2 pages is enough per run.</div>
                 </div>
 
                 <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Max pages</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Max pages per run</div>
                   <input
                     type="number"
                     min={1}
-                    max={20}
-                    value={syncSchedule?.tldv_max_pages ?? 3}
+                    max={10}
+                    value={syncSchedule?.tldv_max_pages ?? 2}
                     onChange={(e) => updateSyncField("tldv_max_pages", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
                     style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>Max pages to fetch per run (1–20). Default: <strong>3</strong></div>
+                  <div className="crm-muted" style={{ fontSize: 13 }}>Max pages to fetch per run (1–10). Default: <strong>2</strong>. Incremental runs stop early when they reach already-synced meetings.</div>
                 </div>
               </div>
 

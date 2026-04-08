@@ -34,7 +34,7 @@ celery_app.conf.update(
         },
         "sync-tldv-meetings": {
             "task": "app.tasks.tldv_sync.sync_tldv_meetings",
-            "schedule": crontab(hour=3, minute=0),  # daily at 03:00 UTC
+            "schedule": 60,  # every 60s — task self-throttles via tldv_sync_interval_minutes in DB (default 5 min)
         },
     },
 )

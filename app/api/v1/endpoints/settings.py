@@ -615,10 +615,11 @@ async def run_pre_meeting_automation_now(session: DBSession, _admin: AdminUser):
 
 
 SYNC_DEFAULTS = {
-    "tldv_sync_hour": 3,
     "tldv_sync_enabled": True,
-    "tldv_page_size": 20,
-    "tldv_max_pages": 3,
+    "tldv_sync_interval_minutes": 5,
+    "tldv_page_size": 10,
+    "tldv_max_pages": 2,
+    "tldv_last_synced_at": None,
     "email_sync_interval_seconds": 180,
     "deal_health_hour": 2,
 }
@@ -642,9 +643,9 @@ async def update_sync_schedule(body: SyncScheduleSettingsUpdate, session: DBSess
     updates = body.model_dump(exclude_unset=True)
     current.update(updates)
     # Clamp values
-    current["tldv_sync_hour"] = max(0, min(23, current["tldv_sync_hour"]))
-    current["tldv_page_size"] = max(5, min(100, current["tldv_page_size"]))
-    current["tldv_max_pages"] = max(1, min(20, current["tldv_max_pages"]))
+    current["tldv_sync_interval_minutes"] = max(1, min(60, current["tldv_sync_interval_minutes"]))
+    current["tldv_page_size"] = max(5, min(50, current["tldv_page_size"]))
+    current["tldv_max_pages"] = max(1, min(10, current["tldv_max_pages"]))
     current["email_sync_interval_seconds"] = max(60, min(3600, current["email_sync_interval_seconds"]))
     current["deal_health_hour"] = max(0, min(23, current["deal_health_hour"]))
     row.sync_schedule_settings = current

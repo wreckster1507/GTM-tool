@@ -523,10 +523,11 @@ export interface PreMeetingAutomationSettings {
 }
 
 export interface SyncScheduleSettings {
-  tldv_sync_hour: number;
   tldv_sync_enabled: boolean;
+  tldv_sync_interval_minutes: number;
   tldv_page_size: number;
   tldv_max_pages: number;
+  tldv_last_synced_at?: string | null;
   email_sync_interval_seconds: number;
   deal_health_hour: number;
 }

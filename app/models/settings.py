@@ -170,17 +170,18 @@ class WorkspaceSettings(SQLModel, table=True):
     )
     sync_schedule_settings: dict = Field(
         default={
-            "tldv_sync_hour": 3,
             "tldv_sync_enabled": True,
-            "tldv_page_size": 20,
-            "tldv_max_pages": 3,
+            "tldv_sync_interval_minutes": 5,
+            "tldv_page_size": 10,
+            "tldv_max_pages": 2,
+            "tldv_last_synced_at": None,
             "email_sync_interval_seconds": 180,
             "deal_health_hour": 2,
         },
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"tldv_sync_hour":3,"tldv_sync_enabled":true,"tldv_page_size":20,"tldv_max_pages":3,"email_sync_interval_seconds":180,"deal_health_hour":2}',
+            server_default='{"tldv_sync_enabled":true,"tldv_sync_interval_minutes":5,"tldv_page_size":10,"tldv_max_pages":2,"tldv_last_synced_at":null,"email_sync_interval_seconds":180,"deal_health_hour":2}',
         ),
     )
     clickup_crm_settings: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -334,17 +335,18 @@ class ClickUpCrmSettingsUpdate(SQLModel):
 
 
 class SyncScheduleSettingsRead(SQLModel):
-    tldv_sync_hour: int
     tldv_sync_enabled: bool
+    tldv_sync_interval_minutes: int
     tldv_page_size: int
     tldv_max_pages: int
+    tldv_last_synced_at: Optional[str] = None
     email_sync_interval_seconds: int
     deal_health_hour: int
 
 
 class SyncScheduleSettingsUpdate(SQLModel):
-    tldv_sync_hour: Optional[int] = None
     tldv_sync_enabled: Optional[bool] = None
+    tldv_sync_interval_minutes: Optional[int] = None
     tldv_page_size: Optional[int] = None
     tldv_max_pages: Optional[int] = None
     email_sync_interval_seconds: Optional[int] = None

@@ -880,10 +880,19 @@ async def sync_tldv_meeting(
 async def sync_tldv_history(
     session: AsyncSession,
     *,
-    page_size: int = 50,
-    max_pages: int | None = None,
+    page_size: int = 10,
+    max_pages: int | None = 2,
     lookback_days: int | None = None,
+    since: datetime | None = None,
 ) -> dict[str, Any]:
+    """Sync tl;dv meetings.
+
+    When ``since`` is provided (incremental mode) only meetings that happened
+    after that timestamp are processed and pagination stops as soon as an older
+    meeting is encountered — keeping each run very cheap.
+
+    Falls back to ``lookback_days`` cutoff for full-history runs.
+    """
     client = TldvClient()
     if client.mock:
         raise ValueError("tl;dv API key is not configured")
@@ -897,9 +906,18 @@ async def sync_tldv_history(
         }
 
     stats = TldvSyncStats()
-    cutoff = datetime.utcnow() - timedelta(days=lookback_days or settings.TLDV_SYNC_LOOKBACK_DAYS)
+    # Incremental: use `since` with a small overlap buffer to avoid missing meetings
+    # at the boundary. Full-history: fall back to TLDV_SYNC_LOOKBACK_DAYS.
+    if since is not None:
+        cutoff = since - timedelta(minutes=2)
+        incremental = True
+    else:
+        cutoff = datetime.utcnow() - timedelta(days=lookback_days or settings.TLDV_SYNC_LOOKBACK_DAYS)
+        incremental = False
+
     page = 1
     processed = 0
+    sync_started_at = datetime.utcnow()
 
     while True:
         if not await _is_tldv_sync_enabled(session):
@@ -915,12 +933,18 @@ async def sync_tldv_history(
         if not results:
             break
 
+        hit_old_meeting = False
         for meeting_payload in results:
             meeting_id = str(meeting_payload.get("id") or "").strip()
             if not meeting_id:
                 continue
             happened_at = _parse_dt(meeting_payload.get("happenedAt"))
             if happened_at and happened_at < cutoff:
+                if incremental:
+                    # tl;dv returns newest-first — once we see something older
+                    # than our cutoff we can stop paging entirely
+                    hit_old_meeting = True
+                    break
                 continue
             await sync_tldv_meeting(
                 session,
@@ -931,14 +955,19 @@ async def sync_tldv_history(
             )
             processed += 1
 
+        if hit_old_meeting:
+            break
+
         page += 1
         pages = payload.get("pages")
-        if max_pages is not None and page >= max_pages:
+        if max_pages is not None and page > max_pages:
             break
         if isinstance(pages, int) and page > pages:
             break
 
     return {
         "processed": processed,
+        "incremental": incremental,
+        "sync_started_at": sync_started_at.isoformat(),
         **stats.as_dict(),
     }
