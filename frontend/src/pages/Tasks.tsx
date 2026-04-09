@@ -6,6 +6,7 @@ import { tasksApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { formatDate } from "../lib/utils";
 import type { TaskWorkspaceItem } from "../types";
+import { getSystemTaskGuidance } from "../components/tasks/systemTaskGuidance";
 
 const colors = {
   border: "#d9e1ec",
@@ -129,6 +130,7 @@ function TaskWorkspaceCard({
   onAccept,
   onComplete,
   onDismiss,
+  onManualTakeover,
   onDelete,
   onReschedule,
   canDelete,
@@ -140,6 +142,7 @@ function TaskWorkspaceCard({
   onAccept: () => void;
   onComplete: () => void;
   onDismiss: () => void;
+  onManualTakeover: () => void;
   onDelete: () => void;
   onReschedule: (newDate: string) => void;
   canDelete: boolean;
@@ -148,6 +151,7 @@ function TaskWorkspaceCard({
   const typeStyle = TYPE_STYLE[task.task_type];
   const isOpen = task.status === "open";
   const [showReschedule, setShowReschedule] = useState(false);
+  const systemGuidance = getSystemTaskGuidance(task);
 
   return (
     <div className="crm-panel" style={{ padding: 18, borderRadius: 16, boxShadow: "none", display: "grid", gap: 12 }}>
@@ -228,16 +232,31 @@ function TaskWorkspaceCard({
       </div>
 
       {task.task_type === "system" && isOpen ? (
-        <div style={{ borderRadius: 12, background: "#fbf7ff", border: "1px solid #eadbff", padding: "10px 12px", display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ borderRadius: 12, background: "#fbf7ff", border: "1px solid #eadbff", padding: "12px 12px", display: "grid", gap: 10 }}>
           <div style={{ color: colors.violet, fontSize: 12.5, fontWeight: 700 }}>
-            {task.recommended_action
+            {systemGuidance?.intro ?? (task.recommended_action
               ? "Beacon can handle this automatically if you accept the recommendation."
-              : "Beacon flagged this recommendation for the team. Mark it reviewed once you've handled it."}
+              : "Beacon flagged this recommendation for the team. Mark it reviewed once you've handled it.")}
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {systemGuidance?.steps?.length ? (
+            <div style={{ display: "grid", gap: 7, padding: "0 2px" }}>
+              {systemGuidance.steps.map((step) => (
+                <div key={step} style={{ display: "flex", alignItems: "flex-start", gap: 8, color: colors.sub, fontSize: 12.5, lineHeight: 1.6 }}>
+                  <span style={{ width: 18, height: 18, borderRadius: 999, background: "#efe5ff", color: colors.violet, fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    •
+                  </span>
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button type="button" onClick={onManualTakeover} className="crm-button soft" style={{ borderColor: "#d8c7ff", color: colors.violet }}>
+              I'll do it myself
+            </button>
             <button type="button" onClick={onDismiss} className="crm-button soft">Dismiss</button>
             <button type="button" onClick={onAccept} className="crm-button primary">
-              {task.recommended_action ? "Accept" : "Mark reviewed"}
+              {task.recommended_action ? "Let Beacon do it" : "Mark reviewed"}
             </button>
           </div>
         </div>
@@ -368,6 +387,20 @@ export default function TasksPage() {
     await load();
   };
 
+  const takeManualOwnership = async (task: TaskWorkspaceItem) => {
+    await tasksApi.create({
+      entity_type: task.entity_type,
+      entity_id: task.entity_id,
+      title: task.title,
+      description: task.description ? `${task.description}\n\nManual follow-up chosen by rep.` : "Manual follow-up chosen by rep.",
+      priority: task.priority === "high" ? "high" : task.priority === "low" ? "low" : "medium",
+      due_at: task.due_at,
+      assigned_to_id: user?.id,
+    });
+    await tasksApi.update(task.id, { status: "dismissed" });
+    await load();
+  };
+
   return (
     <div className="crm-page" style={{ display: "grid", gap: 18 }}>
       <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 16 }}>
@@ -484,6 +517,7 @@ export default function TasksPage() {
               onAccept={() => acceptTask(task.id)}
               onComplete={() => patchTask(task.id, { status: "completed" })}
               onDismiss={() => patchTask(task.id, { status: "dismissed" })}
+              onManualTakeover={() => takeManualOwnership(task)}
               onReschedule={(newDate) => patchTask(task.id, { due_at: new Date(newDate).toISOString() })}
               onDelete={() => deleteTask(task)}
               canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}

@@ -19,6 +19,7 @@ from app.repositories.deal import DealRepository
 from app.schemas.common import PaginatedResponse
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
+from app.services.meddpicc_assist import generate_meddpicc_assist
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +183,36 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
 async def patch_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _user: CurrentUser):
     """PATCH alias for update_deal — same logic."""
     return await update_deal(deal_id, payload, session, _user)
+
+
+@router.post("/{deal_id}/meddpicc/auto-fill", response_model=DealRead)
+async def auto_fill_meddpicc(deal_id: UUID, session: DBSession, _user: CurrentUser):
+    repo = DealRepository(session)
+    deal = await repo.get_or_raise(deal_id)
+
+    assist_payload = await generate_meddpicc_assist(session, deal)
+    qualification = dict(deal.qualification or {})
+    qualification["meddpicc"] = assist_payload["meddpicc"]
+    qualification["meddpicc_ai"] = assist_payload["meddpicc_ai"]
+
+    updated = await repo.update(
+        deal,
+        {
+            "qualification": qualification,
+            "updated_at": datetime.utcnow(),
+        },
+    )
+    session.add(
+        Activity(
+            deal_id=deal_id,
+            type="qualification_update",
+            source="beacon_ai",
+            content="Beacon AI refreshed MEDDPICC from current deal evidence.",
+        )
+    )
+    await session.commit()
+
+    return await repo.get_with_joins(deal_id) or updated
 
 
 # ── Stage move ───────────────────────────────────────────────────────────────

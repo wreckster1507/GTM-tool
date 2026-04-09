@@ -255,6 +255,10 @@ export const dealsApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  autoFillMeddpicc: (id: string) =>
+    request<Deal>(`/api/v1/deals/${id}/meddpicc/auto-fill`, {
+      method: "POST",
+    }),
   moveStage: (dealId: string, stage: string) =>
     request<Deal>(`/api/v1/deals/${dealId}/stage`, {
       method: "PATCH",

@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
-  Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search,
+  Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search, Loader2, Sparkles,
 } from "lucide-react";
-import { dealsApi, contactsApi, settingsApi } from "../../lib/api";
+import { accountSourcingApi, dealsApi, contactsApi, settingsApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
-import type { Activity, Company, Contact, Deal, DealContact, User } from "../../types";
+import type { Activity, Company, Contact, Deal, DealContact, DealQualification, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
@@ -63,6 +63,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   const [activities, setActivities] = useState<Activity[]>([]);
   const [dealContacts, setDealContacts] = useState<DealContact[]>([]);
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
+  const [autoFillingMeddpicc, setAutoFillingMeddpicc] = useState(false);
   const [comment, setComment] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
   const [sharedInbox, setSharedInbox] = useState("zippy@beacon.li");
@@ -86,6 +87,8 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   // Company searchable combobox
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const [companySearch, setCompanySearch] = useState("");
+  const [companyResults, setCompanyResults] = useState<Company[]>([]);
+  const [loadingCompanyResults, setLoadingCompanyResults] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -119,6 +122,48 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
     setActiveTab("overview");
     setComment("");
   }, [deal.id]);
+
+  useEffect(() => {
+    if (!companyDropdownOpen) return;
+
+    let cancelled = false;
+    const handle = window.setTimeout(async () => {
+      setLoadingCompanyResults(true);
+      try {
+        const response = await accountSourcingApi.listCompaniesPaginated({
+          skip: 0,
+          limit: 40,
+          q: companySearch.trim() || undefined,
+        });
+        let next = response.items;
+        const selectedCompany = companies.find((company) => company.id === deal.company_id);
+        if (selectedCompany && !next.some((company) => company.id === selectedCompany.id)) {
+          next = [selectedCompany, ...next];
+        }
+        if (!cancelled) {
+          setCompanyResults(next);
+        }
+      } catch {
+        if (!cancelled) {
+          const needle = companySearch.trim().toLowerCase();
+          setCompanyResults(
+            companies
+              .filter((company) => !needle || company.name.toLowerCase().includes(needle))
+              .slice(0, 40),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCompanyResults(false);
+        }
+      }
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [companyDropdownOpen, companySearch, companies, deal.company_id]);
 
   // ── Field updates ─────────────────────────────────────────────────────────
 
@@ -432,7 +477,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                   style={{ ...fieldInputStyle, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
                 >
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: deal.company_id ? "#1a202c" : "#a0aec0" }}>
-                    {companies.find(c => c.id === deal.company_id)?.name ?? "None"}
+                    {companies.find(c => c.id === deal.company_id)?.name ?? companyResults.find(c => c.id === deal.company_id)?.name ?? "None"}
                   </span>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0, marginLeft: 4 }}>
                     <path d="M2 4l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -461,9 +506,15 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                       >
                         None
                       </div>
-                      {companies
-                        .filter(c => c.name.toLowerCase().includes(companySearch.toLowerCase()))
-                        .map(c => (
+                      {loadingCompanyResults ? (
+                        <div style={{ padding: "10px 12px", fontSize: 12, color: "#7a96b0" }}>
+                          Searching accounts...
+                        </div>
+                      ) : companyResults.length === 0 ? (
+                        <div style={{ padding: "10px 12px", fontSize: 12, color: "#7a96b0" }}>
+                          No matching accounts found.
+                        </div>
+                      ) : companyResults.map(c => (
                           <div
                             key={c.id}
                             onClick={() => { patchDeal({ company_id: c.id } as Partial<Deal>); setCompanyDropdownOpen(false); }}
@@ -473,8 +524,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                           >
                             {c.name}
                           </div>
-                        ))
-                      }
+                        ))}
                     </div>
                   </div>
                 )}
@@ -906,6 +956,17 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
           ) : activeTab === "meddpicc" ? (
             <MeddpiccPanel
               qualification={deal.qualification}
+              autoFilling={autoFillingMeddpicc}
+              onAutoFill={async () => {
+                setAutoFillingMeddpicc(true);
+                try {
+                  const updated = await dealsApi.autoFillMeddpicc(deal.id);
+                  onDealUpdated(updated);
+                  void dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
+                } finally {
+                  setAutoFillingMeddpicc(false);
+                }
+              }}
               onUpdate={async (meddpicc) => {
                 const updated = { ...deal.qualification, meddpicc };
                 await patchDeal({ qualification: updated } as Partial<Deal>);
@@ -968,12 +1029,19 @@ function FieldRow({ label, icon, children }: { label: string; icon: React.ReactN
 
 function MeddpiccPanel({
   qualification,
+  autoFilling,
+  onAutoFill,
   onUpdate,
 }: {
-  qualification?: Record<string, unknown>;
+  qualification?: DealQualification;
+  autoFilling: boolean;
+  onAutoFill: () => Promise<void>;
   onUpdate: (meddpicc: Record<string, number>) => Promise<void>;
 }) {
   const meddpicc = (qualification?.meddpicc ?? {}) as Record<string, number>;
+  const aiDimensions = qualification?.meddpicc_ai?.dimensions ?? {};
+  const aiGeneratedAt = qualification?.meddpicc_ai?.generated_at;
+  const aiSignals = qualification?.meddpicc_ai?.signals_used;
 
   const handleChange = (key: string, value: number) => {
     onUpdate({ ...meddpicc, [key]: value });
@@ -1008,12 +1076,42 @@ function MeddpiccPanel({
           <div style={{ fontSize: 12, color: "#6b7f96", marginTop: 2 }}>
             {filled}/8 dimensions scored · {total}/24 points
           </div>
+          {aiGeneratedAt && (
+            <div style={{ fontSize: 11, color: "#7a8ca1", marginTop: 6 }}>
+              Beacon AI used {aiSignals?.contacts ?? 0} contacts and {aiSignals?.activities ?? 0} recent signals to draft this score.
+            </div>
+          )}
+        </div>
+        <div style={{ marginLeft: "auto" }}>
+          <button
+            type="button"
+            onClick={() => void onAutoFill()}
+            disabled={autoFilling}
+            style={{
+              height: 36,
+              padding: "0 14px",
+              borderRadius: 10,
+              border: "1px solid #ffc8b4",
+              background: autoFilling ? "#fff7f2" : "#fff3ec",
+              color: "#b85024",
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: autoFilling ? "default" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+            }}
+          >
+            {autoFilling ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            {autoFilling ? "Refreshing..." : "Auto-fill with Beacon AI"}
+          </button>
         </div>
       </div>
 
       {/* Dimension cards */}
       {MEDDPICC_DIMENSIONS.map((dim) => {
         const val = meddpicc[dim.key] ?? 0;
+        const aiMeta = aiDimensions[dim.key];
         return (
           <div key={dim.key} style={{
             padding: "14px 18px", borderRadius: 12,
@@ -1037,6 +1135,45 @@ function MeddpiccPanel({
             <div style={{ fontSize: 11, color: "#7a8ca1", marginBottom: 10 }}>
               {dim.desc}
             </div>
+            {aiMeta?.reason && (
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                marginBottom: 12,
+                padding: "9px 10px",
+                borderRadius: 10,
+                background: "#f8fafc",
+                border: "1px solid #e7eef6",
+              }}>
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: "#eef4ff",
+                  color: "#3555c4",
+                }}>
+                  Beacon AI
+                </span>
+                {aiMeta.confidence && (
+                  <span style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: aiMeta.confidence === "high" ? "#e8fbf1" : aiMeta.confidence === "medium" ? "#fff8df" : "#f3f4f6",
+                    color: aiMeta.confidence === "high" ? "#18794e" : aiMeta.confidence === "medium" ? "#946200" : "#667085",
+                  }}>
+                    {aiMeta.confidence} confidence
+                  </span>
+                )}
+                <span style={{ fontSize: 11, color: "#55687d", lineHeight: 1.6 }}>
+                  {aiMeta.reason}
+                </span>
+              </div>
+            )}
             {/* Level selector buttons */}
             <div style={{ display: "flex", gap: 6 }}>
               {MEDDPICC_LEVEL_LABELS.map((label, idx) => (

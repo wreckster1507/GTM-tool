@@ -686,7 +686,7 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
 
 function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; dropActive: boolean; onAdd?: () => void; onDrop: () => void; children: ReactNode }) {
   return (
-    <div style={{ width: 286, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+    <div style={{ width: 286, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, padding: "0 4px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: stage.color || STAGE_COLOR[stage.id] || "#94a3b8" }} />
@@ -698,7 +698,7 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, chil
           {onAdd && <button onClick={onAdd} style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #dbe6f2", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#7a96b0" }}><Plus size={12} /></button>}
         </div>
       </div>
-      <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} style={{ flex: 1, minHeight: 240, borderRadius: 14, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: dropActive ? "#eef6ff" : stage.group === "closed" ? "#f4f6f9" : "#f9fbfe", border: dropActive ? "1px solid #93c5fd" : "1px solid #e8eef5", overflowY: "auto", transition: "all 0.15s ease" }}>
+      <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} style={{ flex: 1, minHeight: 0, maxHeight: "100%", borderRadius: 14, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: dropActive ? "#eef6ff" : stage.group === "closed" ? "#f4f6f9" : "#f9fbfe", border: dropActive ? "1px solid #93c5fd" : "1px solid #e8eef5", overflowY: "auto", transition: "all 0.15s ease", scrollbarGutter: "stable" }}>
         {children}
       </div>
     </div>
@@ -1213,6 +1213,7 @@ export default function Pipeline() {
       : "Choose which prospect lanes count toward ToFU, MoFU, and BoFU in the shared summary cards.";
   const funnelModalStages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
 
+
   const resetFilters = () => {
     setSearch("");
     setStageFilters([]);
@@ -1426,7 +1427,7 @@ export default function Pipeline() {
 
   return (
     <>
-      <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", height: "100%", minHeight: 0, gap: 0 }}>
+      <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
         <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 2 }}>Pipeline</span>
@@ -1530,7 +1531,7 @@ export default function Pipeline() {
           )}
         </div>
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f2744", margin: 0 }}>{tab === "deal" ? "Deals" : "Prospects"} Board</h2>
@@ -1542,8 +1543,12 @@ export default function Pipeline() {
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowX: "auto", padding: "16px 16px 16px 20px" }}>
-            <div style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%" }}>
+          <div
+            className="pipeline-board-scroll"
+
+            style={{ flex: 1, minHeight: 0, height: 0, overflowX: "auto", overflowY: "hidden", padding: "16px 16px 8px 20px", scrollbarGutter: "stable both-edges" }}
+          >
+            <div style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%", minHeight: 0, alignItems: "stretch" }}>
               {(tab === "deal" ? stages : effectiveProspectStages).map((stage, index) => {
                 const divider = index > 0 && (tab === "deal" ? effectiveDealStages[index - 1]?.group : effectiveProspectStages[index - 1]?.group) === "active" && stage.group === "closed";
                 const dealItems = filteredDealBoard[stage.id] ?? [];

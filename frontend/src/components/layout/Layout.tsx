@@ -39,6 +39,7 @@ export default function Layout() {
     title: "Beacon CRM",
     subtitle: "Enterprise GTM execution workspace",
   };
+  const isPipelineRoute = pathname === "/pipeline";
 
   useEffect(() => {
     const saved = window.localStorage.getItem("crm.sidebar.collapsed");
@@ -181,8 +182,8 @@ export default function Layout() {
             </div>
           </div>
         </header>
-        <section className="crm-content">
-          <div className="crm-content-inner">
+        <section className={`crm-content ${isPipelineRoute ? "crm-content--pipeline" : ""}`}>
+          <div className={`crm-content-inner ${isPipelineRoute ? "crm-content-inner--pipeline" : ""}`}>
             <Outlet />
           </div>
         </section>

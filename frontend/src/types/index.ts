@@ -148,7 +148,7 @@ export interface Deal {
   close_date_est?: string;
   health: string;
   health_score?: number;
-  qualification?: Record<string, unknown>;
+  qualification?: DealQualification;
   tags: string[];
   department?: string;
   geography?: string;
@@ -167,6 +167,26 @@ export interface Deal {
   assigned_rep_name?: string;
   contact_count?: number;
   meddpicc_score?: number;
+}
+
+export interface MeddpiccAiDimension {
+  level: number;
+  confidence?: "low" | "medium" | "high";
+  reason?: string;
+}
+
+export interface DealQualification {
+  meddpicc?: Record<string, number>;
+  meddpicc_ai?: {
+    generated_at?: string;
+    generator?: string;
+    dimensions?: Record<string, MeddpiccAiDimension>;
+    signals_used?: {
+      contacts?: number;
+      activities?: number;
+    };
+  };
+  [key: string]: unknown;
 }
 
 export interface DealContact {
