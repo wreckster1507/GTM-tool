@@ -48,10 +48,10 @@ export default function MultiSelectFilter({
 
   const buttonStyle: CSSProperties = {
     width: "100%",
-    height: 40,
-    borderRadius: 10,
-    border: values.length ? "1.5px solid #b8d0f0" : "1px solid #d9e1ec",
-    background: values.length ? "#f0f6ff" : "#fff",
+    height: 42,
+    borderRadius: 12,
+    border: values.length ? "1.5px solid #ffc9b4" : "1px solid #d9e1ec",
+    background: values.length ? "#fff3ec" : "#fff",
     padding: "0 28px 0 12px",
     fontSize: 13,
     color: "#1d2b3c",
@@ -75,10 +75,45 @@ export default function MultiSelectFilter({
       <div ref={ref} style={{ position: "relative" }}>
         <button type="button" onClick={() => setOpen((current) => !current)} style={buttonStyle}>
           {displayLabel}
+          {values.length > 1 && (
+            <span
+              style={{
+                position: "absolute",
+                right: 28,
+                top: "50%",
+                transform: "translateY(-50%)",
+                minWidth: 18,
+                height: 18,
+                padding: "0 6px",
+                borderRadius: 999,
+                background: "#ff6b35",
+                color: "#fff",
+                fontSize: 10,
+                fontWeight: 800,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {values.length}
+            </span>
+          )}
           <ChevronDown size={13} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#7f8fa5" }} />
         </button>
         {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 12, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 10px 28px rgba(15,23,42,0.12)", padding: 8, display: "flex", flexDirection: "column", gap: 4, maxHeight: 280 }}>
+          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: 300 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 4px 0" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+              {values.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onChange([])}
+                  style={{ border: "none", background: "transparent", color: "#ff6b35", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
             <div style={{ position: "relative", flexShrink: 0 }}>
               <Search size={12} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }} />
               <input
@@ -96,7 +131,7 @@ export default function MultiSelectFilter({
                 <button
                   type="button"
                   onClick={() => onChange([])}
-                  style={{ border: "none", background: values.length === 0 ? "#f0f6ff" : "transparent", color: values.length === 0 ? "#175089" : "#4d6178", borderRadius: 8, padding: "8px 9px", textAlign: "left", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}
+                  style={{ border: "none", background: values.length === 0 ? "#fff3ec" : "transparent", color: values.length === 0 ? "#b85024" : "#4d6178", borderRadius: 8, padding: "8px 9px", textAlign: "left", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}
                 >
                   {allLabel}
                 </button>
@@ -105,7 +140,7 @@ export default function MultiSelectFilter({
                 <div style={{ padding: "8px 10px", fontSize: 11, color: "#94a3b8" }}>No matches</div>
               )}
               {visibleOptions.map((option) => (
-                <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "8px 9px", background: values.includes(option.value) ? "#f8fbff" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+                <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "8px 9px", background: values.includes(option.value) ? "#fff7f2" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
                   <input type="checkbox" checked={values.includes(option.value)} onChange={() => toggle(option.value)} />
                   <span>{option.label}</span>
                 </label>

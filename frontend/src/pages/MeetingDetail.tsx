@@ -393,7 +393,7 @@ export default function MeetingDetail() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           {meeting.deal_id ? (
-            <button className="crm-button soft" onClick={() => navigate(`/deals/${meeting.deal_id}`)}>
+            <button className="crm-button soft" onClick={() => navigate(`/pipeline?deal=${meeting.deal_id}`)}>
               <ArrowLeft size={14} /> Back to Deal
             </button>
           ) : (
@@ -409,7 +409,7 @@ export default function MeetingDetail() {
             onClick={async () => {
               if (!window.confirm(`Delete meeting "${meeting.title}"? This cannot be undone.`)) return;
               await meetingsApi.delete(id!);
-              navigate(meeting.deal_id ? `/deals/${meeting.deal_id}` : "/meetings");
+              navigate(meeting.deal_id ? `/pipeline?deal=${meeting.deal_id}` : "/meetings");
             }}
           >
             <Trash2 size={14} />

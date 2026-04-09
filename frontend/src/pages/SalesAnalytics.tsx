@@ -497,41 +497,70 @@ export default function SalesAnalytics() {
         className="crm-panel"
         style={{
           padding: 24,
-          background: "radial-gradient(circle at top left, rgba(102, 133, 255, 0.14), transparent 34%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
+          background: "radial-gradient(circle at top left, rgba(255, 107, 53, 0.14), transparent 30%), radial-gradient(circle at top right, rgba(76, 107, 230, 0.12), transparent 26%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+          display: "grid",
+          gap: 18,
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 860 }}>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "#687b92" }}>Revenue Intelligence</p>
-            <h2 style={{ margin: 0, fontSize: 32, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>
-            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "#66788d" }}>
-              A dedicated view for rep activity, pipeline composition, deal aging, forecast timing, and funnel health. This is built from Beacon&apos;s live CRM structure rather than a static spreadsheet-style report.
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(300px, 0.8fr)", gap: 18, alignItems: "stretch" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 900 }}>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em", color: "#687b92" }}>Revenue Intelligence</p>
+            <h2 style={{ margin: 0, fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.75, color: "#66788d" }}>
+              A manager-friendly read on rep activity, pipeline composition, deal aging, forecast timing, and funnel health. The structure follows the best CRM pattern: summary first, diagnosis second, drilldown last.
             </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#fff3ec", border: "1px solid #ffd5c3", color: "#b85024", fontSize: 12, fontWeight: 800 }}>
+                <TrendingUp size={14} />
+                Forecast and hygiene in one view
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#eef4ff", border: "1px solid #d7e2fb", color: "#3555c4", fontSize: 12, fontWeight: 800 }}>
+                <BarChart3 size={14} />
+                Built from live Beacon CRM data
+              </span>
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            {WINDOW_OPTIONS.map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setWindowDays(value)}
-                style={{
-                  height: 38,
-                  padding: "0 14px",
-                  borderRadius: 999,
-                  border: value === windowDays ? "1px solid #4b65dd" : "1px solid #d9e3ef",
-                  background: value === windowDays ? "#edf2ff" : "#fff",
-                  color: value === windowDays ? "#314fca" : "#506378",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {value}d
-              </button>
-            ))}
+          <div style={{ borderRadius: 22, border: "1px solid #e1e8f2", background: "rgba(255,255,255,0.82)", padding: 18, display: "grid", gap: 14, boxShadow: "0 14px 32px rgba(18,44,70,0.06)" }}>
+            <div>
+              <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6f8195" }}>Snapshot</p>
+              <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.7, color: "#5d7288" }}>
+                Compare short-term and longer-window signals without leaving the dashboard.
+              </p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {WINDOW_OPTIONS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setWindowDays(value)}
+                  style={{
+                    height: 38,
+                    padding: "0 14px",
+                    borderRadius: 999,
+                    border: value === windowDays ? "1px solid #ffbeab" : "1px solid #d9e3ef",
+                    background: value === windowDays ? "#fff1ea" : "#fff",
+                    color: value === windowDays ? "#b85024" : "#506378",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  {value}d
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Window</p>
+                <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 800, color: "#203244" }}>{windowDays}d</p>
+              </div>
+              <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Updated</p>
+                <p style={{ margin: "8px 0 0", fontSize: 14, fontWeight: 800, color: "#203244", lineHeight: 1.4 }}>
+                  {loading ? "Refreshing..." : formatSnapshotTime(data?.generated_at) || "Live"}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>

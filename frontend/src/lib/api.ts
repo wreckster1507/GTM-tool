@@ -16,6 +16,7 @@ import type {
   Paginated,
   SourcingBatch,
   SalesResource,
+  GlobalSearchResponse,
   User,
   AngelInvestor,
   AngelMapping,
@@ -1064,6 +1065,11 @@ export const analyticsApi = {
     request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?window_days=${windowDays}`),
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
+};
+
+export const globalSearchApi = {
+  search: (query: string) =>
+    request<GlobalSearchResponse>(`/api/v1/search/global?q=${encodeURIComponent(query)}`),
 };
 
 // ── Knowledge Base / Sales Resources ────────────────────────────────────────

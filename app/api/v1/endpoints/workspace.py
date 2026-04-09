@@ -254,7 +254,7 @@ async def _compute_alerts(
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",
-            link=f"/deals/{row.id}",
+            link=f"/pipeline?deal={row.id}",
             created_at=now,
         ))
 
@@ -275,7 +275,7 @@ async def _compute_alerts(
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",
-            link=f"/deals/{row.id}",
+            link=f"/pipeline?deal={row.id}",
             created_at=now,
         ))
 
@@ -299,7 +299,7 @@ async def _compute_alerts(
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",
-            link=f"/deals/{row.id}",
+            link=f"/pipeline?deal={row.id}",
             created_at=now,
         ))
 
@@ -324,7 +324,7 @@ async def _compute_alerts(
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",
-            link=f"/deals/{row.id}",
+            link=f"/pipeline?deal={row.id}",
             created_at=now,
         ))
 

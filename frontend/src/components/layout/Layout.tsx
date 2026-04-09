@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Search, ChevronDown, LogOut, Shield, User } from "lucide-react";
 import Sidebar from "./Sidebar";
+import GlobalSearchModal from "./GlobalSearchModal";
 import { useAuth } from "../../lib/AuthContext";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
@@ -32,6 +33,7 @@ export default function Layout() {
   const { user, logout, isAdmin } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const matchedMeta = Object.entries(PAGE_META).find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
   const meta = matchedMeta?.[1] ?? {
     title: "Beacon CRM",
@@ -47,29 +49,39 @@ export default function Layout() {
     window.localStorage.setItem("crm.sidebar.collapsed", sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setShowGlobalSearch(true);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return (
     <div className={`crm-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <GlobalSearchModal open={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} />
       <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <main className="crm-main">
         <header className="crm-topbar">
           <div className="crm-topbar-left">
-            <button className="crm-workspace-select" type="button">
-              <span className="crm-workspace-select-label">Beacon Workspace</span>
-              <ChevronDown size={15} />
-            </button>
-            <div className="min-w-0">
+            <div className="crm-page-copy">
               <h1 className="crm-title">{meta.title}</h1>
               <p className="crm-subtitle">{meta.subtitle}</p>
             </div>
           </div>
           <div className="crm-top-actions">
-            <div className="crm-search-shell">
+            <button type="button" className="crm-search-shell" onClick={() => setShowGlobalSearch(true)} style={{ cursor: "pointer" }}>
               <div className="relative">
                 <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8f98bd]" />
-                <input className="crm-search" placeholder="Quick Search" />
+                <div className="crm-search" style={{ display: "flex", alignItems: "center", color: "#8a99ad" }}>
+                  Quick Search
+                </div>
               </div>
               <span className="crm-search-kbd">Ctrl + K</span>
-            </div>
+            </button>
             <div style={{ position: "relative" }}>
               <button
                 type="button"
@@ -78,13 +90,13 @@ export default function Layout() {
                   display: "flex",
                   alignItems: "center",
                   gap: "8px",
-                  background: "none",
-                  border: "none",
+                  background: "rgba(255,255,255,0.94)",
+                  border: "1px solid #dbe4ef",
                   cursor: "pointer",
-                  padding: "4px 8px",
-                  borderRadius: "8px",
+                  padding: "6px 10px",
+                  borderRadius: "14px",
+                  boxShadow: "0 10px 24px rgba(15,23,42,0.05)",
                 }}
-                className="crm-button soft"
               >
                 {user?.avatar_url ? (
                   <img
@@ -96,7 +108,7 @@ export default function Layout() {
                 ) : (
                   <div className="crm-user-badge">{user?.name?.charAt(0) ?? "?"}</div>
                 )}
-                <span style={{ color: "#e2e8f0", fontSize: "13px", fontWeight: 500 }}>
+                <span style={{ color: "#1d2f43", fontSize: "13px", fontWeight: 700 }}>
                   {user?.name?.split(" ")[0]}
                 </span>
                 {isAdmin && (
@@ -104,9 +116,9 @@ export default function Layout() {
                     style={{
                       fontSize: "10px",
                       padding: "1px 6px",
-                      borderRadius: "4px",
-                      background: "rgba(99, 132, 255, 0.15)",
-                      color: "#6384ff",
+                      borderRadius: "999px",
+                      background: "#eef4ff",
+                      color: "#4561d5",
                       fontWeight: 600,
                       textTransform: "uppercase",
                     }}
@@ -114,7 +126,7 @@ export default function Layout() {
                     Admin
                   </span>
                 )}
-                <ChevronDown size={14} style={{ color: "#8f98bd" }} />
+                <ChevronDown size={14} style={{ color: "#7b8ca2" }} />
               </button>
               {showUserMenu && (
                 <div
@@ -122,21 +134,21 @@ export default function Layout() {
                     position: "absolute",
                     right: 0,
                     top: "calc(100% + 4px)",
-                    background: "#1a2236",
-                    border: "1px solid rgba(99, 132, 255, 0.15)",
-                    borderRadius: "10px",
-                    padding: "6px",
+                    background: "#ffffff",
+                    border: "1px solid #dde6f0",
+                    borderRadius: "16px",
+                    padding: "8px",
                     minWidth: "200px",
                     zIndex: 100,
-                    boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                    boxShadow: "0 18px 40px rgba(15,23,42,0.12)",
                   }}
                 >
-                  <div style={{ padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: "4px" }}>
-                    <div style={{ color: "#e2e8f0", fontSize: "13px", fontWeight: 600 }}>{user?.name}</div>
-                    <div style={{ color: "#64748b", fontSize: "11px" }}>{user?.email}</div>
+                  <div style={{ padding: "10px 12px", borderBottom: "1px solid #eef2f7", marginBottom: "4px" }}>
+                    <div style={{ color: "#1c2d40", fontSize: "13px", fontWeight: 700 }}>{user?.name}</div>
+                    <div style={{ color: "#6b7c92", fontSize: "11px" }}>{user?.email}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: "4px", marginTop: "4px" }}>
-                      {isAdmin ? <Shield size={11} color="#6384ff" /> : <User size={11} color="#8f98bd" />}
-                      <span style={{ color: isAdmin ? "#6384ff" : "#8f98bd", fontSize: "11px", textTransform: "capitalize" }}>
+                      {isAdmin ? <Shield size={11} color="#4561d5" /> : <User size={11} color="#7b8ca2" />}
+                      <span style={{ color: isAdmin ? "#4561d5" : "#7b8ca2", fontSize: "11px", textTransform: "capitalize" }}>
                         {user?.role?.replace("_", " ")}
                       </span>
                     </div>
@@ -152,7 +164,7 @@ export default function Layout() {
                       padding: "8px 12px",
                       background: "none",
                       border: "none",
-                      borderRadius: "6px",
+                      borderRadius: "10px",
                       color: "#ef4444",
                       fontSize: "13px",
                       cursor: "pointer",
@@ -170,7 +182,9 @@ export default function Layout() {
           </div>
         </header>
         <section className="crm-content">
-          <Outlet />
+          <div className="crm-content-inner">
+            <Outlet />
+          </div>
         </section>
       </main>
     </div>

@@ -645,7 +645,7 @@ export default function CompanyDetail() {
                   {companyDeals.map((d) => (
                     <div key={d.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3 flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <Link to={`/deals/${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
+                        <Link to={`/pipeline?deal=${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
                           {d.name}
                         </Link>
                         <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDate(d.close_date_est)}</p>

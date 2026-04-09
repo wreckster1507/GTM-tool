@@ -47,7 +47,7 @@ export default function DealCard({ deal, companyName }: DealCardProps) {
             <span>{deal.days_in_stage ?? 0}d</span>
           </div>
           <button
-            onClick={() => navigate(`/deals/${deal.id}`)}
+            onClick={() => navigate(`/pipeline?deal=${deal.id}`)}
             className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 text-[12px] font-semibold text-[#ff6b35]"
           >
             Open <ArrowRight className="h-3 w-3" />

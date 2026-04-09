@@ -16,12 +16,12 @@ import { settingsApi, tasksApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 
 const NAV = [
-  { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
-  { to: "/account-sourcing", label: "Account Sourcing", icon: Search },
-  { to: "/prospecting", label: "Prospecting", icon: Radar },
-  { to: "/sales-analytics", label: "Sales Analytics", icon: ChartColumnBig },
-  { to: "/pre-meeting-assistance", label: "Pre-Meeting Assistance", icon: Compass },
-  { to: "/tasks", label: "Tasks", icon: CheckSquare },
+  { to: "/pipeline", label: "Pipeline", description: "Drag stages, manage forecast, and move revenue forward.", icon: KanbanSquare },
+  { to: "/account-sourcing", label: "Account Sourcing", description: "Import, score, and prioritize target accounts.", icon: Search },
+  { to: "/prospecting", label: "Prospecting", description: "Activate personas, ownership, and outreach readiness.", icon: Radar },
+  { to: "/sales-analytics", label: "Sales Analytics", description: "See pipeline quality, activity, and forecast health.", icon: ChartColumnBig },
+  { to: "/pre-meeting-assistance", label: "Pre-Meeting Assistance", description: "Prepare before calls with briefs, context, and signals.", icon: Compass },
+  { to: "/tasks", label: "Tasks", description: "Work the queue and accept Beacon recommendations.", icon: CheckSquare },
 ];
 
 export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
@@ -119,18 +119,21 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
                   </span>
                 )}
               </span>
-              <span className="crm-nav-link-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {item.label}
-                {showBadge && !collapsed && (
-                  <span style={{
-                    background: "#e53e3e", color: "#fff",
-                    borderRadius: 10, fontSize: 10, fontWeight: 700,
-                    minWidth: 18, height: 18, display: "inline-flex", alignItems: "center",
-                    justifyContent: "center", padding: "0 5px", lineHeight: 1,
-                  }}>
-                    {openTaskCount > 99 ? "99+" : openTaskCount}
-                  </span>
-                )}
+              <span className="crm-nav-link-copy">
+                <span className="crm-nav-link-label-row">
+                  <span className="crm-nav-link-label">{item.label}</span>
+                  {showBadge && !collapsed && (
+                    <span style={{
+                      background: "#e53e3e", color: "#fff",
+                      borderRadius: 10, fontSize: 10, fontWeight: 700,
+                      minWidth: 18, height: 18, display: "inline-flex", alignItems: "center",
+                      justifyContent: "center", padding: "0 5px", lineHeight: 1,
+                    }}>
+                      {openTaskCount > 99 ? "99+" : openTaskCount}
+                    </span>
+                  )}
+                </span>
+                <span className="crm-nav-link-sub">{item.description}</span>
               </span>
             </NavLink>
           );

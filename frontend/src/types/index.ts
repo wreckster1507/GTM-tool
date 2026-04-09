@@ -440,6 +440,26 @@ export interface SalesResource {
   updated_at: string;
 }
 
+export interface GlobalSearchItem {
+  id: string;
+  kind: string;
+  title: string;
+  subtitle?: string;
+  meta?: string;
+  link: string;
+}
+
+export interface GlobalSearchSection {
+  key: string;
+  label: string;
+  items: GlobalSearchItem[];
+}
+
+export interface GlobalSearchResponse {
+  query: string;
+  sections: GlobalSearchSection[];
+}
+
 export interface User {
   id: string;
   email: string;

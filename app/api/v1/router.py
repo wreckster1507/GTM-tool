@@ -25,6 +25,7 @@ from app.api.v1.endpoints import (
     execution_tracker,
     enrichment,
     intelligence,
+    global_search,
     meetings,
     outreach,
     prospecting,
@@ -50,6 +51,7 @@ router.include_router(crm_imports.router)
 router.include_router(execution_tracker.router)
 router.include_router(activities.router)
 router.include_router(enrichment.router)
+router.include_router(global_search.router)
 router.include_router(prospecting.router)
 router.include_router(outreach.router)
 router.include_router(intelligence.router)

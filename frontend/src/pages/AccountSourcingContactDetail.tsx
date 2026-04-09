@@ -464,7 +464,7 @@ export default function AccountSourcingContactDetail() {
         next_step: "Review meeting notes and define the next demo follow-up",
       } as Partial<Deal>);
       await dealsApi.addContact(deal.id, contact.id, "champion");
-      navigate(`/deals/${deal.id}`);
+      navigate(`/pipeline?deal=${deal.id}`);
     } finally {
       setConvertingDeal(false);
     }
