@@ -476,8 +476,8 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                   onClick={() => { setCompanyDropdownOpen(o => !o); setCompanySearch(""); }}
                   style={{ ...fieldInputStyle, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
                 >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: deal.company_id ? "#1a202c" : "#a0aec0" }}>
-                    {companies.find(c => c.id === deal.company_id)?.name ?? companyResults.find(c => c.id === deal.company_id)?.name ?? "None"}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: (deal.company_id || deal.company_name) ? "#1a202c" : "#a0aec0" }}>
+                    {companies.find(c => c.id === deal.company_id)?.name ?? companyResults.find(c => c.id === deal.company_id)?.name ?? deal.company_name ?? "None"}
                   </span>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0, marginLeft: 4 }}>
                     <path d="M2 4l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
