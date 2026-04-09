@@ -18,6 +18,7 @@ import Meetings from "./pages/Meetings";
 import MeetingDetail from "./pages/MeetingDetail";
 import Battlecards from "./pages/Battlecards";
 import SalesWorkspace from "./pages/SalesWorkspace";
+import SalesAnalytics from "./pages/SalesAnalytics";
 import PreMeetingPlaceholder from "./pages/PreMeetingPlaceholder";
 import CustomDemoAssistance from "./pages/CustomDemoAssistance";
 import AccountSourcing from "./pages/AccountSourcing";
@@ -95,8 +96,10 @@ export default function App() {
             <Route path="battlecards" element={<Battlecards />} />
             <Route path="live-meeting-assistance" element={<Battlecards />} />
             <Route path="deals/:id" element={<DealDetail />} />
-            <Route path="dashboard" element={<Dashboard />} />
-            <Route path="crm-insights-alerts" element={<Dashboard />} />
+            <Route path="sales-analytics" element={<SalesAnalytics />} />
+            <Route path="dashboard" element={<SalesAnalytics />} />
+            <Route path="crm-insights-alerts" element={<SalesAnalytics />} />
+            <Route path="workspace-insights" element={<Dashboard />} />
             <Route path="knowledge-base" element={<KnowledgeBase />} />
             <Route path="angel-mapping" element={<Contacts />} />
             <Route path="execution-tracker" element={<ExecutionTracker />} />

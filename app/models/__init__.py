@@ -17,6 +17,7 @@ from app.models.custom_demo import CustomDemo
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.sales_resource import SalesResource, SalesResourceCreate, SalesResourceRead, SalesResourceUpdate
 from app.models.user import User, UserRead, UserUpdate
+from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.angel import (
     AngelInvestor, AngelInvestorCreate, AngelInvestorRead, AngelInvestorUpdate,
     AngelMapping, AngelMappingCreate, AngelMappingRead, AngelMappingUpdate,
@@ -41,6 +42,7 @@ __all__ = [
     "SourcingBatch", "SourcingBatchRead",
     "SalesResource", "SalesResourceCreate", "SalesResourceRead", "SalesResourceUpdate",
     "User", "UserRead", "UserUpdate",
+    "CompanyStageMilestone",
     "AngelInvestor", "AngelInvestorCreate", "AngelInvestorRead", "AngelInvestorUpdate",
     "AngelMapping", "AngelMappingCreate", "AngelMappingRead", "AngelMappingUpdate",
     "Reminder", "ReminderCreate", "ReminderRead", "ReminderUpdate",

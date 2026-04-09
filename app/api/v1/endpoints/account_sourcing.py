@@ -65,6 +65,27 @@ class BatchConfirmPayload(BaseModel):
     force: bool = False
 
 
+def _parse_multi_query(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _apply_text_multi_filter(stmt, column, raw_value: str | None):
+    values = _parse_multi_query(raw_value)
+    if not values:
+        return stmt
+
+    include_empty = "__empty__" in values
+    filtered_values = [value for value in values if value != "__empty__"]
+    clauses = []
+    if filtered_values:
+        clauses.append(column.in_(filtered_values))
+    if include_empty:
+        clauses.append(or_(column.is_(None), column == ""))
+    return stmt.where(or_(*clauses)) if clauses else stmt
+
+
 def _account_sourcing_visibility_filter():
     return or_(
         Company.sourcing_batch_id.isnot(None),
@@ -1037,12 +1058,9 @@ async def list_sourced_companies(
                 Company.recommended_outreach_lane.ilike(like),
             )
         )
-    if icp_tier:
-        stmt = stmt.where(Company.icp_tier == icp_tier)
-    if disposition:
-        stmt = stmt.where(Company.disposition == disposition)
-    if recommended_outreach_lane:
-        stmt = stmt.where(Company.recommended_outreach_lane == recommended_outreach_lane)
+    stmt = _apply_text_multi_filter(stmt, Company.icp_tier, icp_tier)
+    stmt = _apply_text_multi_filter(stmt, Company.disposition, disposition)
+    stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, recommended_outreach_lane)
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
 

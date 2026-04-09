@@ -25,6 +25,7 @@ import { accountSourcingApi } from "../lib/api";
 import { getAccountPrioritySnapshot } from "../lib/utils";
 import type { AccountSourcingSummary, Company, SourcingBatch } from "../types";
 import AssignDropdown from "../components/AssignDropdown";
+import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 
 const colors = {
   bg: "#f4f7fb",
@@ -58,8 +59,15 @@ const PRIORITY_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
   low: { background: "#eef2f7", color: "#5e6d83" },
 };
 
+const TIER_OPTIONS = [
+  { value: "hot", label: "Hot" },
+  { value: "warm", label: "Warm" },
+  { value: "monitor", label: "Monitor" },
+  { value: "cold", label: "Cold" },
+];
+
 const DISPOSITION_OPTIONS = [
-  { value: "", label: "Unreviewed" },
+  { value: "__empty__", label: "Unreviewed" },
   { value: "working", label: "Working" },
   { value: "interested", label: "Interested" },
   { value: "nurture", label: "Nurture" },
@@ -69,12 +77,17 @@ const DISPOSITION_OPTIONS = [
 ];
 
 const OUTREACH_LANE_OPTIONS = [
-  { value: "", label: "Auto / Unset" },
+  { value: "__empty__", label: "Auto / Unset" },
   { value: "warm_intro", label: "Warm Intro" },
   { value: "event_follow_up", label: "Event Follow-up" },
   { value: "cold_operator", label: "Cold Operator" },
   { value: "cold_strategic", label: "Cold Strategic" },
 ];
+
+function parseSearchParamList(value: string | null): string[] {
+  if (!value) return [];
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
 
 const pageStyle: CSSProperties = {
   background: colors.bg,
@@ -469,9 +482,9 @@ export default function AccountSourcing() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
-  const [tierFilter, setTierFilter] = useState(() => searchParams.get("tier") ?? "");
-  const [dispositionFilter, setDispositionFilter] = useState(() => searchParams.get("disp") ?? "");
-  const [laneFilter, setLaneFilter] = useState(() => searchParams.get("lane") ?? "");
+  const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
+  const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
+  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
   const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
   const [companyTotal, setCompanyTotal] = useState(0);
   const [companyPages, setCompanyPages] = useState(1);
@@ -516,9 +529,9 @@ export default function AccountSourcing() {
           skip: (page - 1) * pageSize,
           limit: pageSize,
           q: debouncedSearch || undefined,
-          icpTier: tierFilter || undefined,
-          disposition: dispositionFilter || undefined,
-          recommendedOutreachLane: laneFilter || undefined,
+          icpTier: tierFilter.length ? tierFilter : undefined,
+          disposition: dispositionFilter.length ? dispositionFilter : undefined,
+          recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
         }),
         accountSourcingApi.summary(),
         accountSourcingApi.listBatches(),
@@ -552,9 +565,9 @@ export default function AccountSourcing() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
-      tierFilter ? next.set("tier", tierFilter) : next.delete("tier");
-      dispositionFilter ? next.set("disp", dispositionFilter) : next.delete("disp");
-      laneFilter ? next.set("lane", laneFilter) : next.delete("lane");
+      tierFilter.length ? next.set("tier", tierFilter.join(",")) : next.delete("tier");
+      dispositionFilter.length ? next.set("disp", dispositionFilter.join(",")) : next.delete("disp");
+      laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
@@ -590,7 +603,7 @@ export default function AccountSourcing() {
     }
   }, [load]);
 
-  const hasFilters = !!(search || tierFilter || dispositionFilter || laneFilter);
+  const hasFilters = !!(search || tierFilter.length || dispositionFilter.length || laneFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -1016,7 +1029,7 @@ export default function AccountSourcing() {
             tone="warm"
             onClick={() => {
               setActiveTab("accounts");
-              setTierFilter("hot");
+              setTierFilter(["hot"]);
             }}
           />
           <SummaryCard
@@ -1027,7 +1040,7 @@ export default function AccountSourcing() {
             tone="primary"
             onClick={() => {
               setActiveTab("accounts");
-              setTierFilter("warm");
+              setTierFilter(["warm"]);
             }}
           />
           <SummaryCard
@@ -1038,7 +1051,7 @@ export default function AccountSourcing() {
             tone="green"
             onClick={() => {
               setActiveTab("accounts");
-              setDispositionFilter("working");
+              setDispositionFilter(["working"]);
             }}
           />
         </div>
@@ -1052,7 +1065,7 @@ export default function AccountSourcing() {
             tone="primary"
             onClick={() => {
               setActiveTab("accounts");
-              setDispositionFilter("interested");
+              setDispositionFilter(["interested"]);
             }}
           />
           <SummaryCard
@@ -1288,37 +1301,30 @@ export default function AccountSourcing() {
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <select
-                value={tierFilter}
-                onChange={(e) => setTierFilter(e.target.value)}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 130 }}
-              >
-                <option value="">All ICP tiers</option>
-                <option value="hot">Hot</option>
-                <option value="warm">Warm</option>
-                <option value="monitor">Monitor</option>
-                <option value="cold">Cold</option>
-              </select>
-              <select
-                value={dispositionFilter}
-                onChange={(e) => setDispositionFilter(e.target.value)}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 150 }}
-              >
-                <option value="">All dispositions</option>
-                {DISPOSITION_OPTIONS.filter((option) => option.value).map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              <select
-                value={laneFilter}
-                onChange={(e) => setLaneFilter(e.target.value)}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 160 }}
-              >
-                <option value="">All lanes</option>
-                {OUTREACH_LANE_OPTIONS.filter((option) => option.value).map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+              <MultiSelectFilter
+                values={tierFilter}
+                onChange={setTierFilter}
+                options={TIER_OPTIONS}
+                label="ICP Tier"
+                allLabel="All ICP tiers"
+                minWidth={130}
+              />
+              <MultiSelectFilter
+                values={dispositionFilter}
+                onChange={setDispositionFilter}
+                options={DISPOSITION_OPTIONS}
+                label="Disposition"
+                allLabel="All dispositions"
+                minWidth={150}
+              />
+              <MultiSelectFilter
+                values={laneFilter}
+                onChange={setLaneFilter}
+                options={OUTREACH_LANE_OPTIONS}
+                label="Outreach Lane"
+                allLabel="All lanes"
+                minWidth={170}
+              />
             </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700 }}>
@@ -1330,9 +1336,9 @@ export default function AccountSourcing() {
                   type="button"
                   onClick={() => {
                     setSearch("");
-                    setTierFilter("");
-                    setDispositionFilter("");
-                    setLaneFilter("");
+                    setTierFilter([]);
+                    setDispositionFilter([]);
+                    setLaneFilter([]);
                   }}
                   style={{
                     border: `1px solid ${colors.border}`,

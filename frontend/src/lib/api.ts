@@ -155,12 +155,12 @@ export const contactsApi = {
     limit?: number;
     companyId?: string;
     q?: string;
-    persona?: string;
-    outreachLane?: string;
-    sequenceStatus?: string;
-    emailState?: string;
-    aeId?: string;
-    sdrId?: string;
+    persona?: string[];
+    outreachLane?: string[];
+    sequenceStatus?: string[];
+    emailState?: string[];
+    aeId?: string[];
+    sdrId?: string[];
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -168,12 +168,12 @@ export const contactsApi = {
     });
     if (params.companyId) search.set("company_id", params.companyId);
     if (params.q) search.set("q", params.q);
-    if (params.persona) search.set("persona", params.persona);
-    if (params.outreachLane) search.set("outreach_lane", params.outreachLane);
-    if (params.sequenceStatus) search.set("sequence_status", params.sequenceStatus);
-    if (params.emailState) search.set("email_state", params.emailState);
-    if (params.aeId) search.set("ae_id", params.aeId);
-    if (params.sdrId) search.set("sdr_id", params.sdrId);
+    if (params.persona?.length) search.set("persona", params.persona.join(","));
+    if (params.outreachLane?.length) search.set("outreach_lane", params.outreachLane.join(","));
+    if (params.sequenceStatus?.length) search.set("sequence_status", params.sequenceStatus.join(","));
+    if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
+    if (params.aeId?.length) search.set("ae_id", params.aeId.join(","));
+    if (params.sdrId?.length) search.set("sdr_id", params.sdrId.join(","));
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),
@@ -746,9 +746,9 @@ export const accountSourcingApi = {
     skip?: number;
     limit?: number;
     q?: string;
-    icpTier?: string;
-    disposition?: string;
-    recommendedOutreachLane?: string;
+    icpTier?: string[];
+    disposition?: string[];
+    recommendedOutreachLane?: string[];
     assignedRepEmail?: string;
   }) => {
     const search = new URLSearchParams({
@@ -756,9 +756,9 @@ export const accountSourcingApi = {
       limit: String(params?.limit ?? 50),
     });
     if (params?.q) search.set("q", params.q);
-    if (params?.icpTier) search.set("icp_tier", params.icpTier);
-    if (params?.disposition) search.set("disposition", params.disposition);
-    if (params?.recommendedOutreachLane) search.set("recommended_outreach_lane", params.recommendedOutreachLane);
+    if (params?.icpTier?.length) search.set("icp_tier", params.icpTier.join(","));
+    if (params?.disposition?.length) search.set("disposition", params.disposition.join(","));
+    if (params?.recommendedOutreachLane?.length) search.set("recommended_outreach_lane", params.recommendedOutreachLane.join(","));
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
     return requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
   },
@@ -961,6 +961,109 @@ export const workspaceApi = {
     request<WorkspaceInsights>("/api/v1/workspace/insights"),
   stageStatus: (stage: string) =>
     request<StageStatus>(`/api/v1/workspace/stages/${stage}`),
+};
+
+export type SalesDashboardSummary = {
+  pipeline_amount: number;
+  weighted_pipeline_amount: number;
+  forecast_amount: number;
+  active_deals: number;
+  average_deal_size: number;
+  overdue_close_count: number;
+  missing_close_date_count: number;
+  stale_deal_count: number;
+};
+
+export type SalesRepActivityRow = {
+  key: string;
+  user_id?: string | null;
+  rep_name: string;
+  calls: number;
+  emails: number;
+  meetings: number;
+  total: number;
+  active_deals: number;
+  pipeline_amount: number;
+};
+
+export type SalesStageBucket = {
+  key: string;
+  label: string;
+  color: string;
+  deal_count: number;
+  amount: number;
+  weighted_amount: number;
+};
+
+export type SalesPipelineOwnerRow = {
+  key: string;
+  user_id?: string | null;
+  rep_name: string;
+  deal_count: number;
+  amount: number;
+  weighted_amount: number;
+  stages: SalesStageBucket[];
+};
+
+export type SalesVelocityRow = {
+  key: string;
+  label: string;
+  color: string;
+  deal_count: number;
+  average_days_in_stage: number;
+  stale_deals: number;
+};
+
+export type SalesForecastRow = {
+  key: string;
+  label: string;
+  deal_count: number;
+  amount: number;
+  weighted_amount: number;
+};
+
+export type SalesFunnelStep = {
+  key: string;
+  label: string;
+  count: number;
+  conversion_from_previous?: number | null;
+};
+
+export type MonthlyUniqueFunnelRow = {
+  month_key: string;
+  label: string;
+  demo_done: number;
+  poc_wip: number;
+  poc_done: number;
+  closed_won: number;
+};
+
+export type SalesQuotaState = {
+  configured: boolean;
+  title: string;
+  message: string;
+};
+
+export type SalesDashboard = {
+  generated_at: string;
+  window_days: number;
+  summary: SalesDashboardSummary;
+  highlights: string[];
+  rep_activity: SalesRepActivityRow[];
+  pipeline_by_stage: SalesStageBucket[];
+  pipeline_by_owner: SalesPipelineOwnerRow[];
+  velocity_by_stage: SalesVelocityRow[];
+  forecast_by_month: SalesForecastRow[];
+  conversion_funnel: SalesFunnelStep[];
+  monthly_unique_funnel: MonthlyUniqueFunnelRow[];
+  quota: SalesQuotaState;
+};
+
+export const analyticsApi = {
+  salesDashboard: (windowDays = 90) =>
+    request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?window_days=${windowDays}`),
+  monthlyFunnelSummary: (months = 12) =>
+    request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
 };
 
 // ── Knowledge Base / Sales Resources ────────────────────────────────────────

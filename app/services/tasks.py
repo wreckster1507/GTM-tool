@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Iterable
 from uuid import UUID
@@ -16,7 +17,11 @@ from app.models.task import Task
 from app.models.user import User
 from app.repositories.deal import DealRepository
 from app.services.account_sourcing import append_company_activity_log
+from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_health import compute_health
+from app.services.system_task_actions import get_system_task_action_spec
+
+logger = logging.getLogger(__name__)
 
 STAGE_INDEX = {stage: idx for idx, stage in enumerate(DEAL_STAGES)}
 
@@ -187,6 +192,21 @@ async def _resolve_system_task(
     task.completed_at = datetime.utcnow()
     task.updated_at = datetime.utcnow()
     session.add(task)
+
+
+async def complete_system_task(
+    session: AsyncSession,
+    task: Task,
+    user: User,
+) -> dict[str, str]:
+    await apply_task_action(session, task, user)
+    now = datetime.utcnow()
+    task.status = "completed"
+    task.accepted_at = now
+    task.completed_at = now
+    task.updated_at = now
+    session.add(task)
+    return {"message": "completed"}
 
 
 def _stage_reached(current_stage: str | None, target_stage: str) -> bool:
@@ -1217,9 +1237,22 @@ async def refresh_system_tasks_for_entity(session: AsyncSession, entity_type: st
         await _refresh_deal_tasks(session, entity_id)
 
 
-async def apply_task_action(session: AsyncSession, task: Task, user: User) -> dict[str, str]:
+async def apply_task_action(
+    session: AsyncSession,
+    task: Task,
+    user: User,
+) -> dict[str, str]:
     payload = task.action_payload if isinstance(task.action_payload, dict) else {}
     action = task.recommended_action
+    action_spec = get_system_task_action_spec(action)
+    actor_id = user.id
+    actor_name = user.name
+    actor_email = user.email
+    execution_label = "accepted Beacon task"
+    execution_prefix = "Accepted system task"
+
+    if action and action_spec is None:
+        logger.warning("Unknown system task action encountered: %s", action)
 
     if action == "move_deal_stage":
         deal_id = UUID(str(payload["deal_id"]))
@@ -1241,9 +1274,16 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 deal_id=deal_id,
                 type="stage_change",
                 source="system_task",
-                content=f"Stage moved from {previous_stage} to {stage} from an accepted system task",
-                created_by_id=user.id,
+                content=f"Stage moved from {previous_stage} to {stage} via {execution_label}",
+                created_by_id=actor_id,
             )
+        )
+        await record_deal_stage_milestone(
+            session,
+            deal=deal,
+            stage=stage,
+            reached_at=deal.stage_entered_at or deal.updated_at,
+            source="system_task_move_deal_stage",
         )
         return {"message": f"Deal moved to {stage}"}
 
@@ -1265,6 +1305,13 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 "next_step": "Review meeting context and advance the opportunity",
                 "stage_entered_at": datetime.utcnow(),
             }
+        )
+        await record_deal_stage_milestone(
+            session,
+            deal=deal,
+            stage=deal.stage,
+            reached_at=deal.stage_entered_at or deal.created_at,
+            source="system_task_convert_contact_to_deal",
         )
         await DealRepository(session).add_contact(deal.id, contact.id, contact.persona_type or "champion")
         return {"message": "Prospect converted into a deal"}
@@ -1291,7 +1338,7 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 type="contact_linked",
                 source="system_task",
                 content=f"Stakeholder {contact.first_name} {contact.last_name} linked to the deal from a synced email thread",
-                created_by_id=user.id,
+                created_by_id=actor_id,
             )
         )
         return {"message": f"Attached {contact.first_name} {contact.last_name} to the deal"}
@@ -1330,7 +1377,7 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 type="contact_linked",
                 source="system_task",
                 content=f"Created and linked stakeholder {contact.first_name} {contact.last_name} from a synced email thread",
-                created_by_id=user.id,
+                created_by_id=actor_id,
             )
         )
         return {"message": f"Created and attached {contact.first_name} {contact.last_name}"}
@@ -1345,9 +1392,9 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
             append_company_activity_log(
                 company,
                 action="system_task_accepted",
-                actor_name=user.name,
-                actor_email=user.email,
-                message="Accepted system task: refresh company enrichment",
+                actor_name=actor_name,
+                actor_email=actor_email,
+                message=f"{execution_prefix}: refresh company enrichment",
                 metadata={"task_id": str(task.id), "action": action},
             )
             company.updated_at = datetime.utcnow()
@@ -1364,9 +1411,9 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
             append_company_activity_log(
                 company,
                 action="system_task_accepted",
-                actor_name=user.name,
-                actor_email=user.email,
-                message="Accepted system task: refresh ICP research",
+                actor_name=actor_name,
+                actor_email=actor_email,
+                message=f"{execution_prefix}: refresh ICP research",
                 metadata={"task_id": str(task.id), "action": action},
             )
             company.updated_at = datetime.utcnow()
@@ -1414,6 +1461,13 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
             deal.stage = stage_update
             deal.stage_entered_at = datetime.utcnow()
             deal.days_in_stage = 0
+            await record_deal_stage_milestone(
+                session,
+                deal=deal,
+                stage=stage_update,
+                reached_at=deal.stage_entered_at,
+                source="system_task_follow_up_action",
+            )
 
         next_step = str(payload.get("next_step") or "").strip()
         if next_step:
@@ -1427,8 +1481,8 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 type="note",
                 source="system_task",
                 medium="internal",
-                content=f"{action_text} via accepted Beacon task",
-                created_by_id=user.id,
+                content=f"{action_text} via {execution_label}",
+                created_by_id=actor_id,
             )
         )
         return {"message": action_text}
@@ -1450,8 +1504,8 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 type="note",
                 source="system_task",
                 medium="internal",
-                content=f"{action_text} via accepted Beacon task",
-                created_by_id=user.id,
+                content=f"{action_text} via {execution_label}",
+                created_by_id=actor_id,
             )
         )
         return {"message": action_text}
@@ -1482,8 +1536,8 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 type="email",
                 source="system_task",
                 medium="email",
-                content=f"{action_text} via accepted Beacon task",
-                created_by_id=user.id,
+                content=f"{action_text} via {execution_label}",
+                created_by_id=actor_id,
             )
         )
         return {"message": action_text}
@@ -1503,8 +1557,8 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 type="note",
                 source="system_task",
                 medium="internal",
-                content="Prospect marked as unsubscribed and outreach paused via accepted Beacon task",
-                created_by_id=user.id,
+                content=f"Prospect marked as unsubscribed and outreach paused via {execution_label}",
+                created_by_id=actor_id,
             )
         )
         return {"message": "Prospect marked unsubscribed"}
@@ -1523,8 +1577,8 @@ async def apply_task_action(session: AsyncSession, task: Task, user: User) -> di
                 type="note",
                 source="system_task",
                 medium="internal",
-                content="Prospect closed as Not Interested via accepted Beacon task",
-                created_by_id=user.id,
+                content=f"Prospect closed as Not Interested via {execution_label}",
+                created_by_id=actor_id,
             )
         )
         return {"message": "Prospect closed as not interested"}

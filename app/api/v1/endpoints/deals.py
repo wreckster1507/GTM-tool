@@ -17,6 +17,7 @@ from app.models.deal import (
 from app.models.user import User
 from app.repositories.deal import DealRepository
 from app.schemas.common import PaginatedResponse
+from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,13 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
         content=f"Deal created in {deal.pipeline_type} pipeline",
     )
     session.add(activity)
+    await record_deal_stage_milestone(
+        session,
+        deal=deal,
+        stage=deal.stage,
+        reached_at=deal.stage_entered_at or deal.created_at,
+        source="deal_created",
+    )
     await session.commit()
 
     return await DealRepository(session).get_with_joins(deal.id) or deal
@@ -113,6 +121,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
     update_data = payload.model_dump(exclude_unset=True)
+    stage_changed = False
+    previous_stage = deal.stage
 
     # Validate stage if changed
     if "stage" in update_data and update_data["stage"] != deal.stage:
@@ -122,6 +132,7 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
             raise ValidationError(f"Invalid stage. Must be one of: {sorted(valid)}")
         update_data["stage_entered_at"] = datetime.utcnow()
         update_data["days_in_stage"] = 0
+        stage_changed = True
 
     # Auto-log field changes
     changes: list[str] = []
@@ -135,6 +146,23 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     update_data["updated_at"] = datetime.utcnow()
     updated = await repo.update(deal, update_data)
 
+    if stage_changed:
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="stage_change",
+                source="system",
+                content=f"Stage moved from {previous_stage} to {updated.stage}",
+            )
+        )
+        await record_deal_stage_milestone(
+            session,
+            deal=updated,
+            stage=updated.stage,
+            reached_at=updated.stage_entered_at or updated.updated_at,
+            source="deal_update",
+        )
+
     if changes:
         activity = Activity(
             deal_id=deal_id,
@@ -143,6 +171,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
             content="; ".join(changes),
         )
         session.add(activity)
+
+    if stage_changed or changes:
         await session.commit()
 
     return await repo.get_with_joins(deal_id) or updated
@@ -188,6 +218,13 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
         content=f"Stage moved from {old_stage} to {new_stage}",
     )
     session.add(activity)
+    await record_deal_stage_milestone(
+        session,
+        deal=deal,
+        stage=new_stage,
+        reached_at=deal.stage_entered_at or deal.updated_at,
+        source="stage_move",
+    )
     await session.commit()
 
     return await repo.get_with_joins(deal_id)

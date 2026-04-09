@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     account_sourcing,
     activities,
+    analytics,
     aircall,
     email_sync,
     angel_mapping,
@@ -44,6 +45,7 @@ router.include_router(assignments.router)
 router.include_router(companies.router)
 router.include_router(contacts.router)
 router.include_router(deals.router)
+router.include_router(analytics.router)
 router.include_router(crm_imports.router)
 router.include_router(execution_tracker.router)
 router.include_router(activities.router)

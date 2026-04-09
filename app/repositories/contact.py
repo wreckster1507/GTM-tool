@@ -7,7 +7,7 @@ companies so the frontend gets company_name in a single API call instead of two.
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import Activity
@@ -16,6 +16,22 @@ from app.models.contact import Contact, ContactRead
 from app.models.outreach import OutreachSequence
 from app.repositories.base import BaseRepository
 from app.services.contact_tracking import apply_contact_tracking
+
+
+def _parse_multi_query(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_uuid_values(value: str | None) -> list[UUID]:
+    parsed: list[UUID] = []
+    for item in _parse_multi_query(value):
+        try:
+            parsed.append(UUID(item))
+        except ValueError:
+            continue
+    return parsed
 
 
 class ContactRepository(BaseRepository[Contact]):
@@ -30,8 +46,8 @@ class ContactRepository(BaseRepository[Contact]):
         outreach_lane: Optional[str] = None,
         sequence_status: Optional[str] = None,
         email_state: Optional[str] = None,
-        ae_id: Optional[UUID] = None,
-        sdr_id: Optional[UUID] = None,
+        ae_id: Optional[str] = None,
+        sdr_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ContactRead], int]:
@@ -66,44 +82,62 @@ class ContactRepository(BaseRepository[Contact]):
             base_stmt = base_stmt.where(search_filter)
             count_stmt = count_stmt.where(search_filter)
 
-        if persona:
-            if persona == "unknown":
-                persona_filter = or_(Contact.persona.is_(None), Contact.persona == "", Contact.persona == "unknown")
-            else:
-                persona_filter = Contact.persona == persona
+        persona_values = _parse_multi_query(persona)
+        if persona_values:
+            include_unknown = "unknown" in persona_values
+            named_personas = [value for value in persona_values if value != "unknown"]
+            clauses = []
+            if named_personas:
+                clauses.append(Contact.persona.in_(named_personas))
+            if include_unknown:
+                clauses.append(or_(Contact.persona.is_(None), Contact.persona == "", Contact.persona == "unknown"))
+            persona_filter = or_(*clauses) if clauses else None
+        else:
+            persona_filter = None
+
+        if persona_filter is not None:
             base_stmt = base_stmt.where(persona_filter)
             count_stmt = count_stmt.where(persona_filter)
 
-        if outreach_lane:
-            base_stmt = base_stmt.where(Contact.outreach_lane == outreach_lane)
-            count_stmt = count_stmt.where(Contact.outreach_lane == outreach_lane)
+        outreach_lane_values = _parse_multi_query(outreach_lane)
+        if outreach_lane_values:
+            lane_filter = Contact.outreach_lane.in_(outreach_lane_values)
+            base_stmt = base_stmt.where(lane_filter)
+            count_stmt = count_stmt.where(lane_filter)
 
-        if sequence_status:
-            base_stmt = base_stmt.where(Contact.sequence_status == sequence_status)
-            count_stmt = count_stmt.where(Contact.sequence_status == sequence_status)
+        sequence_values = _parse_multi_query(sequence_status)
+        if sequence_values:
+            sequence_filter = Contact.sequence_status.in_(sequence_values)
+            base_stmt = base_stmt.where(sequence_filter)
+            count_stmt = count_stmt.where(sequence_filter)
 
-        if email_state == "has_email":
-            email_filter = Contact.email.is_not(None)
-        elif email_state == "missing_email":
-            email_filter = or_(Contact.email.is_(None), Contact.email == "")
-        elif email_state == "verified":
-            email_filter = Contact.email_verified.is_(True)
-        elif email_state == "unverified":
-            email_filter = Contact.email_verified.is_(False)
-        else:
-            email_filter = None
+        email_filters = []
+        for state in _parse_multi_query(email_state):
+            if state == "has_email":
+                email_filters.append(and_(Contact.email.is_not(None), Contact.email != ""))
+            elif state == "missing_email":
+                email_filters.append(or_(Contact.email.is_(None), Contact.email == ""))
+            elif state == "verified":
+                email_filters.append(Contact.email_verified.is_(True))
+            elif state == "unverified":
+                email_filters.append(Contact.email_verified.is_(False))
+        email_filter = or_(*email_filters) if email_filters else None
 
         if email_filter is not None:
             base_stmt = base_stmt.where(email_filter)
             count_stmt = count_stmt.where(email_filter)
 
-        if ae_id:
-            base_stmt = base_stmt.where(Contact.assigned_to_id == ae_id)
-            count_stmt = count_stmt.where(Contact.assigned_to_id == ae_id)
+        ae_ids = _parse_uuid_values(ae_id)
+        if ae_ids:
+            ae_filter = Contact.assigned_to_id.in_(ae_ids)
+            base_stmt = base_stmt.where(ae_filter)
+            count_stmt = count_stmt.where(ae_filter)
 
-        if sdr_id:
-            base_stmt = base_stmt.where(Contact.sdr_id == sdr_id)
-            count_stmt = count_stmt.where(Contact.sdr_id == sdr_id)
+        sdr_ids = _parse_uuid_values(sdr_id)
+        if sdr_ids:
+            sdr_filter = Contact.sdr_id.in_(sdr_ids)
+            base_stmt = base_stmt.where(sdr_filter)
+            count_stmt = count_stmt.where(sdr_filter)
 
         total = (await self.session.execute(count_stmt)).scalar_one()
 

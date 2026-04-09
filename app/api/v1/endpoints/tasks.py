@@ -25,7 +25,7 @@ from app.models.task import (
     TaskWorkspaceRead,
 )
 from app.models.user import User
-from app.services.tasks import apply_task_action, backfill_open_task_assignments, refresh_system_tasks_for_entity
+from app.services.tasks import backfill_open_task_assignments, complete_system_task, refresh_system_tasks_for_entity
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -359,12 +359,7 @@ async def accept_task(task_id: UUID, session: DBSession, current_user: CurrentUs
     if not _can_manage_task(task, current_user):
         raise ForbiddenError("Only the assigned user or an admin can act on this task")
 
-    await apply_task_action(session, task, current_user)
-    task.status = "completed"
-    task.accepted_at = datetime.utcnow()
-    task.completed_at = datetime.utcnow()
-    task.updated_at = datetime.utcnow()
-    session.add(task)
+    await complete_system_task(session, task, current_user)
     await session.commit()
     await session.refresh(task)
     reads = await _build_task_reads(session, [task])

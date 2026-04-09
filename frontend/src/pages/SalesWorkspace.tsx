@@ -88,10 +88,10 @@ const STAGES: Stage[] = [
     icon: BookOpen,
   },
   {
-    label: "CRM- Insights and Alerts",
-    to: "/crm-insights-alerts",
-    hint: "Spot performance trends, risks, and momentum changes.",
-    statLabel: "alerts center",
+    label: "Sales Analytics",
+    to: "/sales-analytics",
+    hint: "Track rep activity, forecast coverage, and pipeline quality.",
+    statLabel: "analytics",
     getValue: () => 1,
     icon: ChartColumnBig,
   },
@@ -359,7 +359,7 @@ export default function SalesWorkspace() {
               </span>
             )}
           </div>
-          <Link to="/crm-insights-alerts" style={{ fontSize: 12, color: "#ff6b35", fontWeight: 700, textDecoration: "none" }}>
+          <Link to="/sales-analytics" style={{ fontSize: 12, color: "#ff6b35", fontWeight: 700, textDecoration: "none" }}>
             View all
           </Link>
         </div>

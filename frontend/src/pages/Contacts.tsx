@@ -18,82 +18,46 @@ import {
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
+import MultiSelectFilter from "../components/filters/MultiSelectFilter";
+import AddProspectModal from "./contacts/AddProspectModal";
+import { ANGEL_SURFACE, ANGEL_TEXT, PERSONA_LABEL, PERSONA_STYLE, STRENGTH_LABEL, STRENGTH_STYLE } from "./contacts/constants";
+import { filterAngelMappings, getMissingCompanyKey, groupAngelMappingsByCompany } from "./contacts/utils";
+import type { ProspectImportSummary, ProspectingTab } from "./contacts/types";
 
-type ProspectingTab = "contacts" | "angel-mapping";
+const PERSONA_FILTER_OPTIONS = [
+  { value: "economic_buyer", label: "Economic Buyer" },
+  { value: "champion", label: "Champion" },
+  { value: "technical_evaluator", label: "Tech Evaluator" },
+  { value: "unknown", label: "Unknown" },
+];
 
-const PERSONA_STYLE: Record<string, CSSProperties> = {
-  economic_buyer: { color: "#7b3a1d", background: "#ffe8de", border: "1px solid #ffc8b4" },
-  champion: { color: "#1b6f53", background: "#e4fbf3", border: "1px solid #b8efd8" },
-  technical_evaluator: { color: "#24567e", background: "#eaf4ff", border: "1px solid #c9e0f8" },
-  unknown: { color: "#546679", background: "#edf3f9", border: "1px solid #d7e1eb" },
-};
-const PERSONA_LABEL: Record<string, string> = {
-  economic_buyer: "Economic Buyer", champion: "Champion", technical_evaluator: "Tech Eval", unknown: "Unknown",
-};
+const LANE_FILTER_OPTIONS = [
+  { value: "warm_intro", label: "Warm Intro" },
+  { value: "event_follow_up", label: "Event Follow-up" },
+  { value: "cold_operator", label: "Cold Operator" },
+  { value: "cold_strategic", label: "Cold Strategic" },
+];
 
-const STRENGTH_STYLE: Record<number, CSSProperties> = {
-  5: { color: "#166534", background: "#dcfce7", border: "1px solid #bbf7d0" },
-  4: { color: "#1e40af", background: "#dbeafe", border: "1px solid #bfdbfe" },
-  3: { color: "#854d0e", background: "#fef9c3", border: "1px solid #fde68a" },
-  2: { color: "#9a3412", background: "#ffedd5", border: "1px solid #fed7aa" },
-  1: { color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca" },
-};
-const STRENGTH_LABEL: Record<number, string> = {
-  5: "Direct fund overlap",
-  4: "Same fund, both sides",
-  3: "PE/VC peer community",
-  2: "Domain/sector community",
-  1: "Indirect connection",
-};
+const SEQUENCE_FILTER_OPTIONS = [
+  { value: "research_needed", label: "Research Needed" },
+  { value: "ready", label: "Ready" },
+  { value: "queued_instantly", label: "Queued — Instantly" },
+  { value: "sent", label: "Sent" },
+  { value: "replied", label: "Replied" },
+  { value: "meeting_booked", label: "Meeting Booked" },
+];
 
-const ANGEL_SURFACE: Record<string, CSSProperties> = {
-  toolbar: {
-    padding: "24px 26px",
-    borderRadius: 22,
-    border: "1px solid #dbe6f2",
-    background: "linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)",
-    boxShadow: "0 18px 40px rgba(17, 34, 68, 0.06)",
-  },
-  hero: {
-    overflow: "hidden",
-    borderRadius: 24,
-    border: "1px solid #d5e3ef",
-    background: "linear-gradient(135deg, #0f2744 0%, #175089 44%, #17928e 100%)",
-    boxShadow: "0 22px 48px rgba(14, 38, 66, 0.16)",
-  },
-  panel: {
-    borderRadius: 22,
-    border: "1px solid #dce7f1",
-    background: "linear-gradient(180deg, #ffffff 0%, #f9fcff 100%)",
-    boxShadow: "0 14px 28px rgba(17, 34, 68, 0.055)",
-  },
-  companyCard: {
-    overflow: "hidden",
-    borderRadius: 24,
-    border: "1px solid #dbe5f2",
-    background: "#ffffff",
-    boxShadow: "0 18px 36px rgba(17, 34, 68, 0.07)",
-  },
-  contactCard: {
-    overflow: "hidden",
-    borderRadius: 22,
-    border: "1px solid #e3edf7",
-    background: "#ffffff",
-    boxShadow: "0 12px 28px rgba(17, 34, 68, 0.04)",
-  },
-  pathCard: {
-    borderRadius: 20,
-    border: "1px solid #e8eff7",
-    background: "#fbfdff",
-    padding: 20,
-  },
-};
+const EMAIL_FILTER_OPTIONS = [
+  { value: "has_email", label: "Has email" },
+  { value: "missing_email", label: "Missing email" },
+  { value: "verified", label: "Verified" },
+  { value: "unverified", label: "Unverified" },
+];
 
-const ANGEL_TEXT = {
-  title: "#1c2b4a",
-  body: "#5f7390",
-  soft: "#7f91ab",
-};
+function parseSearchParamList(value: string | null): string[] {
+  if (!value) return [];
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
 
 export default function Contacts() {
   const navigate = useNavigate();
@@ -106,12 +70,12 @@ export default function Contacts() {
   // ── Contacts state — initialised from URL so filters survive navigation ──
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [personaFilter, setPersonaFilter] = useState(() => searchParams.get("persona") ?? "");
-  const [laneFilter, setLaneFilter] = useState(() => searchParams.get("lane") ?? "");
-  const [sequenceFilter, setSequenceFilter] = useState(() => searchParams.get("seq") ?? "");
-  const [emailFilter, setEmailFilter] = useState(() => searchParams.get("email") ?? "");
-  const [aeFilter, setAeFilter] = useState(() => searchParams.get("ae") ?? "");
-  const [sdrFilter, setSdrFilter] = useState(() => searchParams.get("sdr") ?? "");
+  const [personaFilter, setPersonaFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("persona")));
+  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
+  const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
+  const [emailFilter, setEmailFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("email")));
+  const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
+  const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
   const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
@@ -123,15 +87,7 @@ export default function Contacts() {
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
-  const [importSummary, setImportSummary] = useState<{
-    imported_rows: number;
-    created_count: number;
-    updated_count: number;
-    skipped_count: number;
-    missing_company_count: number;
-    missing_companies: { name: string; domain?: string; contacts_count: number }[];
-    message: string;
-  } | null>(null);
+  const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
   const [creatingMissingCompanies, setCreatingMissingCompanies] = useState(false);
   const [enrichingMissingKey, setEnrichingMissingKey] = useState<string | null>(null);
 
@@ -145,9 +101,6 @@ export default function Contacts() {
   const [showAddInvestor, setShowAddInvestor] = useState(false);
   const [newInvestor, setNewInvestor] = useState({ name: "", current_role: "", current_company: "" });
   const [showAddProspect, setShowAddProspect] = useState(false);
-  const [addProspectForm, setAddProspectForm] = useState({ first_name: "", last_name: "", email: "", phone: "", title: "", linkedin_url: "" });
-  const [addProspectSaving, setAddProspectSaving] = useState(false);
-  const [addProspectError, setAddProspectError] = useState("");
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
 
@@ -157,12 +110,12 @@ export default function Contacts() {
       skip: (page - 1) * pageSize,
       limit: pageSize,
       q: debouncedSearch || undefined,
-      persona: personaFilter || undefined,
-      outreachLane: laneFilter || undefined,
-      sequenceStatus: sequenceFilter || undefined,
-      emailState: emailFilter || undefined,
-      aeId: aeFilter || undefined,
-      sdrId: sdrFilter || undefined,
+      persona: personaFilter.length ? personaFilter : undefined,
+      outreachLane: laneFilter.length ? laneFilter : undefined,
+      sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
+      emailState: emailFilter.length ? emailFilter : undefined,
+      aeId: aeFilter.length ? aeFilter : undefined,
+      sdrId: sdrFilter.length ? sdrFilter : undefined,
     }).then((result) => {
       setContacts(result.items);
       setContactsTotal(result.total);
@@ -220,7 +173,7 @@ export default function Contacts() {
     );
     if (!shouldEnrich) return;
 
-    const key = `${company.domain || ""}-${company.name}`;
+    const key = getMissingCompanyKey(company);
     setEnrichingMissingKey(key);
     try {
       await accountSourcingApi.createManualCompany({
@@ -297,12 +250,12 @@ export default function Contacts() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
-      personaFilter ? next.set("persona", personaFilter) : next.delete("persona");
-      laneFilter ? next.set("lane", laneFilter) : next.delete("lane");
-      sequenceFilter ? next.set("seq", sequenceFilter) : next.delete("seq");
-      emailFilter ? next.set("email", emailFilter) : next.delete("email");
-      aeFilter ? next.set("ae", aeFilter) : next.delete("ae");
-      sdrFilter ? next.set("sdr", sdrFilter) : next.delete("sdr");
+      personaFilter.length ? next.set("persona", personaFilter.join(",")) : next.delete("persona");
+      laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
+      sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
+      emailFilter.length ? next.set("email", emailFilter.join(",")) : next.delete("email");
+      aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
+      sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
@@ -325,41 +278,8 @@ export default function Contacts() {
   }, [tab, page, debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter, aeFilter, sdrFilter]);
 
   // ── Angel mapping grouping ──────────────────────────────────────────
-  const filteredMappings = mappings
-    .filter((m) => !filterStrength || m.strength >= filterStrength)
-    .filter((m) => {
-      if (!angelSearch.trim()) return true;
-      const q = angelSearch.toLowerCase();
-      return (
-        (m.company_name || "").toLowerCase().includes(q) ||
-        (m.contact_name || "").toLowerCase().includes(q) ||
-        (m.angel_name || "").toLowerCase().includes(q)
-      );
-    });
-
-  const groupedByCompany = Object.entries(
-    filteredMappings.reduce<Record<string, { mappings: AngelMapping[] }>>((acc, m) => {
-      const key = m.company_name || "Unknown Company";
-      if (!acc[key]) acc[key] = { mappings: [] };
-      acc[key].mappings.push(m);
-      return acc;
-    }, {})
-  )
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([companyName, { mappings: cms }]) => {
-      const byContact = cms.reduce<Record<string, { name: string; title: string; linkedin?: string; mappings: AngelMapping[] }>>((acc, m) => {
-        const k = m.contact_name || "Unknown";
-        if (!acc[k]) acc[k] = { name: k, title: m.contact_title || "", linkedin: m.contact_linkedin, mappings: [] };
-        acc[k].mappings.push(m);
-        return acc;
-      }, {});
-      return {
-        companyName,
-        contacts: Object.values(byContact).sort((a, b) => a.name.localeCompare(b.name)),
-        totalMappings: cms.length,
-        maxStrength: Math.max(...cms.map((m) => m.strength)),
-      };
-    });
+  const filteredMappings = filterAngelMappings(mappings, angelSearch, filterStrength);
+  const groupedByCompany = groupAngelMappingsByCompany(filteredMappings);
 
   const investorMappingCounts = mappings.reduce<Record<string, number>>((acc, mapping) => {
     acc[mapping.angel_investor_id] = (acc[mapping.angel_investor_id] || 0) + 1;
@@ -700,19 +620,19 @@ export default function Contacts() {
 
             {/* Filters */}
             {(() => {
-              const hasFilters = !!(personaFilter || laneFilter || sequenceFilter || emailFilter || aeFilter || sdrFilter || search);
-              const selectStyle = (active: boolean): CSSProperties => ({
-                appearance: "none" as const,
-                WebkitAppearance: "none" as const,
-                height: 36, paddingLeft: 12, paddingRight: 30,
-                borderRadius: 9,
-                border: active ? "1.5px solid #175089" : "1px solid #dce8f4",
-                background: active ? "#eef5ff" : "#f7fbff",
-                color: active ? "#175089" : "#4a6580",
-                fontSize: 13, fontWeight: active ? 600 : 500,
-                cursor: "pointer", outline: "none",
-                minWidth: 0,
-              });
+              const hasFilters = !!(
+                personaFilter.length ||
+                laneFilter.length ||
+                sequenceFilter.length ||
+                emailFilter.length ||
+                aeFilter.length ||
+                sdrFilter.length ||
+                search
+              );
+              const teamUserOptions = teamUsers.map((u) => ({
+                value: u.id,
+                label: u.name || u.email,
+              }));
               return (
                 <div style={{
                   display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
@@ -724,76 +644,58 @@ export default function Contacts() {
                   top: 16,
                   zIndex: 5,
                 }}>
-                  {/* Selects */}
-                  {[
-                    {
-                      value: personaFilter, onChange: setPersonaFilter,
-                      options: [["", "All personas"], ["economic_buyer", "Economic Buyer"], ["champion", "Champion"], ["technical_evaluator", "Tech Evaluator"], ["unknown", "Unknown"]],
-                    },
-                    {
-                      value: laneFilter, onChange: setLaneFilter,
-                      options: [["", "All lanes"], ["warm_intro", "Warm Intro"], ["event_follow_up", "Event Follow-up"], ["cold_operator", "Cold Operator"], ["cold_strategic", "Cold Strategic"]],
-                    },
-                    {
-                      value: sequenceFilter, onChange: setSequenceFilter,
-                      options: [["", "All sequence states"], ["research_needed", "Research Needed"], ["ready", "Ready"], ["queued_instantly", "Queued — Instantly"], ["sent", "Sent"], ["replied", "Replied"], ["meeting_booked", "Meeting Booked"]],
-                    },
-                    {
-                      value: emailFilter, onChange: setEmailFilter,
-                      options: [["", "All email states"], ["has_email", "Has email"], ["missing_email", "Missing email"], ["verified", "Verified"], ["unverified", "Unverified"]],
-                    },
-                  ].map((f, i) => (
-                    <div key={i} style={{ position: "relative", flexShrink: 0 }}>
-                      <select
-                        value={f.value}
-                        onChange={(e) => f.onChange(e.target.value)}
-                        style={selectStyle(!!f.value)}
-                      >
-                        {(f.options as [string, string][]).map(([val, label]) => (
-                          <option key={val} value={val}>{label}</option>
-                        ))}
-                      </select>
-                      <ChevronDown
-                        size={13}
-                        style={{
-                          position: "absolute", right: 9, top: "50%",
-                          transform: "translateY(-50%)",
-                          color: f.value ? "#175089" : "#94a8bc",
-                          pointerEvents: "none",
-                        }}
-                      />
-                    </div>
-                  ))}
+                  <MultiSelectFilter
+                    label="Persona"
+                    values={personaFilter}
+                    onChange={setPersonaFilter}
+                    options={PERSONA_FILTER_OPTIONS}
+                    allLabel="All personas"
+                    minWidth={160}
+                  />
+                  <MultiSelectFilter
+                    label="Lane"
+                    values={laneFilter}
+                    onChange={setLaneFilter}
+                    options={LANE_FILTER_OPTIONS}
+                    allLabel="All lanes"
+                    minWidth={160}
+                  />
+                  <MultiSelectFilter
+                    label="Sequence"
+                    values={sequenceFilter}
+                    onChange={setSequenceFilter}
+                    options={SEQUENCE_FILTER_OPTIONS}
+                    allLabel="All sequence states"
+                    minWidth={170}
+                  />
+                  <MultiSelectFilter
+                    label="Email"
+                    values={emailFilter}
+                    onChange={setEmailFilter}
+                    options={EMAIL_FILTER_OPTIONS}
+                    allLabel="All email states"
+                    minWidth={160}
+                  />
 
                   {/* Owner filters */}
                   {teamUsers.length > 0 && (
                     <>
-                      <div style={{ position: "relative", flexShrink: 0 }}>
-                        <select
-                          value={aeFilter}
-                          onChange={(e) => setAeFilter(e.target.value)}
-                          style={selectStyle(!!aeFilter)}
-                        >
-                          <option value="">AE: All</option>
-                          {teamUsers.map((u) => (
-                            <option key={u.id} value={u.id}>{u.name || u.email}</option>
-                          ))}
-                        </select>
-                        <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: aeFilter ? "#175089" : "#94a8bc", pointerEvents: "none" }} />
-                      </div>
-                      <div style={{ position: "relative", flexShrink: 0 }}>
-                        <select
-                          value={sdrFilter}
-                          onChange={(e) => setSdrFilter(e.target.value)}
-                          style={selectStyle(!!sdrFilter)}
-                        >
-                          <option value="">SDR: All</option>
-                          {teamUsers.map((u) => (
-                            <option key={u.id} value={u.id}>{u.name || u.email}</option>
-                          ))}
-                        </select>
-                        <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: sdrFilter ? "#175089" : "#94a8bc", pointerEvents: "none" }} />
-                      </div>
+                      <MultiSelectFilter
+                        label="AE"
+                        values={aeFilter}
+                        onChange={setAeFilter}
+                        options={teamUserOptions}
+                        allLabel="AE: All"
+                        minWidth={160}
+                      />
+                      <MultiSelectFilter
+                        label="SDR"
+                        values={sdrFilter}
+                        onChange={setSdrFilter}
+                        options={teamUserOptions}
+                        allLabel="SDR: All"
+                        minWidth={160}
+                      />
                     </>
                   )}
 
@@ -814,9 +716,9 @@ export default function Contacts() {
                     <button
                       type="button"
                       onClick={() => {
-                        setSearch(""); setPersonaFilter("");
-                        setLaneFilter(""); setSequenceFilter(""); setEmailFilter("");
-                        setAeFilter(""); setSdrFilter("");
+                        setSearch(""); setPersonaFilter([]);
+                        setLaneFilter([]); setSequenceFilter([]); setEmailFilter([]);
+                        setAeFilter([]); setSdrFilter([]);
                       }}
                       style={{
                         display: "inline-flex", alignItems: "center", gap: 5,
@@ -1563,7 +1465,7 @@ export default function Contacts() {
                       <button
                         type="button"
                         onClick={() => void handleEnrichMissingCompany(company)}
-                        disabled={enrichingMissingKey === `${company.domain || ""}-${company.name}` || creatingMissingCompanies}
+                        disabled={enrichingMissingKey === getMissingCompanyKey(company) || creatingMissingCompanies}
                         style={{
                           display: "inline-flex",
                           alignItems: "center",
@@ -1575,11 +1477,11 @@ export default function Contacts() {
                           padding: "8px 12px",
                           fontSize: 12,
                           fontWeight: 700,
-                          cursor: enrichingMissingKey === `${company.domain || ""}-${company.name}` || creatingMissingCompanies ? "default" : "pointer",
-                          opacity: enrichingMissingKey === `${company.domain || ""}-${company.name}` || creatingMissingCompanies ? 0.7 : 1,
+                          cursor: enrichingMissingKey === getMissingCompanyKey(company) || creatingMissingCompanies ? "default" : "pointer",
+                          opacity: enrichingMissingKey === getMissingCompanyKey(company) || creatingMissingCompanies ? 0.7 : 1,
                         }}
                       >
-                        {enrichingMissingKey === `${company.domain || ""}-${company.name}` ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
+                        {enrichingMissingKey === getMissingCompanyKey(company) ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
                         Enrich account
                       </button>
                     </div>
@@ -1654,78 +1556,11 @@ export default function Contacts() {
         </div>
       )}
 
-      {showAddProspect && (
-        <>
-          <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.25)", zIndex: 40 }} onClick={() => setShowAddProspect(false)} />
-          <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "grid", placeItems: "center", padding: 16 }}>
-            <div style={{ width: "100%", maxWidth: 480, borderRadius: 20, background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", padding: 28 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-                <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1d2b3c" }}>Add Prospect</h3>
-                <button type="button" onClick={() => setShowAddProspect(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7f8fa5", fontSize: 18 }}>x</button>
-              </div>
-              {addProspectError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12, fontWeight: 600 }}>{addProspectError}</div>}
-              <div style={{ display: "grid", gap: 14 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>First Name</label>
-                    <input value={addProspectForm.first_name} onChange={(e) => setAddProspectForm((f) => ({ ...f, first_name: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="Jane" />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Last Name</label>
-                    <input value={addProspectForm.last_name} onChange={(e) => setAddProspectForm((f) => ({ ...f, last_name: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="Smith" />
-                  </div>
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Email</label>
-                  <input value={addProspectForm.email} onChange={(e) => setAddProspectForm((f) => ({ ...f, email: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="jane@company.com" type="email" />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Phone</label>
-                  <input value={addProspectForm.phone} onChange={(e) => setAddProspectForm((f) => ({ ...f, phone: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="+1 555 123 4567" />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Job Title</label>
-                  <input value={addProspectForm.title} onChange={(e) => setAddProspectForm((f) => ({ ...f, title: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="VP Engineering" />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
-                  <input value={addProspectForm.linkedin_url} onChange={(e) => setAddProspectForm((f) => ({ ...f, linkedin_url: e.target.value }))} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="https://linkedin.com/in/..." />
-                </div>
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
-                <button type="button" onClick={() => setShowAddProspect(false)} disabled={addProspectSaving} style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "1px solid #d9e1ec", background: "#fff", color: "#5e738b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
-                <button type="button" disabled={addProspectSaving} onClick={async () => {
-                  if (!addProspectForm.first_name.trim() && !addProspectForm.last_name.trim()) {
-                    setAddProspectError("First or last name is required");
-                    return;
-                  }
-                  setAddProspectSaving(true);
-                  setAddProspectError("");
-                  try {
-                    await contactsApi.create({
-                      first_name: addProspectForm.first_name.trim() || undefined,
-                      last_name: addProspectForm.last_name.trim() || undefined,
-                      email: addProspectForm.email.trim() || undefined,
-                      phone: addProspectForm.phone.trim() || undefined,
-                      title: addProspectForm.title.trim() || undefined,
-                      linkedin_url: addProspectForm.linkedin_url.trim() || undefined,
-                    } as Partial<Contact>);
-                    setShowAddProspect(false);
-                    setAddProspectForm({ first_name: "", last_name: "", email: "", phone: "", title: "", linkedin_url: "" });
-                    loadContacts();
-                  } catch (err) {
-                    setAddProspectError(err instanceof Error ? err.message : "Failed to create prospect");
-                  } finally {
-                    setAddProspectSaving(false);
-                  }
-                }} style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "none", background: "#175089", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                  {addProspectSaving ? "Creating..." : "Add Prospect"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
+      <AddProspectModal
+        open={showAddProspect}
+        onClose={() => setShowAddProspect(false)}
+        onCreated={loadContacts}
+      />
     </>
   );
 }

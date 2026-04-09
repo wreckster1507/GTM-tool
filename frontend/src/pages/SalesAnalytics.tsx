@@ -1,0 +1,666 @@
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  BarChart3,
+  CalendarRange,
+  LoaderCircle,
+  Sigma,
+  TrendingUp,
+  Trophy,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  analyticsApi,
+  type MonthlyUniqueFunnelRow,
+  type SalesDashboard,
+  type SalesForecastRow,
+  type SalesFunnelStep,
+  type SalesPipelineOwnerRow,
+  type SalesRepActivityRow,
+  type SalesStageBucket,
+  type SalesVelocityRow,
+} from "../lib/api";
+
+const WINDOW_OPTIONS = [30, 90, 180] as const;
+
+function formatShortCurrency(value?: number | null) {
+  const amount = Number(value ?? 0);
+  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
+  if (amount >= 1_000) return `$${Math.round(amount / 1_000)}k`;
+  return `$${Math.round(amount)}`;
+}
+
+function formatSnapshotTime(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function MetricCard({
+  label,
+  value,
+  hint,
+  tone,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: "blue" | "green" | "amber" | "red";
+  icon: LucideIcon;
+}) {
+  const palette = {
+    blue: { bg: "linear-gradient(135deg, #f7faff 0%, #eef4ff 100%)", border: "#d8e4fb", icon: "#4261d6", text: "#29446d" },
+    green: { bg: "linear-gradient(135deg, #f7fff9 0%, #ecf9f1 100%)", border: "#cdecd9", icon: "#2b8a5d", text: "#25473a" },
+    amber: { bg: "linear-gradient(135deg, #fffdf7 0%, #fff5de 100%)", border: "#efdcb1", icon: "#b7791f", text: "#5d4523" },
+    red: { bg: "linear-gradient(135deg, #fff8f8 0%, #fff0f0 100%)", border: "#efcccc", icon: "#cc5d5d", text: "#6d3434" },
+  }[tone];
+
+  return (
+    <div
+      style={{
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
+        borderRadius: 18,
+        padding: 18,
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        minHeight: 146,
+        boxShadow: "0 12px 32px rgba(23, 43, 77, 0.06)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: palette.text, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            background: "#fff",
+            border: `1px solid ${palette.border}`,
+            display: "grid",
+            placeItems: "center",
+            color: palette.icon,
+            flexShrink: 0,
+          }}
+        >
+          <Icon size={17} />
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
+        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#62748a" }}>{hint}</p>
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  subtitle,
+  children,
+  action,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <section
+      className="crm-panel"
+      style={{
+        padding: 22,
+        display: "flex",
+        flexDirection: "column",
+        gap: 18,
+        minHeight: 100,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <h2 style={{ margin: 0, fontSize: 19, fontWeight: 800, color: "#203244" }}>{title}</h2>
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#6d7f93", maxWidth: 700 }}>{subtitle}</p>
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function HighlightsCard({ highlights }: { highlights: string[] }) {
+  return (
+    <SectionCard
+      title="Beacon Readout"
+      subtitle="A quick operating narrative built from the live dashboard so managers can see the signal before drilling into charts."
+      action={
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: "#f6f0ff", border: "1px solid #e7d8ff", color: "#6643b5", fontSize: 12, fontWeight: 700 }}>
+          <Sigma size={14} />
+          Operating summary
+        </div>
+      }
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
+        {highlights.map((item, index) => (
+          <div
+            key={`${index}-${item}`}
+            style={{
+              borderRadius: 16,
+              border: "1px solid #ece7fb",
+              background: "linear-gradient(180deg, #fff 0%, #fbf9ff 100%)",
+              padding: 16,
+              display: "flex",
+              gap: 12,
+              alignItems: "flex-start",
+            }}
+          >
+            <div style={{ width: 28, height: 28, borderRadius: 10, background: "#f3edff", color: "#7556cb", display: "grid", placeItems: "center", flexShrink: 0, marginTop: 2 }}>
+              <ArrowUpRight size={14} />
+            </div>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#2d4055" }}>{item}</p>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function RepActivityTable({ rows }: { rows: SalesRepActivityRow[] }) {
+  if (rows.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No rep activity yet for this time range.</p>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {rows.map((row, index) => (
+        <div
+          key={row.key}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(140px, 2fr) repeat(5, minmax(64px, 1fr))",
+            gap: 10,
+            alignItems: "center",
+            padding: "14px 16px",
+            borderRadius: 15,
+            border: "1px solid #e7edf5",
+            background: index === 0 ? "linear-gradient(135deg, #fffdf8 0%, #fff6e9 100%)" : "#fff",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#223446", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#708195" }}>{row.active_deals} active deals • {formatShortCurrency(row.pipeline_amount)} pipeline</p>
+          </div>
+          <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" />
+          <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" />
+          <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" />
+          <StatPill label="Touches" value={row.total} tone="#faf1ff" text="#8052be" />
+          <StatPill label="Rank" value={index + 1} tone="#f5f7fb" text="#5a697e" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StatPill({ label, value, tone, text }: { label: string; value: string | number; tone: string; text: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", padding: "10px 8px", borderRadius: 12, background: tone }}>
+      <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
+      <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+    </div>
+  );
+}
+
+function PipelineStageView({ rows }: { rows: SalesStageBucket[] }) {
+  const maxAmount = useMemo(() => Math.max(...rows.map((row) => row.amount), 1), [rows]);
+
+  if (rows.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No open pipeline to chart yet.</p>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {rows.map((row) => (
+        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(160px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#75869a" }}>{row.deal_count} deals</p>
+          </div>
+          <div style={{ height: 14, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
+            <div style={{ width: `${Math.max((row.amount / maxAmount) * 100, row.amount > 0 ? 8 : 0)}%`, height: "100%", borderRadius: 999, background: row.color }} />
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244" }}>{formatShortCurrency(row.amount)}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#75869a" }}>{formatShortCurrency(row.weighted_amount)} weighted</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PipelineOwnerView({ rows }: { rows: SalesPipelineOwnerRow[] }) {
+  if (rows.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No rep-owned pipeline to chart yet.</p>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {rows.map((row) => (
+        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(120px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#213547", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#76879b" }}>{row.deal_count} deals</p>
+          </div>
+          <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden", display: "flex" }}>
+            {row.stages.map((stage) => {
+              const width = row.amount > 0 ? `${(stage.amount / row.amount) * 100}%` : "0%";
+              return <div key={stage.key} title={`${stage.label}: ${formatShortCurrency(stage.amount)}`} style={{ width, background: stage.color, minWidth: stage.amount > 0 ? 8 : 0 }} />;
+            })}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244" }}>{formatShortCurrency(row.amount)}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#75869a" }}>{formatShortCurrency(row.weighted_amount)} weighted</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function VelocityView({ rows }: { rows: SalesVelocityRow[] }) {
+  const maxDays = useMemo(() => Math.max(...rows.map((row) => row.average_days_in_stage), 1), [rows]);
+
+  if (rows.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No stage velocity data yet.</p>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {rows.map((row) => (
+        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(170px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#76879b" }}>{row.deal_count} deals • {row.stale_deals} stale</p>
+          </div>
+          <div style={{ height: 12, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
+            <div style={{ width: `${Math.max((row.average_days_in_stage / maxDays) * 100, row.average_days_in_stage > 0 ? 8 : 0)}%`, height: "100%", borderRadius: 999, background: row.color }} />
+          </div>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", textAlign: "right" }}>{row.average_days_in_stage.toFixed(1)}d</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ForecastView({ rows }: { rows: SalesForecastRow[] }) {
+  const maxWeighted = useMemo(() => Math.max(...rows.map((row) => row.weighted_amount), 1), [rows]);
+
+  if (rows.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No dated pipeline yet. Add close dates to unlock forecast timing.</p>;
+  }
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(rows.length, 1), 6)}, minmax(90px, 1fr))`, gap: 14, alignItems: "end" }}>
+      {rows.map((row) => (
+        <div key={row.key} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ height: 180, display: "flex", alignItems: "flex-end" }}>
+            <div style={{ width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 8 }}>
+              <div style={{ height: `${Math.max((row.amount / Math.max(...rows.map((item) => item.amount), 1)) * 140, row.amount > 0 ? 18 : 0)}px`, borderRadius: 14, background: "#dbe7ff" }} />
+              <div style={{ height: `${Math.max((row.weighted_amount / maxWeighted) * 140, row.weighted_amount > 0 ? 18 : 0)}px`, borderRadius: 14, background: "#4e6be6" }} />
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#223547" }}>{row.label}</p>
+            <p style={{ margin: 0, fontSize: 11, color: "#6d7f93" }}>{formatShortCurrency(row.amount)} raw</p>
+            <p style={{ margin: 0, fontSize: 11, color: "#4e6be6", fontWeight: 700 }}>{formatShortCurrency(row.weighted_amount)} weighted</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FunnelView({ steps }: { steps: SalesFunnelStep[] }) {
+  const maxCount = useMemo(() => Math.max(...steps.map((step) => step.count), 1), [steps]);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14 }}>
+      {steps.map((step, index) => (
+        <div key={step.key} style={{ borderRadius: 16, border: "1px solid #e7edf6", background: "#fff", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ height: 110, display: "flex", alignItems: "flex-end" }}>
+            <div style={{ width: "100%", height: `${Math.max((step.count / maxCount) * 100, step.count > 0 ? 18 : 0)}%`, borderRadius: 16, background: index === steps.length - 1 ? "linear-gradient(180deg, #58c18a 0%, #2f995f 100%)" : "linear-gradient(180deg, #6983ec 0%, #435ed8 100%)" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#223547", textTransform: "uppercase", letterSpacing: "0.06em" }}>{step.label}</p>
+            <p style={{ margin: 0, fontSize: 28, lineHeight: 1, fontWeight: 800, color: "#1e2f41" }}>{step.count}</p>
+            <p style={{ margin: 0, fontSize: 12, color: "#718196" }}>
+              {step.conversion_from_previous == null ? "Base stage" : `${step.conversion_from_previous}% from previous`}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
+  const maxCount = useMemo(
+    () => Math.max(
+      ...rows.flatMap((row) => [row.demo_done, row.poc_wip, row.poc_done, row.closed_won]),
+      1,
+    ),
+    [rows],
+  );
+
+  const series = [
+    { key: "demo_done" as const, label: "New Demo Done", color: "#4e6be6" },
+    { key: "poc_wip" as const, label: "POC WIP", color: "#17a2b8" },
+    { key: "poc_done" as const, label: "POC Done", color: "#2fa56b" },
+    { key: "closed_won" as const, label: "Closed Won", color: "#d58b2a" },
+  ];
+
+  if (rows.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No milestone history available yet.</p>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", fontSize: 12, color: "#6e8095" }}>
+        {series.map((item) => (
+          <span key={item.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 999, background: item.color }} />
+            {item.label}
+          </span>
+        ))}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 720 }}>
+          {rows.map((row) => (
+            <div key={row.month_key} style={{ display: "grid", gridTemplateColumns: "110px repeat(4, minmax(120px, 1fr))", gap: 12, alignItems: "center" }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#213547" }}>{row.label}</p>
+                <p style={{ margin: "4px 0 0", fontSize: 11, color: "#73849a" }}>Unique companies</p>
+              </div>
+              {series.map((item) => {
+                const value = row[item.key];
+                return (
+                  <div key={item.key} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#6d7f93" }}>{item.label}</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#213547" }}>{value}</span>
+                    </div>
+                    <div style={{ height: 10, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
+                      <div style={{ width: `${Math.max((value / maxCount) * 100, value > 0 ? 8 : 0)}%`, height: "100%", borderRadius: 999, background: item.color }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function SalesAnalytics() {
+  const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
+  const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
+  const [data, setData] = useState<SalesDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    analyticsApi
+      .salesDashboard(windowDays)
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message || "Failed to load sales analytics");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [windowDays]);
+
+  const metricCards: Array<{
+    label: string;
+    value: string;
+    hint: string;
+    tone: "blue" | "green" | "amber" | "red";
+    icon: LucideIcon;
+  }> = data ? [
+    {
+      label: "Open Pipeline",
+      value: formatShortCurrency(data.summary.pipeline_amount),
+      hint: `${data.summary.active_deals} active deals currently in play`,
+      tone: "blue" as const,
+      icon: TrendingUp,
+    },
+    {
+      label: "Weighted Pipeline",
+      value: formatShortCurrency(data.summary.weighted_pipeline_amount),
+      hint: "Stage-weighted estimate for a more realistic forecast baseline",
+      tone: "green" as const,
+      icon: BarChart3,
+    },
+    {
+      label: "Forecast Window",
+      value: formatShortCurrency(data.summary.forecast_amount),
+      hint: `Pipeline scheduled to land inside the next ${data.window_days} days`,
+      tone: "amber" as const,
+      icon: CalendarRange,
+    },
+    {
+      label: "Average Deal Size",
+      value: formatShortCurrency(data.summary.average_deal_size),
+      hint: "Average value across active open deals",
+      tone: "blue" as const,
+      icon: Trophy,
+    },
+    {
+      label: "Overdue Close Dates",
+      value: String(data.summary.overdue_close_count),
+      hint: "Deals with close dates already in the past",
+      tone: data.summary.overdue_close_count > 0 ? "red" : "green" as const,
+      icon: AlertTriangle,
+    },
+    {
+      label: "Stale Deals",
+      value: String(data.summary.stale_deal_count),
+      hint: "Deals sitting in the same stage for 30 days or more",
+      tone: data.summary.stale_deal_count > 0 ? "amber" : "green" as const,
+      icon: Sigma,
+    },
+  ] : [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "6px 2px 18px" }}>
+      <section
+        className="crm-panel"
+        style={{
+          padding: 24,
+          background: "radial-gradient(circle at top left, rgba(102, 133, 255, 0.14), transparent 34%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 860 }}>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "#687b92" }}>Revenue Intelligence</p>
+            <h2 style={{ margin: 0, fontSize: 32, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "#66788d" }}>
+              A dedicated view for rep activity, pipeline composition, deal aging, forecast timing, and funnel health. This is built from Beacon&apos;s live CRM structure rather than a static spreadsheet-style report.
+            </p>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {WINDOW_OPTIONS.map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setWindowDays(value)}
+                style={{
+                  height: 38,
+                  padding: "0 14px",
+                  borderRadius: 999,
+                  border: value === windowDays ? "1px solid #4b65dd" : "1px solid #d9e3ef",
+                  background: value === windowDays ? "#edf2ff" : "#fff",
+                  color: value === windowDays ? "#314fca" : "#506378",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {value}d
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f7f9fc", border: "1px solid #e3ebf4", color: "#5e7086", fontSize: 12, fontWeight: 700 }}>
+            <CalendarRange size={14} />
+            Window: last {windowDays} days
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: "#74869c" }}>
+            {loading ? "Refreshing dashboard..." : `Snapshot updated ${formatSnapshotTime(data?.generated_at)}`}
+          </p>
+        </div>
+      </section>
+
+      {error && (
+        <div className="crm-panel" style={{ padding: 18, border: "1px solid #f0d2d2", background: "#fff7f7", color: "#b45454" }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="crm-panel" style={{ padding: "46px 20px", display: "grid", placeItems: "center", color: "#6f8095", gap: 10 }}>
+          <LoaderCircle size={22} className="spin" />
+          <span>Loading sales analytics...</span>
+        </div>
+      ) : !data ? null : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+            {metricCards.map((card) => (
+              <MetricCard key={card.label} {...card} />
+            ))}
+          </div>
+
+          <HighlightsCard highlights={data.highlights} />
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(320px, 1fr)", gap: 18 }}>
+            <SectionCard
+              title="Rep Activity Leaderboard"
+              subtitle="Calls, emails, and meetings aggregated by rep, alongside the amount of live pipeline they currently own."
+            >
+              <RepActivityTable rows={data.rep_activity} />
+            </SectionCard>
+
+            <SectionCard
+              title="Quota Attainment"
+              subtitle="This spot is reserved for target-vs-actual reporting once team or rep quotas are configured in Beacon."
+            >
+              <div style={{ borderRadius: 18, border: "1px dashed #d9e2ef", background: "linear-gradient(180deg, #fbfcfe 0%, #f7f9fc 100%)", padding: 20, minHeight: 220, display: "flex", flexDirection: "column", justifyContent: "center", gap: 10 }}>
+                <p style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#1f3246" }}>{data.quota.title}</p>
+                <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: "#6f8095" }}>{data.quota.message}</p>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", padding: "9px 12px", borderRadius: 999, background: "#eef4ff", color: "#4561d5", border: "1px solid #dbe4fb", fontSize: 12, fontWeight: 700 }}>
+                  <TrendingUp size={14} />
+                  Add quota model in next phase
+                </div>
+              </div>
+            </SectionCard>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr)", gap: 18 }}>
+            <SectionCard
+              title="Pipeline by Stage"
+              subtitle="Use stage totals to inspect composition, or switch to rep view to see how each owner&apos;s pipeline is distributed across stages."
+              action={
+                <div style={{ display: "inline-flex", borderRadius: 999, border: "1px solid #dde6f0", background: "#f8fafc", padding: 4 }}>
+                  {[
+                    { key: "stage", label: "By stage" },
+                    { key: "rep", label: "By rep" },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setPipelineView(option.key as "stage" | "rep")}
+                      style={{
+                        height: 34,
+                        padding: "0 12px",
+                        borderRadius: 999,
+                        border: "none",
+                        background: pipelineView === option.key ? "#fff" : "transparent",
+                        color: pipelineView === option.key ? "#2948b9" : "#5d6f84",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        boxShadow: pipelineView === option.key ? "0 1px 6px rgba(32, 53, 84, 0.08)" : "none",
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              }
+            >
+              {pipelineView === "stage" ? <PipelineStageView rows={data.pipeline_by_stage} /> : <PipelineOwnerView rows={data.pipeline_by_owner} />}
+            </SectionCard>
+
+            <SectionCard
+              title="Deal Velocity / Aging"
+              subtitle="Average time each stage holds deals, plus how many are already stale enough to deserve a pipeline review."
+            >
+              <VelocityView rows={data.velocity_by_stage} />
+            </SectionCard>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 0.9fr)", gap: 18 }}>
+            <SectionCard
+              title="Forecast View"
+              subtitle="Raw versus weighted pipeline by expected close month so the team can separate ambition from statistically healthier forecast coverage."
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
+              </div>
+              <ForecastView rows={data.forecast_by_month} />
+            </SectionCard>
+
+            <SectionCard
+              title="Conversion Funnel"
+              subtitle="A volume-based funnel for the current reporting window: lead creation, meetings, proposal-stage deals, and recent closed won outcomes."
+            >
+              <FunnelView steps={data.conversion_funnel} />
+            </SectionCard>
+          </div>
+
+          <SectionCard
+            title="Monthly Unique Funnel Counts"
+            subtitle="Each company is counted once per milestone, based on the first time it reaches Demo Done, POC WIP, POC Done, or Closed Won. Repeats and reschedules do not inflate the count."
+          >
+            <MonthlyUniqueFunnelView rows={data.monthly_unique_funnel} />
+          </SectionCard>
+        </>
+      )}
+    </div>
+  );
+}
