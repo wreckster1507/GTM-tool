@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.tasks.health",
         "app.tasks.email_sync",
         "app.tasks.tldv_sync",
+        "app.tasks.crm_import",
     ],
 )
 

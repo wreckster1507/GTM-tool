@@ -1397,9 +1397,30 @@ export default function Pipeline() {
     setImportingCrm(true);
     setCrmImportError("");
     try {
-      const result = await crmImportsApi.importClickUpSalesCrm({ replace_existing: true });
-      setCrmImportResult(result);
-      await loadBoard();
+      // Fire the import — backend queues it as a background task and returns immediately.
+      const { task_id } = await crmImportsApi.importClickUpSalesCrm({ replace_existing: true });
+
+      // Poll every 5 seconds until the task completes.
+      await new Promise<void>((resolve, reject) => {
+        const interval = window.setInterval(async () => {
+          try {
+            const status = await crmImportsApi.getImportStatus(task_id);
+            if (status.status === "success") {
+              window.clearInterval(interval);
+              setCrmImportResult(status.result ?? null);
+              await loadBoard();
+              resolve();
+            } else if (status.status === "failure") {
+              window.clearInterval(interval);
+              reject(new Error(status.error ?? "Import failed"));
+            }
+            // pending / running — keep polling
+          } catch (pollErr) {
+            window.clearInterval(interval);
+            reject(pollErr);
+          }
+        }, 5000);
+      });
     } catch (err) {
       setCrmImportError(err instanceof Error ? err.message : "Failed to import from CRM");
     } finally {

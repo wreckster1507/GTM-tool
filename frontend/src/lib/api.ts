@@ -294,10 +294,15 @@ export const crmImportsApi = {
     skip_comments?: boolean;
     skip_subtasks?: boolean;
   }) =>
-    request<CrmImportResponse>("/api/v1/crm-imports/clickup-sales-crm", {
+    request<{ status: string; task_id: string; message: string }>("/api/v1/crm-imports/clickup-sales-crm", {
       method: "POST",
       body: JSON.stringify(data ?? { replace_existing: true }),
     }),
+
+  getImportStatus: (taskId: string) =>
+    request<{ task_id: string; status: string; result?: CrmImportResponse; error?: string }>(
+      `/api/v1/crm-imports/status/${taskId}`
+    ),
 };
 
 export const enrichmentApi = {
