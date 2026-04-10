@@ -27,6 +27,9 @@ from app.services.permissions import require_workspace_permission
 router = APIRouter(prefix="/auth", tags=["auth"])
 ALLOWED_USER_ROLES = {"admin", "ae", "sdr"}
 
+# Emails that always get admin role regardless of signup order.
+SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li"}
+
 
 # ── Google OAuth flow ────────────────────────────────────────────────────────
 
@@ -89,14 +92,18 @@ async def google_callback(
             existing_by_email.google_id = google_info["google_id"]
             existing_by_email.name = google_info["name"]
             existing_by_email.avatar_url = google_info.get("avatar_url")
+            # Always enforce superadmin role for designated emails.
+            if google_info["email"] in SUPERADMIN_EMAILS:
+                existing_by_email.role = "admin"
             session.add(existing_by_email)
             await session.commit()
             await session.refresh(existing_by_email)
             user = existing_by_email
         else:
-            # Genuinely new user — first user becomes admin, everyone else sdr.
+            # Genuinely new user — superadmins always get admin, first user gets
+            # admin, everyone else defaults to sdr.
             user_count = (await session.execute(select(func.count(User.id)))).scalar_one()
-            role = "admin" if user_count == 0 else "sdr"
+            role = "admin" if google_info["email"] in SUPERADMIN_EMAILS or user_count == 0 else "sdr"
 
             user = User(
                 email=google_info["email"],
@@ -113,6 +120,9 @@ async def google_callback(
         # without requiring a separate profile-edit flow in this app.
         user.name = google_info["name"]
         user.avatar_url = google_info.get("avatar_url")
+        # Always enforce superadmin role for designated emails.
+        if google_info["email"] in SUPERADMIN_EMAILS:
+            user.role = "admin"
         session.add(user)
         await session.commit()
         await session.refresh(user)
