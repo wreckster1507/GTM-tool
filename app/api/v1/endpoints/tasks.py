@@ -379,3 +379,43 @@ async def delete_task(task_id: UUID, session: DBSession, current_user: CurrentUs
     await session.flush()
     await session.delete(task)
     await session.commit()
+
+
+@router.post("/admin/dismiss-inactive-deal-tasks", response_model=dict)
+async def dismiss_inactive_deal_tasks(session: DBSession, current_user: CurrentUser):
+    """
+    Admin-only. Dismisses all open tasks linked to deals that are in a
+    closed or inactive stage (closed_lost, cold, on_hold, nurture, churned,
+    not_a_fit, closed_won, closed). Fixes tasks incorrectly created during
+    CRM imports for parked/closed accounts.
+    """
+    if current_user.role != "admin":
+        raise ForbiddenError("Only admins can run this operation")
+
+    inactive_stages = {
+        "closed_won", "closed_lost", "not_a_fit", "cold",
+        "on_hold", "nurture", "churned", "closed",
+    }
+
+    result = await session.execute(
+        select(Task.id)
+        .join(Deal, and_(Task.entity_type == "deal", Task.entity_id == Deal.id))
+        .where(Task.status == "open", Deal.stage.in_(inactive_stages))
+    )
+    task_ids = [row[0] for row in result.all()]
+
+    if not task_ids:
+        return {"dismissed": 0, "message": "No open tasks found on inactive deals."}
+
+    now = datetime.utcnow()
+    await session.execute(
+        Task.__table__.update()
+        .where(Task.id.in_(task_ids))
+        .values(status="dismissed", completed_at=now, updated_at=now)
+    )
+    await session.commit()
+
+    return {
+        "dismissed": len(task_ids),
+        "message": f"Dismissed {len(task_ids)} open tasks linked to inactive/closed deals.",
+    }

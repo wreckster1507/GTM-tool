@@ -43,15 +43,7 @@ function ScrollToTop() {
 }
 
 function RouteScopedAircallPhone() {
-  const location = useLocation();
-  const pathname = location.pathname;
-  const showAircall =
-    pathname === "/prospecting"
-    || pathname === "/contacts"
-    || pathname.startsWith("/contacts/")
-    || pathname.startsWith("/account-sourcing/contacts/");
-
-  return showAircall ? <AircallPhonePanel /> : null;
+  return <AircallPhonePanel />;
 }
 
 export default function App() {

@@ -47,6 +47,11 @@ STATUS_MAP = {
     "closed": "closed_lost",
 }
 
+INACTIVE_STAGES = frozenset({
+    "closed_won", "closed_lost", "not_a_fit", "cold",
+    "on_hold", "nurture", "churned", "closed",
+})
+
 PRIORITY_MAP = {
     "urgent": "urgent",
     "high": "high",
@@ -919,6 +924,12 @@ async def import_sales_crm_clickup(
         for index, subtask in enumerate(subtasks, start=1):
             parent_deal = imported_deals_by_clickup_id.get(str(subtask.get("parent")))
             if not parent_deal:
+                continue
+            if parent_deal.stage in INACTIVE_STAGES:
+                logger.debug(
+                    "clickup import: skipping subtask %s — parent deal %s is in inactive stage %s",
+                    subtask.get("id"), parent_deal.id, parent_deal.stage,
+                )
                 continue
             await _upsert_subtask(session, subtask, parent_deal, users_by_email, users_by_name, stats)
             if index == len(subtasks) or index % 100 == 0:
