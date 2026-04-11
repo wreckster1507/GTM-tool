@@ -9,9 +9,12 @@ GET  /settings/email-sync → current Gmail sync status
 """
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlencode
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from sqlmodel import select as sm_select
 
 from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
@@ -43,6 +46,7 @@ from app.models.settings import (
     SyncScheduleSettingsUpdate,
     WorkspaceSettings,
 )
+from app.models.user_email_connection import UserEmailConnection
 from app.services.deal_stages import (
     DEFAULT_DEAL_STAGE_SETTINGS,
     filter_funnel_config_to_stage_ids,
@@ -709,15 +713,70 @@ async def gmail_callback(
     payload = decode_gmail_oauth_state(state)
     if not payload:
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
+    flow = str(payload.get("flow") or "shared").lower()
 
     try:
         gmail_info = await exchange_gmail_code(code)
     except Exception:
-        row = await _get_or_create(session)
-        row.gmail_last_error = "Failed to complete Gmail OAuth exchange"
-        session.add(row)
-        await session.commit()
+        if flow == "personal":
+            user_id = payload.get("sub")
+            if user_id:
+                result = await session.execute(
+                    sm_select(UserEmailConnection).where(
+                        UserEmailConnection.user_id == UUID(user_id)
+                    )
+                )
+                connection = result.scalar_one_or_none()
+                if connection:
+                    connection.last_error = "Failed to complete Gmail OAuth exchange"
+                    connection.updated_at = datetime.utcnow()
+                    session.add(connection)
+                    await session.commit()
+        else:
+            row = await _get_or_create(session)
+            row.gmail_last_error = "Failed to complete Gmail OAuth exchange"
+            session.add(row)
+            await session.commit()
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
+
+    if flow == "personal":
+        user_id = payload.get("sub")
+        if not user_id:
+            return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
+
+        result = await session.execute(
+            sm_select(UserEmailConnection).where(
+                UserEmailConnection.user_id == UUID(user_id)
+            )
+        )
+        connection = result.scalar_one_or_none()
+        if connection:
+            connection.email_address = gmail_info["email_address"]
+            connection.token_data = gmail_info["token_data"]
+            connection.is_active = True
+            connection.backfill_completed = False
+            connection.last_sync_epoch = None
+            connection.last_error = None
+            connection.connected_at = datetime.utcnow()
+            connection.updated_at = datetime.utcnow()
+        else:
+            connection = UserEmailConnection(
+                user_id=UUID(user_id),
+                email_address=gmail_info["email_address"],
+                token_data=gmail_info["token_data"],
+                connected_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+
+        session.add(connection)
+        await session.commit()
+        await session.refresh(connection)
+
+        from app.tasks.personal_email_sync import sync_personal_inbox
+
+        sync_personal_inbox.delay(str(connection.id))
+        query = urlencode({"gmail_connected": "1", "email": gmail_info["email_address"]})
+        return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{query}")
 
     row = await _get_or_create(session)
     row.gmail_connected_email = gmail_info["email_address"]

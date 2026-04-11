@@ -30,10 +30,11 @@ def build_gmail_connect_url(state: str) -> str:
     return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
 
-def create_gmail_oauth_state(user_id: str) -> str:
+def create_gmail_oauth_state(user_id: str, *, flow: str = "shared") -> str:
     payload = {
         "sub": user_id,
         "scope": "gmail_connect",
+        "flow": flow,
         "iat": datetime.utcnow(),
         "exp": datetime.utcnow() + timedelta(minutes=15),
     }

@@ -64,7 +64,7 @@ async def start_personal_gmail_connect(current_user: CurrentUser):
     Generate a Google OAuth URL for the current user to connect their personal Gmail.
     Returns { url: "https://accounts.google.com/..." }
     """
-    state = create_gmail_oauth_state(str(current_user.id))
+    state = create_gmail_oauth_state(str(current_user.id), flow="personal")
     url = build_gmail_connect_url(state)
     return {"url": url}
 
