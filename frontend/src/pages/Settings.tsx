@@ -19,7 +19,8 @@ import {
   Clock,
   Wand2,
 } from "lucide-react";
-import { settingsApi } from "../lib/api";
+import { settingsApi, personalEmailSyncApi } from "../lib/api";
+import type { PersonalEmailStatus } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type {
   ClickUpCrmSettings,
@@ -97,6 +98,12 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Personal email sync
+  const [personalEmail, setPersonalEmail] = useState<PersonalEmailStatus | null>(null);
+  const [connectingPersonal, setConnectingPersonal] = useState(false);
+  const [disconnectingPersonal, setDisconnectingPersonal] = useState(false);
+  const [syncingPersonal, setSyncingPersonal] = useState(false);
+
   const statusTone = useMemo(() => {
     if (!gmail) return { bg: "#eef2ff", color: "#4b56c7", label: "Loading" };
     if (gmail.configured) return { bg: "#e8f8ee", color: "#217a49", label: "Connected" };
@@ -111,7 +118,7 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData] = await Promise.all([
+      const [gmailData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
         settingsApi.getGmailSync(),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
@@ -121,9 +128,11 @@ export default function SettingsPage() {
         settingsApi.getRolePermissions(),
         settingsApi.getPreMeetingAutomation(),
         settingsApi.getSyncSchedule().catch(() => null),
+        personalEmailSyncApi.getStatus().catch(() => null),
       ]);
       setGmail(gmailData);
       setInbox(gmailData.inbox || "zippy@beacon.li");
+      if (personalEmailData) setPersonalEmail(personalEmailData);
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
       setDealStages(dealStageData);
@@ -146,14 +155,22 @@ export default function SettingsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const gmailStatus = params.get("gmail");
+    const gmailConnected = params.get("gmail_connected");
+    const connectedEmail = params.get("email");
     if (gmailStatus === "connected") {
       setMessage("Gmail connected successfully. Beacon will keep syncing zippy@beacon.li automatically from here.");
       loadSettings();
     } else if (gmailStatus === "error") {
       setError("Gmail connection failed. Please try again.");
     }
-    if (gmailStatus) {
+    if (gmailConnected === "1") {
+      setMessage(`Personal Gmail connected${connectedEmail ? ` (${connectedEmail})` : ""}. Your inbox is being scanned now — activities and contacts will appear shortly.`);
+      loadSettings();
+    }
+    if (gmailStatus || gmailConnected) {
       params.delete("gmail");
+      params.delete("gmail_connected");
+      params.delete("email");
       const query = params.toString();
       window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
     }
@@ -221,6 +238,53 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to trigger sync");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleConnectPersonalEmail = async () => {
+    setConnectingPersonal(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await personalEmailSyncApi.getConnectUrl();
+      window.location.assign(result.url);
+    } catch (err) {
+      setConnectingPersonal(false);
+      setError(err instanceof Error ? err.message : "Failed to start personal Gmail connect");
+    }
+  };
+
+  const handleDisconnectPersonalEmail = async () => {
+    setDisconnectingPersonal(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await personalEmailSyncApi.disconnect();
+      await loadSettings();
+      setMessage("Personal Gmail disconnected. Your past synced activities remain in the CRM.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect personal Gmail");
+    } finally {
+      setDisconnectingPersonal(false);
+    }
+  };
+
+  const handleSyncPersonalNow = async () => {
+    setSyncingPersonal(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await personalEmailSyncApi.trigger();
+      setMessage(
+        result.status === "queued"
+          ? `Sync queued for ${result.email_address}. New activities and contacts will appear shortly.`
+          : "Sync request sent.",
+      );
+      await loadSettings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to trigger personal email sync");
+    } finally {
+      setSyncingPersonal(false);
     }
   };
 
@@ -765,6 +829,122 @@ export default function SettingsPage() {
                   <div key={item.title} style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 18, background: "#fff" }}>
                     <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 8 }}>{item.title}</div>
                     <p className="crm-muted" style={{ fontSize: 14, lineHeight: 1.7 }}>{item.body}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* ── Personal Gmail Sync ─────────���───────────────────────── */}
+            <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div className="crm-chip" style={{ marginBottom: 10, background: "#f0f4ff", color: "#3b4dc8", borderColor: "#d4dcf8" }}>
+                    <Mail size={13} />
+                    Personal Inbox Sync
+                  </div>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>
+                    Connect your personal Gmail
+                  </h3>
+                  <p className="crm-muted" style={{ maxWidth: 600, lineHeight: 1.7, fontSize: 14 }}>
+                    Beacon scans your past and ongoing email conversations, maps them to deals and prospects,
+                    auto-creates missing contacts, and generates tasks when it detects key moments
+                    (POC agreement, pricing request, meeting ask, etc.).
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {!personalEmail?.connected ? (
+                    <button
+                      className="crm-button primary"
+                      onClick={handleConnectPersonalEmail}
+                      disabled={connectingPersonal}
+                    >
+                      {connectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Link2 size={15} />}
+                      Connect my Gmail
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="crm-button soft"
+                        onClick={handleSyncPersonalNow}
+                        disabled={syncingPersonal}
+                      >
+                        {syncingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                        Sync now
+                      </button>
+                      <button
+                        className="crm-button soft"
+                        onClick={handleDisconnectPersonalEmail}
+                        disabled={disconnectingPersonal}
+                        style={{ color: "#c53030" }}
+                      >
+                        {disconnectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Unplug size={15} />}
+                        Disconnect
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                    Status
+                  </div>
+                  <div style={{
+                    display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px",
+                    borderRadius: 20, fontSize: 13, fontWeight: 700,
+                    background: personalEmail?.connected ? "#e8f8ee" : "#f3f5fc",
+                    color: personalEmail?.connected ? "#217a49" : "#66748f",
+                  }}>
+                    {personalEmail?.connected ? "Connected" : "Not connected"}
+                  </div>
+                </div>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                    Connected email
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                    {personalEmail?.email_address || "—"}
+                  </div>
+                </div>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                    Last synced
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                    {formatTimestamp(personalEmail?.last_sync_epoch)}
+                  </div>
+                </div>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                    Historical backfill
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.backfill_completed ? "#217a49" : "#a26a00" }}>
+                    {personalEmail?.backfill_completed ? "Complete" : personalEmail?.connected ? "In progress…" : "—"}
+                  </div>
+                </div>
+              </div>
+
+              {personalEmail?.last_error && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "#fff4e6", border: "1px solid #f0d4ac", color: "#a46206", fontSize: 14 }}>
+                  <AlertTriangle size={16} />
+                  <span>{personalEmail.last_error} — reconnect your Gmail to fix this.</span>
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                {[
+                  { title: "Conversation mapping", body: "Matches emails to deals via contact address, company domain, or AI classification." },
+                  { title: "Auto-create contacts", body: "New stakeholders found in email threads are added to the CRM and linked to the deal." },
+                  { title: "AI task generation", body: "Detects key moments — POC agreed, pricing asked, meeting requested — and creates tasks automatically." },
+                  { title: "Historical backfill", body: "On first connect, scans the last 90 days of your inbox to surface past conversations." },
+                ].map((item) => (
+                  <div key={item.title} style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#fff" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#182042", marginBottom: 6 }}>{item.title}</div>
+                    <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.65 }}>{item.body}</p>
                   </div>
                 ))}
               </div>

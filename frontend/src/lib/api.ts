@@ -1459,3 +1459,55 @@ export const remindersApi = {
   delete: (id: string) =>
     request<void>(`/api/v1/reminders/${id}`, { method: "DELETE" }),
 };
+
+// ── Personal Email Sync ──────────────────────────────────────────────────────
+
+export interface PersonalEmailStatus {
+  connected: boolean;
+  email_address?: string;
+  last_sync_epoch?: number;
+  backfill_completed: boolean;
+  last_error?: string;
+}
+
+export interface PersonalEmailThread {
+  thread_id: string;
+  subject: string;
+  message_count: number;
+  latest_at: string;
+  synced_by_email: string;
+  messages: {
+    id: string;
+    message_id: string;
+    subject: string;
+    from_addr: string;
+    to_addrs: string;
+    cc_addrs: string;
+    body_preview: string;
+    ai_summary?: string;
+    intent_detected?: string;
+    synced_by_email: string;
+    created_at: string;
+  }[];
+}
+
+export const personalEmailSyncApi = {
+  getStatus: () =>
+    request<PersonalEmailStatus>("/api/v1/personal-email-sync/status"),
+  getConnectUrl: () =>
+    request<{ url: string }>("/api/v1/personal-email-sync/connect"),
+  trigger: () =>
+    request<{ status: string; task_id: string; email_address: string }>(
+      "/api/v1/personal-email-sync/trigger",
+      { method: "POST" }
+    ),
+  disconnect: () =>
+    request<{ status: string; email_address?: string }>(
+      "/api/v1/personal-email-sync/disconnect",
+      { method: "POST" }
+    ),
+  getThreadsForDeal: (dealId: string) =>
+    request<{ deal_id: string; threads: PersonalEmailThread[]; total: number }>(
+      `/api/v1/personal-email-sync/threads/${dealId}`
+    ),
+};

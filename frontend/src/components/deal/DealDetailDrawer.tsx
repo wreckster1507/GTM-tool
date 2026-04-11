@@ -4,7 +4,8 @@ import {
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search, Loader2, Sparkles,
 } from "lucide-react";
-import { accountSourcingApi, dealsApi, contactsApi, settingsApi } from "../../lib/api";
+import { accountSourcingApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi } from "../../lib/api";
+import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
@@ -42,7 +43,7 @@ const ACTIVITY_ICON: Record<string, typeof ActivityIcon> = {
   visit: Globe,
 };
 
-type DrawerTab = "overview" | "meddpicc" | "activity" | "tasks";
+type DrawerTab = "overview" | "meddpicc" | "activity" | "tasks" | "emails";
 
 const MEDDPICC_DIMENSIONS = [
   { key: "metrics", label: "Metrics", desc: "Quantified business impact of solving the problem" },
@@ -63,6 +64,9 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   const [activities, setActivities] = useState<Activity[]>([]);
   const [dealContacts, setDealContacts] = useState<DealContact[]>([]);
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
+  const [emailThreads, setEmailThreads] = useState<PersonalEmailThread[]>([]);
+  const [loadingEmails, setLoadingEmails] = useState(false);
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
   const [autoFillingMeddpicc, setAutoFillingMeddpicc] = useState(false);
   const [comment, setComment] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
@@ -111,6 +115,15 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
       contactsApi.list(0, 50, deal.company_id).then(setCompanyContacts).catch(() => {});
     }
   }, [deal.id, deal.company_id]);
+
+  useEffect(() => {
+    if (activeTab !== "emails") return;
+    setLoadingEmails(true);
+    personalEmailSyncApi.getThreadsForDeal(deal.id)
+      .then((res) => setEmailThreads(res.threads))
+      .catch(() => setEmailThreads([]))
+      .finally(() => setLoadingEmails(false));
+  }, [activeTab, deal.id]);
 
   useEffect(() => {
     settingsApi.getGmailSync().then((data) => {
@@ -437,6 +450,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               { id: "overview", label: "Overview" },
               { id: "meddpicc", label: `MEDDPICC${deal.meddpicc_score != null ? ` (${deal.meddpicc_score})` : ""}` },
               { id: "activity", label: `Activity (${activities.length})` },
+              { id: "emails", label: `Emails${emailThreads.length > 0 ? ` (${emailThreads.length})` : ""}` },
               { id: "tasks", label: "Tasks" },
             ].map((item) => {
               const active = activeTab === item.id;
@@ -983,6 +997,143 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 void dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
               }}
             />
+          ) : activeTab === "emails" ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 4 }}>
+                    Personal inbox threads
+                  </div>
+                  <p style={{ fontSize: 13, color: "#7c86a6", margin: 0 }}>
+                    Email conversations from connected personal inboxes, mapped to this deal.
+                  </p>
+                </div>
+                <button
+                  className="crm-button soft"
+                  style={{ fontSize: 13, padding: "6px 12px" }}
+                  onClick={() => {
+                    setLoadingEmails(true);
+                    personalEmailSyncApi.getThreadsForDeal(deal.id)
+                      .then((res) => setEmailThreads(res.threads))
+                      .catch(() => {})
+                      .finally(() => setLoadingEmails(false));
+                  }}
+                  disabled={loadingEmails}
+                >
+                  <Mail size={13} />
+                  {loadingEmails ? "Loading…" : "Refresh"}
+                </button>
+              </div>
+
+              {loadingEmails ? (
+                <div style={{ textAlign: "center", padding: "32px 0", color: "#7c86a6" }}>
+                  <Loader2 size={22} style={{ margin: "0 auto 8px", display: "block" }} className="animate-spin" />
+                  Loading email threads…
+                </div>
+              ) : emailThreads.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "40px 0", color: "#7c86a6" }}>
+                  <Mail size={28} style={{ margin: "0 auto 12px", display: "block", opacity: 0.35 }} />
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>No email threads yet</div>
+                  <p style={{ fontSize: 13, maxWidth: 320, margin: "0 auto", lineHeight: 1.6 }}>
+                    Connect your personal Gmail in Settings → Email Sync to start syncing conversations with this account.
+                  </p>
+                </div>
+              ) : (
+                emailThreads.map((thread) => {
+                  const isExpanded = expandedThreads.has(thread.thread_id);
+                  return (
+                    <div
+                      key={thread.thread_id}
+                      style={{ border: "1px solid #e7eaf5", borderRadius: 12, background: "#fff", overflow: "hidden" }}
+                    >
+                      <button
+                        style={{
+                          width: "100%", textAlign: "left", background: "none", border: "none",
+                          padding: "14px 16px", cursor: "pointer", display: "flex",
+                          justifyContent: "space-between", alignItems: "flex-start", gap: 12,
+                        }}
+                        onClick={() =>
+                          setExpandedThreads((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(thread.thread_id)) next.delete(thread.thread_id);
+                            else next.add(thread.thread_id);
+                            return next;
+                          })
+                        }
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: "#182042", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {thread.subject || "(no subject)"}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#7c86a6", display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <span>{thread.message_count} message{thread.message_count !== 1 ? "s" : ""}</span>
+                            <span>·</span>
+                            <span>{thread.latest_at ? new Date(thread.latest_at).toLocaleDateString() : ""}</span>
+                            {thread.synced_by_email && (
+                              <>
+                                <span>·</span>
+                                <span style={{ color: "#4b56c7" }}>{thread.synced_by_email}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <ChevronDown
+                          size={16}
+                          style={{ color: "#7c86a6", flexShrink: 0, transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+                        />
+                      </button>
+
+                      {isExpanded && (
+                        <div style={{ borderTop: "1px solid #f0f2f8", display: "flex", flexDirection: "column", gap: 0 }}>
+                          {thread.messages.map((msg, idx) => (
+                            <div
+                              key={msg.id}
+                              style={{
+                                padding: "14px 16px",
+                                borderBottom: idx < thread.messages.length - 1 ? "1px solid #f0f2f8" : "none",
+                                background: idx % 2 === 0 ? "#fafbff" : "#fff",
+                              }}
+                            >
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: "#182042" }}>
+                                  {msg.from_addr}
+                                </div>
+                                <div style={{ fontSize: 12, color: "#7c86a6", flexShrink: 0 }}>
+                                  {msg.created_at ? new Date(msg.created_at).toLocaleString() : ""}
+                                </div>
+                              </div>
+                              {msg.ai_summary && (
+                                <div style={{
+                                  display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8,
+                                  padding: "8px 10px", borderRadius: 8, background: "#f0f4ff", border: "1px solid #dde4f8",
+                                }}>
+                                  <Sparkles size={13} style={{ color: "#4b56c7", marginTop: 1, flexShrink: 0 }} />
+                                  <span style={{ fontSize: 13, color: "#3b4dc8", lineHeight: 1.5 }}>{msg.ai_summary}</span>
+                                </div>
+                              )}
+                              {msg.intent_detected && (
+                                <div style={{
+                                  display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8,
+                                  padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+                                  background: "#e8f8ee", color: "#217a49", border: "1px solid #c3e8d4",
+                                }}>
+                                  <Zap size={11} />
+                                  {msg.intent_detected.replace(/_/g, " ").replace("move deal stage:", "Stage: ").replace(":", " → ")}
+                                </div>
+                              )}
+                              <p style={{ fontSize: 13, color: "#4a5568", lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                {msg.body_preview || "(empty)"}
+                                {msg.body_preview && msg.body_preview.length >= 299 && <span style={{ color: "#7c86a6" }}>…</span>}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           ) : (
             <ActivityPanel
               activities={activities}

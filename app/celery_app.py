@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.email_sync",
         "app.tasks.tldv_sync",
         "app.tasks.crm_import",
+        "app.tasks.personal_email_sync",
     ],
 )
 
@@ -36,6 +37,10 @@ celery_app.conf.update(
         "sync-tldv-meetings": {
             "task": "app.tasks.tldv_sync.sync_tldv_meetings",
             "schedule": 60,  # every 60s — task self-throttles via tldv_sync_interval_minutes in DB (default 5 min)
+        },
+        "sync-all-personal-inboxes": {
+            "task": "app.tasks.personal_email_sync.sync_all_personal_inboxes",
+            "schedule": 600,  # every 10 minutes — enqueues one task per connected user
         },
     },
 )

@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     analytics,
     aircall,
     email_sync,
+    personal_email_sync,
     angel_mapping,
     assignments,
     auth,
@@ -69,4 +70,5 @@ router.include_router(angel_mapping.router)
 router.include_router(settings.router)
 router.include_router(aircall.router)
 router.include_router(email_sync.router)
+router.include_router(personal_email_sync.router)
 router.include_router(reminders.router)
