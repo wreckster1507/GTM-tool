@@ -22,6 +22,7 @@ export type AddProspectFormState = {
   email: string;
   phone: string;
   title: string;
+  company_id: string;
   linkedin_url: string;
 };
 
@@ -31,5 +32,6 @@ export const EMPTY_ADD_PROSPECT_FORM: AddProspectFormState = {
   email: "",
   phone: "",
   title: "",
+  company_id: "",
   linkedin_url: "",
 };

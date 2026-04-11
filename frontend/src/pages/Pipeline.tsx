@@ -6,6 +6,7 @@ import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
+import SearchableCompanySelect from "../components/SearchableCompanySelect";
 
 type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
@@ -708,6 +709,7 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, chil
 function ProspectDetailDrawer({
   contact,
   company,
+  companies,
   activities,
   loading,
   onConvert,
@@ -718,6 +720,7 @@ function ProspectDetailDrawer({
 }: {
   contact: Contact;
   company?: Company;
+  companies: Company[];
   activities: Activity[];
   loading: boolean;
   onConvert?: () => Promise<void>;
@@ -726,17 +729,51 @@ function ProspectDetailDrawer({
   onClose: () => void;
   onUpdated?: () => void;
 }) {
-  const fullName = contactName(contact);
-  const stage = prospectStage(contact);
+  const [currentContact, setCurrentContact] = useState(contact);
+  const [editingProspect, setEditingProspect] = useState(false);
+  const [editForm, setEditForm] = useState({
+    first_name: contact.first_name ?? "",
+    last_name: contact.last_name ?? "",
+    title: contact.title ?? "",
+    email: contact.email ?? "",
+    phone: contact.phone ?? "",
+    linkedin_url: contact.linkedin_url ?? "",
+    company_id: contact.company_id ?? "",
+  });
+  const fullName = contactName(currentContact);
+  const stage = prospectStage(currentContact);
   const stageLabel = stages.find((item) => item.id === stage)?.label ?? stage;
-  const [editEmail, setEditEmail] = useState(contact.email ?? "");
-  const [editPhone, setEditPhone] = useState(contact.phone ?? "");
   const [savingContact, setSavingContact] = useState(false);
   const canConvert = stage === "meeting_booked";
+  const currentCompany = currentContact.company_id
+    ? companies.find((item) => item.id === currentContact.company_id) ?? company
+    : undefined;
   const positiveSignals = activities.filter((item) => {
     const text = `${item.ai_summary ?? ""} ${item.content ?? ""} ${item.call_outcome ?? ""}`.toLowerCase();
     return text.includes("interested") || text.includes("positive") || text.includes("meeting booked") || text.includes("answered");
   }).length;
+  const hasProspectChanges =
+    editForm.first_name !== (currentContact.first_name ?? "") ||
+    editForm.last_name !== (currentContact.last_name ?? "") ||
+    editForm.title !== (currentContact.title ?? "") ||
+    editForm.email !== (currentContact.email ?? "") ||
+    editForm.phone !== (currentContact.phone ?? "") ||
+    editForm.linkedin_url !== (currentContact.linkedin_url ?? "") ||
+    editForm.company_id !== (currentContact.company_id ?? "");
+
+  useEffect(() => {
+    setCurrentContact(contact);
+    setEditingProspect(false);
+    setEditForm({
+      first_name: contact.first_name ?? "",
+      last_name: contact.last_name ?? "",
+      title: contact.title ?? "",
+      email: contact.email ?? "",
+      phone: contact.phone ?? "",
+      linkedin_url: contact.linkedin_url ?? "",
+      company_id: contact.company_id ?? "",
+    });
+  }, [contact]);
 
   return (
     <>
@@ -746,9 +783,20 @@ function ProspectDetailDrawer({
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: "#1f2d3d" }}>{fullName}</div>
-              <div style={{ marginTop: 6, color: "#5e738b", fontSize: 14 }}>{contact.title || "Prospect"} {company ? `at ${company.name}` : ""}</div>
+              <div style={{ marginTop: 6, color: "#5e738b", fontSize: 14 }}>{currentContact.title || "Prospect"} {currentCompany ? `at ${currentCompany.name}` : ""}</div>
             </div>
-            <button onClick={onClose} style={{ color: "#7a96b0", cursor: "pointer", background: "none", border: "none" }}>Close</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {!editingProspect && (
+                <button
+                  type="button"
+                  onClick={() => setEditingProspect(true)}
+                  style={{ borderRadius: 10, border: "1px solid #c8daf0", background: "#eef5ff", color: "#175089", padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+                >
+                  Edit prospect
+                </button>
+              )}
+              <button onClick={onClose} style={{ color: "#7a96b0", cursor: "pointer", background: "none", border: "none" }}>Close</button>
+            </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 12, fontWeight: 700, padding: "4px 10px", borderRadius: 999, background: "#eef4ff", color: "#175089", border: "1px solid #c8daf0" }}>{stageLabel}</span>
@@ -777,52 +825,140 @@ function ProspectDetailDrawer({
 
           <div style={{ border: "1px solid #e8eef5", borderRadius: 16, background: "#fff", padding: 18 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: "#1f2d3d", marginBottom: 12 }}>Contact Info</div>
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Mail size={14} color="#6b7f95" />
-                <input
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  placeholder="Add email..."
-                  style={{ flex: 1, height: 36, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }}
-                />
-                {editEmail && <a href={`mailto:${editEmail}`} style={{ color: "#1f6feb", fontSize: 12, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>Send</a>}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Phone size={14} color="#6b7f95" />
-                <input
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  placeholder="Add phone..."
-                  style={{ flex: 1, height: 36, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }}
-                />
-                {editPhone && <button type="button" onClick={() => window.__aircallDial?.(editPhone, fullName || undefined)} style={{ color: "#1f8f5f", fontSize: 12, fontWeight: 700, background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>Call</button>}
-              </div>
-              {(editEmail !== (contact.email ?? "") || editPhone !== (contact.phone ?? "")) && (
-                <button
-                  type="button"
-                  disabled={savingContact}
-                  onClick={async () => {
-                    setSavingContact(true);
-                    try {
-                      await contactsApi.update(contact.id, { email: editEmail.trim() || undefined, phone: editPhone.trim() || undefined });
-                      onUpdated?.();
-                    } finally {
-                      setSavingContact(false);
-                    }
-                  }}
-                  style={{ justifySelf: "end", borderRadius: 10, border: "1px solid #2563eb", background: "#2563eb", color: "#fff", padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: savingContact ? "wait" : "pointer" }}
-                >
-                  {savingContact ? "Saving..." : "Save changes"}
-                </button>
-              )}
-              {contact.linkedin_url && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Globe size={14} color="#6b7f95" />
-                  <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: "#55657a", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>LinkedIn Profile</a>
+            {editingProspect ? (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>First Name</label>
+                    <input value={editForm.first_name} onChange={(e) => setEditForm((current) => ({ ...current, first_name: e.target.value }))} style={{ width: "100%", height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Last Name</label>
+                    <input value={editForm.last_name} onChange={(e) => setEditForm((current) => ({ ...current, last_name: e.target.value }))} style={{ width: "100%", height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }} />
+                  </div>
                 </div>
-              )}
-            </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Job Title</label>
+                  <input value={editForm.title} onChange={(e) => setEditForm((current) => ({ ...current, title: e.target.value }))} style={{ width: "100%", height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Company</label>
+                  <SearchableCompanySelect
+                    value={editForm.company_id}
+                    companies={companies}
+                    onChange={(companyId) => setEditForm((current) => ({ ...current, company_id: companyId ?? "" }))}
+                    placeholder="Search company..."
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Email</label>
+                  <input value={editForm.email} onChange={(e) => setEditForm((current) => ({ ...current, email: e.target.value }))} style={{ width: "100%", height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }} type="email" />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Phone</label>
+                  <input value={editForm.phone} onChange={(e) => setEditForm((current) => ({ ...current, phone: e.target.value }))} style={{ width: "100%", height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
+                  <input value={editForm.linkedin_url} onChange={(e) => setEditForm((current) => ({ ...current, linkedin_url: e.target.value }))} style={{ width: "100%", height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 13, outline: "none" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                  <button
+                    type="button"
+                    disabled={savingContact}
+                    onClick={() => {
+                      setEditingProspect(false);
+                      setEditForm({
+                        first_name: currentContact.first_name ?? "",
+                        last_name: currentContact.last_name ?? "",
+                        title: currentContact.title ?? "",
+                        email: currentContact.email ?? "",
+                        phone: currentContact.phone ?? "",
+                        linkedin_url: currentContact.linkedin_url ?? "",
+                        company_id: currentContact.company_id ?? "",
+                      });
+                    }}
+                    style={{ borderRadius: 10, border: "1px solid #dbe6f2", background: "#fff", color: "#60758b", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: savingContact ? "default" : "pointer" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingContact || !hasProspectChanges}
+                    onClick={async () => {
+                      setSavingContact(true);
+                      try {
+                        const updated = await contactsApi.update(currentContact.id, {
+                          first_name: editForm.first_name.trim() || undefined,
+                          last_name: editForm.last_name.trim() || undefined,
+                          title: editForm.title.trim() || undefined,
+                          email: editForm.email.trim() || undefined,
+                          phone: editForm.phone.trim() || undefined,
+                          linkedin_url: editForm.linkedin_url.trim() || undefined,
+                          company_id: editForm.company_id || undefined,
+                        });
+                        setCurrentContact(updated);
+                        setEditingProspect(false);
+                        onUpdated?.();
+                      } finally {
+                        setSavingContact(false);
+                      }
+                    }}
+                    style={{ borderRadius: 10, border: "1px solid #2563eb", background: "#2563eb", color: "#fff", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: savingContact || !hasProspectChanges ? "default" : "pointer", opacity: savingContact || !hasProspectChanges ? 0.7 : 1 }}
+                  >
+                    {savingContact ? "Saving..." : "Save changes"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0" }}>Name</span>
+                  <span style={{ fontSize: 13, color: "#1f2d3d", fontWeight: 600 }}>{fullName}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0" }}>Company</span>
+                  <span style={{ fontSize: 13, color: currentCompany ? "#1f2d3d" : "#94a3b8", fontWeight: 600 }}>{currentCompany?.name ?? "No company linked"}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0" }}>Title</span>
+                  <span style={{ fontSize: 13, color: currentContact.title ? "#1f2d3d" : "#94a3b8", fontWeight: 600 }}>{currentContact.title ?? "No title yet"}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Mail size={14} color="#6b7f95" />
+                  {currentContact.email ? (
+                    <>
+                      <span style={{ flex: 1, fontSize: 13, color: "#1f2d3d", fontWeight: 600 }}>{currentContact.email}</span>
+                      <a href={`mailto:${currentContact.email}`} style={{ color: "#1f6feb", fontSize: 12, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>Send</a>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 13, color: "#94a3b8" }}>No email yet</span>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Phone size={14} color="#6b7f95" />
+                  {currentContact.phone ? (
+                    <>
+                      <span style={{ flex: 1, fontSize: 13, color: "#1f2d3d", fontWeight: 600 }}>{currentContact.phone}</span>
+                      <button type="button" onClick={() => window.__aircallDial?.(currentContact.phone!, fullName || undefined)} style={{ color: "#1f8f5f", fontSize: 12, fontWeight: 700, background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>Call</button>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 13, color: "#94a3b8" }}>No phone yet</span>
+                  )}
+                </div>
+                {currentContact.linkedin_url ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Globe size={14} color="#6b7f95" />
+                    <a href={currentContact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: "#55657a", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>LinkedIn Profile</a>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Globe size={14} color="#6b7f95" />
+                    <span style={{ fontSize: 13, color: "#94a3b8" }}>No LinkedIn profile yet</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ border: "1px solid #e8eef5", borderRadius: 16, background: "#fff", padding: 18 }}>
@@ -933,10 +1069,12 @@ function AddProspectModal({ companies, onClose, onCreated }: { companies: Compan
             </div>
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Company</label>
-              <select value={form.company_id} onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value }))} style={modalInputStyle}>
-                <option value="">No company</option>
-                {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <SearchableCompanySelect
+                value={form.company_id}
+                companies={companies}
+                onChange={(companyId) => setForm((f) => ({ ...f, company_id: companyId ?? "" }))}
+                placeholder="Search company..."
+              />
             </div>
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
@@ -1612,7 +1750,7 @@ export default function Pipeline() {
           return next;
         }, { replace: true });
       }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
-      {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
+      {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} companies={companies} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
       {pendingConvertProspect && (
         <>
           <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.22)", zIndex: 60 }} onClick={() => setPendingConvertProspect(null)} />

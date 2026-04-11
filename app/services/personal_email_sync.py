@@ -33,6 +33,14 @@ from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
 
 logger = logging.getLogger(__name__)
+FREE_EMAIL_PROVIDERS = {
+    "gmail.com",
+    "yahoo.com",
+    "outlook.com",
+    "hotmail.com",
+    "icloud.com",
+    "protonmail.com",
+}
 
 # ── AI task triggers ──────────────────────────────────────────────────────────
 # Maps intent phrases → (system_key, suggested_action_label)
@@ -77,6 +85,26 @@ def _infer_name_from_email(addr: str) -> tuple[str, str]:
     if len(parts) == 1:
         return parts[0].title(), "Contact"
     return parts[0].title(), " ".join(p.title() for p in parts[1:])
+
+
+def _normalize_name_key(value: str | None) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower())
+    return " ".join(cleaned.split())
+
+
+def _match_company_from_text(
+    text: str,
+    company_name_candidates: list[tuple[str, UUID, str]],
+) -> tuple[UUID, str] | None:
+    normalized_text = _normalize_name_key(text)
+    if not normalized_text:
+        return None
+
+    haystack = f" {normalized_text} "
+    for normalized_name, company_id, company_name in company_name_candidates:
+        if f" {normalized_name} " in haystack:
+            return company_id, company_name
+    return None
 
 
 def _detect_intent(text: str) -> str | None:
@@ -177,8 +205,7 @@ async def _get_or_create_company_by_domain(
     suggested_name: str | None = None,
 ) -> Company | None:
     """Find a company by domain. Create a stub if not found."""
-    if not domain or domain in ("gmail.com", "yahoo.com", "outlook.com",
-                                 "hotmail.com", "icloud.com", "protonmail.com"):
+    if not domain or domain in FREE_EMAIL_PROVIDERS:
         return None  # Never auto-create free email providers as companies
 
     result = await session.execute(
@@ -365,21 +392,28 @@ async def process_personal_emails(
     )
     company_domain_map: dict[str, tuple[UUID, str]] = {}  # domain → (id, name)
     all_company_names: list[str] = []
+    company_name_candidates: list[tuple[str, UUID, str]] = []
     for row in all_companies_result.all():
         d = _normalize_domain(row.domain)
         if d:
             company_domain_map[d] = (row.id, row.name)
         all_company_names.append(row.name)
+        normalized_name = _normalize_name_key(row.name)
+        if len(normalized_name) >= 4:
+            company_name_candidates.append((normalized_name, row.id, row.name))
+    company_name_candidates.sort(key=lambda item: len(item[0]), reverse=True)
 
     # Pre-load all contact emails for fast lookup
     all_contacts_result = await session.execute(
-        select(Contact.id, Contact.email, Contact.first_name, Contact.last_name)
+        select(Contact.id, Contact.email, Contact.first_name, Contact.last_name, Contact.company_id)
     )
     contact_email_map: dict[str, UUID] = {}
+    contact_company_map: dict[UUID, UUID | None] = {}
     all_contact_names: list[str] = []
     for row in all_contacts_result.all():
         if row.email:
             contact_email_map[row.email.lower().strip()] = row.id
+        contact_company_map[row.id] = row.company_id
         all_contact_names.append(f"{row.first_name} {row.last_name}")
 
     for msg in messages:
@@ -398,10 +432,13 @@ async def process_personal_emails(
 
         # ── Pass 1: exact email address match → contact → deal ──────────────
         matched_contact_ids: list[UUID] = []
+        matched_company_id: UUID | None = None
         for addr in all_addrs:
             cid = contact_email_map.get(addr)
             if cid:
                 matched_contact_ids.append(cid)
+                if not matched_company_id:
+                    matched_company_id = contact_company_map.get(cid)
 
         deal_ids: list[UUID] = []
         if matched_contact_ids:
@@ -426,6 +463,7 @@ async def process_personal_emails(
             for domain in external_domains:
                 if domain in company_domain_map:
                     company_id, _ = company_domain_map[domain]
+                    matched_company_id = company_id
                     # Find deals linked to this company
                     deal_result = await session.execute(
                         select(Deal.id, Deal.assigned_to_id, Deal.stage).where(
@@ -436,7 +474,19 @@ async def process_personal_emails(
                         if row.id not in deal_ids:
                             deal_ids.append(row.id)
 
-        # ── Pass 3: AI classification fallback ───────────────────────────────
+        if not deal_ids and (msg.subject or msg.body_text):
+            company_match = _match_company_from_text(
+                f"{msg.subject}\n{msg.body_text}",
+                company_name_candidates,
+            )
+            if company_match:
+                matched_company_id, _ = company_match
+                deal_result = await session.execute(
+                    select(Deal.id).where(Deal.company_id == matched_company_id)
+                )
+                deal_ids = [row.id for row in deal_result.all()]
+
+        # ── Pass 4: AI classification fallback ───────────────────────────────
         if not deal_ids and (msg.subject or msg.body_text):
             ai_result = await _ai_classify_email(
                 subject=msg.subject,
@@ -455,6 +505,7 @@ async def process_personal_emails(
                     )
                     comp_row = comp_result.scalar_one_or_none()
                     if comp_row:
+                        matched_company_id = comp_row
                         deal_result = await session.execute(
                             select(Deal.id).where(Deal.company_id == comp_row)
                         )
@@ -464,7 +515,8 @@ async def process_personal_emails(
             # No match found — still may need gap-fill (new contact from external domain)
             await _gap_fill_contacts(
                 session, msg, all_addrs, connection, sync_user.id,
-                company_domain_map, stats,
+                company_domain_map, contact_email_map, stats,
+                matched_company_id=matched_company_id,
             )
             continue
 
@@ -476,10 +528,10 @@ async def process_personal_emails(
             domain = _domain_from_email(addr)
             if not domain:
                 continue
-            company_id: UUID | None = None
-            if domain in company_domain_map:
+            company_id: UUID | None = matched_company_id
+            if not company_id and domain in company_domain_map:
                 company_id = company_domain_map[domain][0]
-            else:
+            elif not company_id:
                 # Try to auto-create company from the domain
                 company = await _get_or_create_company_by_domain(
                     session, domain,
@@ -574,19 +626,20 @@ async def _gap_fill_contacts(
     connection: UserEmailConnection,
     sync_user_id: UUID,
     company_domain_map: dict[str, tuple[UUID, str]],
+    contact_email_map: dict[str, UUID],
     stats: dict,
+    matched_company_id: UUID | None = None,
 ) -> None:
     """
-    When no deal match is found, still create contacts for external addresses
-    if their domain matches a known company. This ensures we capture new
-    stakeholders even if they haven't been linked to a deal yet.
+    When no deal match is found, still capture new stakeholders by:
+      1. attaching them to a company inferred from the conversation text
+      2. attaching them to a known company by email domain
+      3. auto-creating a stub company from a corporate domain
     """
     user_domain = _domain_from_email(connection.email_address)
     for addr in all_addrs:
         domain = _domain_from_email(addr)
         if not domain or domain == user_domain:
-            continue
-        if domain not in company_domain_map:
             continue
 
         contact_result = await session.execute(
@@ -595,9 +648,22 @@ async def _gap_fill_contacts(
         if contact_result.scalar_one_or_none():
             continue
 
-        company_id = company_domain_map[domain][0]
+        company_id = matched_company_id
+        if not company_id and domain in company_domain_map:
+            company_id = company_domain_map[domain][0]
+        elif not company_id:
+            company = await _get_or_create_company_by_domain(session, domain)
+            if company:
+                company_id = company.id
+                company_domain_map[domain] = (company.id, company.name)
+                stats["companies_created"] += 1
+
+        if not company_id and domain in FREE_EMAIL_PROVIDERS:
+            continue
+
         display_name = msg.from_name if addr == msg.from_addr else None
-        await _get_or_create_contact_by_email(
+        contact = await _get_or_create_contact_by_email(
             session, addr, display_name, company_id, sync_user_id,
         )
+        contact_email_map[addr] = contact.id
         stats["contacts_created"] += 1

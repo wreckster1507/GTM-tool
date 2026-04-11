@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { contactsApi } from "../../lib/api";
+import SearchableCompanySelect from "../../components/SearchableCompanySelect";
 import type { Contact } from "../../types";
 import {
   EMPTY_ADD_PROSPECT_FORM,
@@ -54,6 +55,7 @@ export default function AddProspectModal({
         email: form.email.trim() || undefined,
         phone: form.phone.trim() || undefined,
         title: form.title.trim() || undefined,
+        company_id: form.company_id || undefined,
         linkedin_url: form.linkedin_url.trim() || undefined,
       } as Partial<Contact>);
       reset();
@@ -99,6 +101,14 @@ export default function AddProspectModal({
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Job Title</label>
               <input value={form.title} onChange={(e) => updateField("title", e.target.value)} style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 12px", fontSize: 13 }} placeholder="VP Engineering" />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>Company</label>
+              <SearchableCompanySelect
+                value={form.company_id}
+                onChange={(companyId) => updateField("company_id", companyId ?? "")}
+                placeholder="Search company..."
+              />
             </div>
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
