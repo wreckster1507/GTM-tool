@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
 from app.models.user import User
@@ -32,6 +32,14 @@ class AssignRequest(BaseModel):
 class BulkAssignRequest(BaseModel):
     ids: List[UUID]
     user_id: Optional[UUID] = None  # None = unassign
+
+
+def _validate_assignment_user(user: User, *, role: str) -> None:
+    expected_role = "sdr" if role == "sdr" else "ae"
+    if user.role != expected_role:
+        raise ValidationError(
+            f"Cannot assign {user.name} ({user.role.upper()}) to the {expected_role.upper()} slot"
+        )
 
 
 # ── Single assignment ────────────────────────────────────────────────────────
@@ -61,6 +69,7 @@ async def assign_company(
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
+        _validate_assignment_user(user, role="sdr" if is_sdr else "ae")
         if is_sdr:
             company.sdr_id = user.id
             company.sdr_email = user.email
@@ -143,6 +152,7 @@ async def assign_contact(
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
+        _validate_assignment_user(user, role="sdr" if is_sdr else "ae")
         if is_sdr:
             contact.sdr_id = user.id
             contact.sdr_name = user.name
@@ -199,6 +209,7 @@ async def bulk_assign_companies(
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
+        _validate_assignment_user(user, role="ae")
 
     updated = 0
     for cid in body.ids:
@@ -237,6 +248,7 @@ async def bulk_assign_contacts(
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
+        _validate_assignment_user(user, role="ae")
 
     updated = 0
     for cid in body.ids:

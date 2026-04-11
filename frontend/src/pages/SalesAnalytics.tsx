@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   analyticsApi,
+  authApi,
   type MonthlyUniqueFunnelRow,
   type SalesDashboard,
   type SalesForecastRow,
@@ -21,6 +22,7 @@ import {
   type SalesStageBucket,
   type SalesVelocityRow,
 } from "../lib/api";
+import type { User } from "../types";
 
 const WINDOW_OPTIONS = [30, 90, 180] as const;
 
@@ -414,9 +416,29 @@ function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
 export default function SalesAnalytics() {
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
+  const [teamUsers, setTeamUsers] = useState<User[]>([]);
+  const [repFilter, setRepFilter] = useState<string>("all");
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedRep = useMemo(
+    () => (repFilter === "all" ? null : teamUsers.find((user) => user.id === repFilter) ?? null),
+    [repFilter, teamUsers],
+  );
+
+  useEffect(() => {
+    authApi
+      .listAllUsers()
+      .then((users) => {
+        setTeamUsers(
+          users
+            .filter((user) => user.is_active)
+            .sort((left, right) => left.name.localeCompare(right.name))
+        );
+      })
+      .catch(() => setTeamUsers([]));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -424,7 +446,7 @@ export default function SalesAnalytics() {
     setError(null);
 
     analyticsApi
-      .salesDashboard(windowDays)
+      .salesDashboard(windowDays, repFilter === "all" ? undefined : repFilter)
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -438,7 +460,7 @@ export default function SalesAnalytics() {
     return () => {
       cancelled = true;
     };
-  }, [windowDays]);
+  }, [windowDays, repFilter]);
 
   const metricCards: Array<{
     label: string;
@@ -549,6 +571,32 @@ export default function SalesAnalytics() {
                 </button>
               ))}
             </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
+                Rep filter
+              </label>
+              <select
+                value={repFilter}
+                onChange={(event) => setRepFilter(event.target.value)}
+                style={{
+                  height: 40,
+                  borderRadius: 12,
+                  border: "1px solid #d9e3ef",
+                  background: "#fff",
+                  color: "#203244",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  padding: "0 12px",
+                }}
+              >
+                <option value="all">All reps</option>
+                {teamUsers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Window</p>
@@ -567,6 +615,10 @@ export default function SalesAnalytics() {
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f7f9fc", border: "1px solid #e3ebf4", color: "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <CalendarRange size={14} />
             Window: last {windowDays} days
+          </div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: selectedRep ? "#eef4ff" : "#f7f9fc", border: selectedRep ? "1px solid #d7e2fb" : "1px solid #e3ebf4", color: selectedRep ? "#3555c4" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
+            <BarChart3 size={14} />
+            Scope: {selectedRep?.name ?? "All reps"}
           </div>
           <p style={{ margin: 0, fontSize: 12, color: "#74869c" }}>
             {loading ? "Refreshing dashboard..." : `Snapshot updated ${formatSnapshotTime(data?.generated_at)}`}

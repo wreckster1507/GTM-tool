@@ -30,6 +30,7 @@ import {
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
+import { useAuth } from "../lib/AuthContext";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 
@@ -107,6 +108,7 @@ function CompanySection({
 }
 
 export default function CompanyDetail() {
+  const { isAdmin } = useAuth();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [company, setCompany] = useState<Company | null>(null);
@@ -304,18 +306,20 @@ export default function CompanyDetail() {
               <RefreshCw className={`h-3.5 w-3.5 ${enriching ? "animate-spin" : ""}`} />
               {enriching ? "Enriching..." : "Re-enrich"}
             </button>
-            <button
-              className="crm-button soft text-[#c0392b] border-[#fcc] hover:bg-[#fff5f5]"
-              onClick={async () => {
-                if (!company) return;
-                if (!window.confirm(`Delete "${company.name}"? This will remove all associated contacts and deals.`)) return;
-                await companiesApi.delete(company.id);
-                navigate("/companies");
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </button>
+            {isAdmin ? (
+              <button
+                className="crm-button soft text-[#c0392b] border-[#fcc] hover:bg-[#fff5f5]"
+                onClick={async () => {
+                  if (!company) return;
+                  if (!window.confirm(`Delete "${company.name}"? This will remove all associated contacts and deals.`)) return;
+                  await companiesApi.delete(company.id);
+                  navigate("/companies");
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            ) : null}
           </div>
         </div>
 

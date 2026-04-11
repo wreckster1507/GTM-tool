@@ -762,26 +762,24 @@ export default function AccountSourcing() {
               </div>
             </div>
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
-              {isAdmin ? (
-                <button
-                  onClick={() => setShowCreateModal(true)}
-                  style={{
-                    border: 0,
-                    background: "#4f46e5",
-                    color: "#fff",
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  <Plus size={15} />
-                  Add Accounts
-                </button>
-              ) : null}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                style={{
+                  border: 0,
+                  background: "#4f46e5",
+                  color: "#fff",
+                  borderRadius: 12,
+                  padding: "10px 14px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                <Plus size={15} />
+                Add Accounts
+              </button>
               {isAdmin && (
                 <>
                   <button

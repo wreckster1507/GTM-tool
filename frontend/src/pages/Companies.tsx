@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { companiesApi, prospectingApi, type ProspectingBatch } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 
 async function confirmDelete(name: string, onDelete: () => Promise<void>, onRemove: () => void) {
   if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
@@ -19,6 +20,7 @@ const TIER_STYLE: Record<string, CSSProperties> = {
 };
 
 export default function Companies() {
+  const { isAdmin } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [search, setSearch] = useState("");
   const [sortByScore, setSortByScore] = useState(true);
@@ -404,18 +406,20 @@ export default function Companies() {
                       )}
                     </td>
                     <td>
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          confirmDelete(c.name, () => companiesApi.delete(c.id), () =>
-                            setCompanies((prev) => prev.filter((x) => x.id !== c.id))
-                          );
-                        }}
-                        className="flex items-center justify-center h-8 w-8 rounded-lg text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
-                        title="Delete company"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {isAdmin ? (
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            confirmDelete(c.name, () => companiesApi.delete(c.id), () =>
+                              setCompanies((prev) => prev.filter((x) => x.id !== c.id))
+                            );
+                          }}
+                          className="flex items-center justify-center h-8 w-8 rounded-lg text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
+                          title="Delete company"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

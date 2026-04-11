@@ -244,20 +244,24 @@ async def _load_monthly_unique_funnel(
     session: DBSession,
     *,
     months: int = 12,
+    rep_id: UUID | None = None,
 ) -> list[MonthlyUniqueFunnelRow]:
     await backfill_company_stage_milestones(session)
     month_keys = _rolling_month_keys(months)
     earliest_month = datetime.strptime(month_keys[0], "%Y-%m")
-    milestone_rows = (
-        await session.execute(
-            select(
-                CompanyStageMilestone.milestone_key,
-                CompanyStageMilestone.first_reached_at,
-            ).where(
-                CompanyStageMilestone.first_reached_at >= earliest_month,
-                CompanyStageMilestone.milestone_key.in_(list(MILESTONE_LABELS.keys())),
-            )
+    stmt = (
+        select(
+            CompanyStageMilestone.milestone_key,
+            CompanyStageMilestone.first_reached_at,
+        ).where(
+            CompanyStageMilestone.first_reached_at >= earliest_month,
+            CompanyStageMilestone.milestone_key.in_(list(MILESTONE_LABELS.keys())),
         )
+    )
+    if rep_id:
+        stmt = stmt.join(Deal, CompanyStageMilestone.deal_id == Deal.id).where(Deal.assigned_to_id == rep_id)
+    milestone_rows = (
+        await session.execute(stmt)
     ).all()
     return _build_monthly_unique_funnel_rows(milestone_rows, months=months)
 
@@ -274,45 +278,45 @@ async def monthly_funnel_summary(
 async def sales_dashboard(
     session: DBSession,
     window_days: int = Query(90, ge=30, le=365),
+    rep_id: UUID | None = Query(default=None),
 ):
+    filter_rep_id = rep_id
     now = datetime.utcnow()
     today = date.today()
     window_start = now - timedelta(days=window_days)
-    monthly_unique_funnel = await _load_monthly_unique_funnel(session, months=12)
+    monthly_unique_funnel = await _load_monthly_unique_funnel(session, months=12, rep_id=filter_rep_id)
 
     stage_settings = await get_configured_deal_stages(session)
     stage_map = {stage["id"]: stage for stage in stage_settings}
     active_stage_ids = {stage["id"] for stage in stage_settings if stage.get("group") != "closed"}
 
-    deal_rows = (
-        await session.execute(
-            select(
-                Deal.id,
-                Deal.name,
-                Deal.stage,
-                Deal.value,
-                Deal.close_date_est,
-                Deal.days_in_stage,
-                Deal.stage_entered_at,
-                Deal.assigned_to_id,
-                Deal.created_at,
-                Deal.updated_at,
-            )
-        )
-    ).all()
+    deal_stmt = select(
+        Deal.id,
+        Deal.name,
+        Deal.stage,
+        Deal.value,
+        Deal.close_date_est,
+        Deal.days_in_stage,
+        Deal.stage_entered_at,
+        Deal.assigned_to_id,
+        Deal.created_at,
+        Deal.updated_at,
+    )
+    if filter_rep_id:
+        deal_stmt = deal_stmt.where(Deal.assigned_to_id == filter_rep_id)
+    deal_rows = (await session.execute(deal_stmt)).all()
 
-    contact_rows = (
-        await session.execute(
-            select(
-                Contact.id,
-                Contact.assigned_to_id,
-                Contact.created_at,
-                Contact.outreach_lane,
-                Contact.sequence_status,
-                Contact.instantly_status,
-            )
-        )
-    ).all()
+    contact_stmt = select(
+        Contact.id,
+        Contact.assigned_to_id,
+        Contact.created_at,
+        Contact.outreach_lane,
+        Contact.sequence_status,
+        Contact.instantly_status,
+    )
+    if filter_rep_id:
+        contact_stmt = contact_stmt.where(Contact.assigned_to_id == filter_rep_id)
+    contact_rows = (await session.execute(contact_stmt)).all()
 
     activity_rows = (
         await session.execute(
@@ -476,8 +480,10 @@ async def sales_dashboard(
         }
 
     for row in activity_rows:
-        rep_id = deal_owner.get(row.deal_id) or contact_owner.get(row.contact_id) or row.created_by_id
-        rep_key, rep_user_id, rep_name = _label_for_rep(rep_id, users)
+        row_rep_id = deal_owner.get(row.deal_id) or contact_owner.get(row.contact_id) or row.created_by_id
+        if filter_rep_id and row_rep_id != filter_rep_id:
+            continue
+        rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         activity_bucket = rep_activity.setdefault(
             rep_key,
             {
@@ -505,8 +511,10 @@ async def sales_dashboard(
     for row in meetings_rows:
         if row.status == "cancelled":
             continue
-        rep_id = deal_owner.get(row.deal_id)
-        rep_key, rep_user_id, rep_name = _label_for_rep(rep_id, users)
+        row_rep_id = deal_owner.get(row.deal_id)
+        if filter_rep_id and row_rep_id != filter_rep_id:
+            continue
+        rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         meeting_bucket = rep_activity.setdefault(
             rep_key,
             {

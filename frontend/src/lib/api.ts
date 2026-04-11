@@ -1070,8 +1070,10 @@ export type SalesDashboard = {
 };
 
 export const analyticsApi = {
-  salesDashboard: (windowDays = 90) =>
-    request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?window_days=${windowDays}`),
+  salesDashboard: (windowDays = 90, repId?: string) =>
+    request<SalesDashboard>(
+      `/api/v1/analytics/sales-dashboard?window_days=${windowDays}${repId ? `&rep_id=${encodeURIComponent(repId)}` : ""}`
+    ),
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
 };

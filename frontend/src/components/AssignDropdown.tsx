@@ -36,6 +36,8 @@ export default function AssignDropdown({
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
+  const eligibleUsers = users.filter((user) => user.role === role);
+
   useEffect(() => {
     if (open && users.length === 0) {
       authApi.listAllUsers().then(setUsers).catch(() => {});
@@ -151,7 +153,13 @@ export default function AssignDropdown({
             </div>
           )}
 
-          {users.map((u) => (
+          {users.length > 0 && eligibleUsers.length === 0 && (
+            <div style={{ padding: "12px", color: "#7f8fa5", fontSize: "12px", textAlign: "center" }}>
+              No {role.toUpperCase()} users available
+            </div>
+          )}
+
+          {eligibleUsers.map((u) => (
             <button
               key={u.id}
               type="button"

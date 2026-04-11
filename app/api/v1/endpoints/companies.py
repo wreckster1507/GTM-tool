@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.core.dependencies import CurrentUser, DBSession, Pagination
+from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate
 from app.models.deal import Deal, DealRead
@@ -110,7 +110,7 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
 
 
 @router.delete("/{company_id}", status_code=204)
-async def delete_company(company_id: UUID, session: DBSession, _user: CurrentUser):
+async def delete_company(company_id: UUID, session: DBSession, _admin: AdminUser):
     repo = CompanyRepository(session)
     await repo.get_or_raise(company_id)  # 404 if not found
     await repo.delete_with_cascade(company_id)
