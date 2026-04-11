@@ -458,7 +458,7 @@ async def process_personal_emails(
                         deal_result = await session.execute(
                             select(Deal.id).where(Deal.company_id == comp_row)
                         )
-                        deal_ids = [r.deal_id for r in deal_result.all()]
+                        deal_ids = [r.id for r in deal_result.all()]
 
         if not deal_ids:
             # No match found — still may need gap-fill (new contact from external domain)
