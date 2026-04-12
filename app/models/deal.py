@@ -131,6 +131,8 @@ class DealRead(DealBase):
     # Signal justification — what activity drove the latest touch
     seller_engagement_signal: Optional[dict] = None  # {type, source, label}
     client_engagement_signal: Optional[dict] = None  # {type, source, label}
+    seller_engagement_reason: Optional[str] = None
+    client_engagement_reason: Optional[str] = None
 
 
 class DealUpdate(SQLModel):

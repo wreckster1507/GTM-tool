@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import func, select, text
@@ -116,11 +116,134 @@ class DealRepository(BaseRepository[Deal]):
 
         return {"type": activity_type, "source": source, "label": label}
 
+    @staticmethod
+    def _normalize_signal_text(value: str | None) -> str:
+        return (value or "").strip().lower()
+
+    @classmethod
+    def _metadata_text(cls, metadata: Any) -> list[str]:
+        if not isinstance(metadata, dict):
+            return []
+        collected: list[str] = []
+        for key in (
+            "summary",
+            "content",
+            "text",
+            "transcription",
+            "thread_latest_message_text",
+            "thread_context_excerpt",
+            "google_doc_transcript",
+            "follow_up_email_draft",
+        ):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                collected.append(cls._normalize_signal_text(value))
+
+        for entry in metadata.get("topics") or []:
+            if isinstance(entry, dict):
+                value = entry.get("name") or entry.get("label") or entry.get("topic")
+            else:
+                value = entry
+            if isinstance(value, str) and value.strip():
+                collected.append(cls._normalize_signal_text(value))
+
+        for entry in metadata.get("action_items") or metadata.get("items") or []:
+            if isinstance(entry, dict):
+                value = entry.get("text") or entry.get("title") or entry.get("content")
+            else:
+                value = entry
+            if isinstance(value, str) and value.strip():
+                collected.append(cls._normalize_signal_text(value))
+
+        ci = metadata.get("conversation_intelligence")
+        if isinstance(ci, dict):
+            for key in ("summary", "transcription"):
+                value = ci.get(key)
+                if isinstance(value, str) and value.strip():
+                    collected.append(cls._normalize_signal_text(value))
+            for bucket in ("topics", "action_items", "sentiments"):
+                for entry in ci.get(bucket) or []:
+                    if isinstance(entry, str) and entry.strip():
+                        collected.append(cls._normalize_signal_text(entry))
+        return collected
+
+    @classmethod
+    def _activity_signal_text(cls, row) -> str:
+        parts = [
+            cls._normalize_signal_text(getattr(row, "ai_summary", None)),
+            cls._normalize_signal_text(getattr(row, "content", None)),
+            cls._normalize_signal_text(getattr(row, "email_subject", None)),
+            cls._normalize_signal_text(getattr(row, "email_from", None)),
+            *cls._metadata_text(getattr(row, "event_metadata", None)),
+        ]
+        return " ".join(part for part in parts if part)
+
+    @staticmethod
+    def _contains_any(text: str, terms: tuple[str, ...] | list[str]) -> bool:
+        return any(term in text for term in terms)
+
+    @classmethod
+    def _infer_engagement_reason(cls, rows: list[Any], *, side: str) -> str | None:
+        if not rows:
+            return None
+
+        recent = sorted(rows, key=lambda row: row.created_at, reverse=True)[:6]
+        latest = recent[0]
+        latest_source = (latest.source or "").strip().lower()
+        latest_type = (latest.type or "").strip().lower()
+        text = " ".join(cls._activity_signal_text(row) for row in recent)
+
+        pricing_terms = ("pricing", "commercial", "quote", "proposal", "budget", "package")
+        poc_terms = ("poc", "pilot", "proof of concept")
+        meeting_terms = ("meeting", "demo", "workshop", "discovery", "next steps", "follow-up")
+        security_terms = ("security", "legal", "procurement", "msa", "dpa", "infosec")
+        positive_terms = ("agreed", "approved", "move forward", "confirmed", "interested", "ready")
+
+        if side == "client":
+            if cls._contains_any(text, poc_terms) and cls._contains_any(text, positive_terms):
+                return "Client is moving forward on POC"
+            if cls._contains_any(text, pricing_terms):
+                return "Client is engaging on pricing"
+            if cls._contains_any(text, security_terms):
+                return "Client is discussing security or legal"
+            if latest_source == "instantly" and cls._contains_any(text, ("reply", "replied", "interested")):
+                return "Prospect replied to outreach"
+            if latest_source in {"tldv", "aircall"} or latest_type in {"call", "meeting", "transcript"}:
+                return "Client conversation captured recent next steps"
+            if latest_type == "email":
+                return "Client replied on the conversation"
+            return "Client activity is recent"
+
+        if cls._contains_any(text, poc_terms) and cls._contains_any(text, positive_terms):
+            return "Rep is advancing POC next steps"
+        if cls._contains_any(text, pricing_terms):
+            return "Rep is working the pricing thread"
+        if cls._contains_any(text, security_terms):
+            return "Rep is handling security or legal follow-up"
+        if latest_source == "instantly":
+            if cls._contains_any(text, ("reply", "replied", "interested")):
+                return "Rep outreach has live buyer engagement"
+            return "Rep sequence is active"
+        if latest_source in {"tldv", "aircall"} or latest_type in {"call", "meeting", "transcript"}:
+            return "Rep has fresh conversation intel"
+        if latest_type == "email":
+            return "Rep sent a recent follow-up"
+        if latest_type == "note":
+            return "Rep logged a recent deal update"
+        return "Rep activity is recent"
+
     async def _build_engagement_maps(
         self, deal_ids: list[UUID]
-    ) -> tuple[dict[UUID, datetime], dict[UUID, datetime], dict[UUID, dict], dict[UUID, dict]]:
+    ) -> tuple[
+        dict[UUID, datetime],
+        dict[UUID, datetime],
+        dict[UUID, dict],
+        dict[UUID, dict],
+        dict[UUID, str],
+        dict[UUID, str],
+    ]:
         if not deal_ids:
-            return {}, {}, {}, {}
+            return {}, {}, {}, {}, {}, {}
 
         activity_rows = (
             await self.session.execute(
@@ -131,6 +254,11 @@ class DealRepository(BaseRepository[Deal]):
                     Activity.source,
                     Activity.email_from,
                     Activity.contact_id,
+                    Activity.email_subject,
+                    Activity.content,
+                    Activity.ai_summary,
+                    Activity.event_metadata,
+                    Activity.call_outcome,
                 ).where(
                     Activity.deal_id.in_(deal_ids)
                 )
@@ -141,20 +269,38 @@ class DealRepository(BaseRepository[Deal]):
         client_engagement: dict[UUID, datetime] = {}
         seller_signal: dict[UUID, dict] = {}
         client_signal: dict[UUID, dict] = {}
+        seller_rows: dict[UUID, list[Any]] = {}
+        client_rows: dict[UUID, list[Any]] = {}
         for row in activity_rows:
             if not row.deal_id:
                 continue
             if self._is_seller_touch(row):
+                seller_rows.setdefault(row.deal_id, []).append(row)
                 current = seller_engagement.get(row.deal_id)
                 if current is None or row.created_at > current:
                     seller_engagement[row.deal_id] = row.created_at
                     seller_signal[row.deal_id] = self._signal_label(row)
             if self._is_client_touch(row):
+                client_rows.setdefault(row.deal_id, []).append(row)
                 current = client_engagement.get(row.deal_id)
                 if current is None or row.created_at > current:
                     client_engagement[row.deal_id] = row.created_at
                     client_signal[row.deal_id] = self._signal_label(row)
-        return seller_engagement, client_engagement, seller_signal, client_signal
+        seller_reason = {
+            deal_id: self._infer_engagement_reason(rows, side="seller")
+            for deal_id, rows in seller_rows.items()
+        }
+        client_reason = {
+            deal_id: self._infer_engagement_reason(rows, side="client")
+            for deal_id, rows in client_rows.items()
+        }
+        for deal_id, reason in seller_reason.items():
+            if deal_id in seller_signal and reason:
+                seller_signal[deal_id]["reason"] = reason
+        for deal_id, reason in client_reason.items():
+            if deal_id in client_signal and reason:
+                client_signal[deal_id]["reason"] = reason
+        return seller_engagement, client_engagement, seller_signal, client_signal, seller_reason, client_reason
 
     # ── Board query ──────────────────────────────────────────────────────────
 
@@ -185,7 +331,7 @@ class DealRepository(BaseRepository[Deal]):
 
         result = await self.session.execute(stmt)
         rows = result.all()
-        seller_engagement, client_engagement, seller_signal, client_signal = await self._build_engagement_maps([deal.id for deal, *_ in rows if deal.id])
+        seller_engagement, client_engagement, seller_signal, client_signal, seller_reason, client_reason = await self._build_engagement_maps([deal.id for deal, *_ in rows if deal.id])
 
         board: dict[str, list[DealRead]] = {}
         now = datetime.utcnow()
@@ -199,6 +345,8 @@ class DealRepository(BaseRepository[Deal]):
             read.client_engagement_at = client_engagement.get(deal.id)
             read.seller_engagement_signal = seller_signal.get(deal.id)
             read.client_engagement_signal = client_signal.get(deal.id)
+            read.seller_engagement_reason = seller_reason.get(deal.id)
+            read.client_engagement_reason = client_reason.get(deal.id)
             # Compute days_in_stage live so reps always see real-time staleness
             if deal.stage_entered_at:
                 read.days_in_stage = (now - deal.stage_entered_at).days
@@ -239,7 +387,7 @@ class DealRepository(BaseRepository[Deal]):
             return None
 
         deal, company_name, rep_name, cc = row
-        seller_engagement, client_engagement, seller_signal, client_signal = await self._build_engagement_maps([deal.id])
+        seller_engagement, client_engagement, seller_signal, client_signal, seller_reason, client_reason = await self._build_engagement_maps([deal.id])
         read = DealRead.model_validate(deal)
         read.company_name = company_name
         read.assigned_rep_name = rep_name
@@ -249,6 +397,8 @@ class DealRepository(BaseRepository[Deal]):
         read.client_engagement_at = client_engagement.get(deal.id)
         read.seller_engagement_signal = seller_signal.get(deal.id)
         read.client_engagement_signal = client_signal.get(deal.id)
+        read.seller_engagement_reason = seller_reason.get(deal.id)
+        read.client_engagement_reason = client_reason.get(deal.id)
         # Compute days_in_stage live
         if deal.stage_entered_at:
             read.days_in_stage = (datetime.utcnow() - deal.stage_entered_at).days

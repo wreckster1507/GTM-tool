@@ -133,6 +133,21 @@ function engagementTone(timestamp?: string) {
   return { label: "Stale", background: "#fff1f2", color: "#be123c", border: "#fecdd3", accent: "#f43f5e" };
 }
 
+function engagementStatusJustification(label: string, timestamp?: string, side: "rep" | "client" = "rep") {
+  if (!timestamp) {
+    return side === "rep"
+      ? "No seller-side activity has been captured for this deal yet."
+      : "No buyer-side activity has been captured for this deal yet.";
+  }
+  if (label === "Active") {
+    return "Marked active because the latest relevant signal is very recent.";
+  }
+  if (label === "Watch") {
+    return "Marked watch because the latest relevant signal is recent, but momentum may need attention.";
+  }
+  return "Marked stale because the latest relevant signal is older and momentum may be slowing down.";
+}
+
 type EngagementSignal = NonNullable<Deal["seller_engagement_signal"]>;
 
 function engagementSummary(signal: EngagementSignal | undefined, side: "rep" | "client") {
@@ -188,20 +203,33 @@ function EngagementBadge({
   side,
   timestamp,
   signal,
+  reason,
 }: {
   side: "rep" | "client";
   timestamp?: string;
   signal?: EngagementSignal;
+  reason?: string;
 }) {
+  const [showDetail, setShowDetail] = useState(false);
   const tone = engagementTone(timestamp);
   const summary = engagementSummary(signal, side);
   const Icon = summary.Icon;
+  const compactReason = (reason || signal?.reason || summary.detail || "").trim();
+  const line = compactReason ? `${compactReason}${timestamp ? ` · ${relativeTime(timestamp)}` : ""}` : (timestamp ? relativeTime(timestamp) : summary.detail);
+  const secondary = signal?.label && signal.label !== compactReason ? signal.label : summary.detail;
+  const basis = signal?.label || (side === "rep" ? "No seller-side source yet" : "No buyer-side source yet");
+  const statusWhy = engagementStatusJustification(tone.label, timestamp, side);
+  const tooltipText = [compactReason, secondary, timestamp ? `Last touch ${relativeTime(timestamp)}` : ""].filter(Boolean).join("\n");
 
   return (
     <div
+      onMouseEnter={() => setShowDetail(true)}
+      onMouseLeave={() => setShowDetail(false)}
+      title={tooltipText}
       style={{
         minWidth: 0,
         flex: 1,
+        position: "relative",
         borderRadius: 999,
         border: `1px solid ${tone.border}`,
         background: "#ffffff",
@@ -209,6 +237,7 @@ function EngagementBadge({
         display: "flex",
         alignItems: "center",
         gap: 5,
+        cursor: "default",
       }}
     >
       <span
@@ -235,8 +264,56 @@ function EngagementBadge({
       </span>
       <span style={{ width: 3, height: 3, borderRadius: 999, background: tone.accent, flexShrink: 0 }} />
       <span style={{ fontSize: 9, color: "#7f8ea3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
-        {timestamp ? relativeTime(timestamp) : summary.detail}
+        {line}
       </span>
+      {showDetail && (
+        <div
+          onClick={(event) => event.stopPropagation()}
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            left: 0,
+            zIndex: 30,
+            width: 220,
+            borderRadius: 12,
+            border: "1px solid #dbe6f2",
+            background: "#ffffff",
+            boxShadow: "0 16px 36px rgba(15, 23, 42, 0.18)",
+            padding: "10px 12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#6f7f95", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {side === "rep" ? "Rep engagement" : "Client engagement"}
+            </span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: tone.color }}>
+              {tone.label}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.35 }}>
+            {compactReason || summary.title}
+          </div>
+          {secondary && (
+            <div style={{ fontSize: 11, color: "#62748a", lineHeight: 1.4 }}>
+              {secondary}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "#33485f", lineHeight: 1.45 }}>
+            <span style={{ fontWeight: 700 }}>Based on:</span> {basis}
+          </div>
+          <div style={{ fontSize: 11, color: "#6f7f95", lineHeight: 1.45 }}>
+            <span style={{ fontWeight: 700 }}>Why {tone.label.toLowerCase()}:</span> {statusWhy}
+          </div>
+          {timestamp && (
+            <div style={{ fontSize: 10, color: "#8ca0b3" }}>
+              Last touch {relativeTime(timestamp)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -773,8 +850,8 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd }: { deal: Deal; onCli
       <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
       {deal.next_step && <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>{deal.next_step}</div>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
-          <EngagementBadge side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} />
-          <EngagementBadge side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} />
+          <EngagementBadge side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} reason={deal.seller_engagement_reason} />
+          <EngagementBadge side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} reason={deal.client_engagement_reason} />
         </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
         {(deal.tags ?? []).slice(0, 2).map((tag) => <span key={tag} style={chip("#f8f0ff", "#6b46a0", "#e8d8f8")}>{tag}</span>)}

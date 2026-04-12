@@ -70,6 +70,21 @@ function engagementTone(timestamp?: string) {
   return { label: "Stale", background: "#fff1f2", color: "#be123c", border: "#fecdd3", accent: "#f43f5e" };
 }
 
+function engagementStatusJustification(label: string, timestamp?: string, side: "rep" | "client" = "rep") {
+  if (!timestamp) {
+    return side === "rep"
+      ? "No seller-side activity has been captured for this deal yet."
+      : "No buyer-side activity has been captured for this deal yet.";
+  }
+  if (label === "Active") {
+    return "Marked active because the latest relevant signal is very recent.";
+  }
+  if (label === "Watch") {
+    return "Marked watch because the latest relevant signal is recent, but momentum may need attention.";
+  }
+  return "Marked stale because the latest relevant signal is older and momentum may be slowing down.";
+}
+
 function relativeTime(timestamp?: string): string {
   if (!timestamp) return "";
   const ageMs = Date.now() - new Date(timestamp).getTime();
@@ -137,20 +152,32 @@ function EngagementPanel({
   side,
   timestamp,
   signal,
+  reason,
 }: {
   side: "rep" | "client";
   timestamp?: string;
   signal?: EngagementSignal;
+  reason?: string;
 }) {
+  const [showDetail, setShowDetail] = useState(false);
   const tone = engagementTone(timestamp);
   const summary = engagementSummary(signal, side);
   const Icon = summary.Icon;
+  const primaryReason = (reason || signal?.reason || summary.title).trim();
+  const secondaryLine = signal?.label && signal.label !== primaryReason ? signal.label : undefined;
+  const basis = signal?.label || (side === "rep" ? "No seller-side source yet" : "No buyer-side source yet");
+  const statusWhy = engagementStatusJustification(tone.label, timestamp, side);
+  const tooltipText = [primaryReason, secondaryLine, timestamp ? `Last touch ${relativeTime(timestamp)}` : ""].filter(Boolean).join("\n");
 
   return (
     <div
+      onMouseEnter={() => setShowDetail(true)}
+      onMouseLeave={() => setShowDetail(false)}
+      title={tooltipText}
       style={{
         flex: 1,
         minWidth: 180,
+        position: "relative",
         borderRadius: 10,
         border: `1px solid ${tone.border}`,
         background: "#fbfdff",
@@ -158,6 +185,7 @@ function EngagementPanel({
         display: "flex",
         flexDirection: "column",
         gap: 4,
+        cursor: "default",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -197,14 +225,62 @@ function EngagementPanel({
         </span>
       </div>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {summary.title}
+        {primaryReason}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         <span style={{ width: 7, height: 7, borderRadius: 999, background: tone.accent, flexShrink: 0 }} />
         <span style={{ fontSize: 11, color: "#62748a", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {summary.detail} {timestamp ? `· ${relativeTime(timestamp)}` : ""}
+          {secondaryLine ?? summary.detail} {timestamp ? `· ${relativeTime(timestamp)}` : ""}
         </span>
       </div>
+      {showDetail && (
+        <div
+          onClick={(event) => event.stopPropagation()}
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            left: 0,
+            zIndex: 20,
+            width: 260,
+            borderRadius: 12,
+            border: "1px solid #dbe6f2",
+            background: "#fff",
+            boxShadow: "0 18px 40px rgba(15, 23, 42, 0.18)",
+            padding: "11px 12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#6f7f95", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              {side === "rep" ? "Rep engagement" : "Client engagement"}
+            </span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: tone.color }}>
+              {tone.label}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.4 }}>
+            {primaryReason}
+          </div>
+          {secondaryLine && (
+            <div style={{ fontSize: 11, color: "#62748a", lineHeight: 1.4 }}>
+              {secondaryLine}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "#33485f", lineHeight: 1.45 }}>
+            <span style={{ fontWeight: 700 }}>Based on:</span> {basis}
+          </div>
+          <div style={{ fontSize: 11, color: "#6f7f95", lineHeight: 1.45 }}>
+            <span style={{ fontWeight: 700 }}>Why {tone.label.toLowerCase()}:</span> {statusWhy}
+          </div>
+          {timestamp && (
+            <div style={{ fontSize: 10, color: "#8ca0b3" }}>
+              Last touch {relativeTime(timestamp)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -541,8 +617,8 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <EngagementPanel side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} />
-              <EngagementPanel side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} />
+              <EngagementPanel side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} reason={deal.seller_engagement_reason} />
+              <EngagementPanel side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} reason={deal.client_engagement_reason} />
             </div>
 
             {/* Convert button for prospects */}
