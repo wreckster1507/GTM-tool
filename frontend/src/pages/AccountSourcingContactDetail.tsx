@@ -328,6 +328,7 @@ export default function AccountSourcingContactDetail() {
   const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
   const [reEnriching, setReEnriching] = useState(false);
+  const [reEnrichStatus, setReEnrichStatus] = useState<"idle" | "success" | "error">("idle");
   const [companyEnriching, setCompanyEnriching] = useState(false);
   const [convertingDeal, setConvertingDeal] = useState(false);
   const [commsLog, setCommsLog] = useState<Activity[]>([]);
@@ -648,20 +649,34 @@ export default function AccountSourcingContactDetail() {
                 {convertingDeal ? "Converting..." : "Convert to Deal"}
               </button>
             ) : null}
-            <button
-              onClick={async () => {
-                setReEnriching(true);
-                try {
-                  await accountSourcingApi.reEnrichContact(contact.id);
-                } finally {
-                  setTimeout(() => setReEnriching(false), 2500);
-                }
-              }}
-              style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
-            >
-              {reEnriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-              Re-enrich
-            </button>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <button
+                onClick={async () => {
+                  setReEnriching(true);
+                  setReEnrichStatus("idle");
+                  try {
+                    await accountSourcingApi.reEnrichContact(contact.id);
+                    setReEnrichStatus("success");
+                  } catch {
+                    setReEnrichStatus("error");
+                  } finally {
+                    setReEnriching(false);
+                    setTimeout(() => setReEnrichStatus("idle"), 4000);
+                  }
+                }}
+                disabled={reEnriching}
+                style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: reEnriching ? "not-allowed" : "pointer", opacity: reEnriching ? 0.7 : 1 }}
+              >
+                {reEnriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                {reEnriching ? "Queuing..." : "Re-enrich"}
+              </button>
+              {reEnrichStatus === "success" && (
+                <span style={{ fontSize: 12, color: "#15803d", fontWeight: 500 }}>✓ Queued — enrichment running in background</span>
+              )}
+              {reEnrichStatus === "error" && (
+                <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 500 }}>Failed — try again</span>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => setShowEngagementTimeline((v) => !v)}

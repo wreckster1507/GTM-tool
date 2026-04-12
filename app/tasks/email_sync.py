@@ -232,10 +232,37 @@ async def _async_sync() -> dict:
                         sender_contact_id = c.id
                         break
 
-                # Generate AI summary for non-trivial emails
-                ai_summary = None
-                if len(msg.body_text) >= settings.EMAIL_SUMMARY_MIN_CHARS:
-                    ai_summary = await _summarize_email(msg.subject, msg.body_text)
+                # Batch-fetch all linked Deals and their Companies in two queries
+                # instead of N individual session.get() calls (avoids N+1 pattern).
+                deals_result = await session.execute(
+                    select(Deal).where(Deal.id.in_(deal_ids))
+                )
+                deals_by_id: dict = {str(deal.id): deal for deal in deals_result.scalars().all()}
+                company_ids = list({deal.company_id for deal in deals_by_id.values() if deal and deal.company_id})
+                companies_result = await session.execute(
+                    select(Company).where(Company.id.in_(company_ids))
+                ) if company_ids else None
+                companies_by_id: dict = {str(c.id): c for c in (companies_result.scalars().all() if companies_result else [])}
+
+                # Dedup check: skip this message entirely if already logged for all linked deals.
+                # This avoids calling Claude when the email is already fully processed.
+                new_deal_ids = []
+                for deal_id in deal_ids:
+                    existing = await session.execute(
+                        select(Activity.id).where(
+                            and_(
+                                Activity.email_message_id == msg.message_id,
+                                Activity.deal_id == deal_id,
+                            )
+                        )
+                    )
+                    if not existing.first():
+                        new_deal_ids.append(deal_id)
+
+                if not new_deal_ids:
+                    continue  # All deals already have this email — skip Claude entirely
+
+                # Only call Claude and Google Docs after confirming at least one deal needs this email
                 google_doc_contexts, updated_token = await fetch_google_doc_context(
                     msg.body_text,
                     token_data=gmail.updated_token_payload or token_payload,
@@ -249,10 +276,14 @@ async def _async_sync() -> dict:
                     part for part in [msg.subject or "", msg.body_text or "", google_doc_transcript] if part
                 ).strip()
 
-                # Create activity for each linked deal (with dedup)
-                for deal_id in deal_ids:
-                    deal = await session.get(Deal, deal_id)
-                    company = await session.get(Company, deal.company_id) if deal and deal.company_id else None
+                ai_summary = None
+                if len(msg.body_text) >= settings.EMAIL_SUMMARY_MIN_CHARS:
+                    ai_summary = await _summarize_email(msg.subject, msg.body_text)
+
+                # Create activity for each deal that doesn't already have this email
+                for deal_id in new_deal_ids:
+                    deal = deals_by_id.get(str(deal_id))
+                    company = companies_by_id.get(str(deal.company_id)) if deal and deal.company_id else None
                     company_domain = _normalize_domain(company.domain if company else None)
                     linked_contact_rows = (
                         await session.execute(
@@ -298,18 +329,6 @@ async def _async_sync() -> dict:
                                 "first_name": first_name,
                                 "last_name": last_name,
                             })
-
-                    # Check for existing activity with same message_id + deal_id
-                    existing = await session.execute(
-                        select(Activity.id).where(
-                            and_(
-                                Activity.email_message_id == msg.message_id,
-                                Activity.deal_id == deal_id,
-                            )
-                        )
-                    )
-                    if existing.first():
-                        continue  # Already logged
 
                     thread_cache_key = (str(deal_id), msg.thread_id or msg.message_id)
                     if thread_cache_key not in thread_context_cache:

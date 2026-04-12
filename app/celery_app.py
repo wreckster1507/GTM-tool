@@ -24,6 +24,12 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
+    # Route user-triggered tasks to priority queue so they're never blocked by long-running syncs
+    task_routes={
+        "app.tasks.enrichment.icp_research_single_task": {"queue": "priority"},
+        "app.tasks.enrichment.icp_research_free_task": {"queue": "priority"},
+        "app.tasks.enrichment.icp_research_batch_task": {"queue": "priority"},
+    },
     # Daily deal health recalculation at 02:00 UTC
     beat_schedule={
         "recalculate-deal-health-daily": {
@@ -36,7 +42,7 @@ celery_app.conf.update(
         },
         "sync-tldv-meetings": {
             "task": "app.tasks.tldv_sync.sync_tldv_meetings",
-            "schedule": 60,  # every 60s — task self-throttles via tldv_sync_interval_minutes in DB (default 5 min)
+            "schedule": 300,  # every 5 min — matches tldv_sync_interval_minutes default; task self-throttles internally
         },
         "sync-all-personal-inboxes": {
             "task": "app.tasks.personal_email_sync.sync_all_personal_inboxes",

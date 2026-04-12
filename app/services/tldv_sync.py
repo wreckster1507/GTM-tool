@@ -660,6 +660,15 @@ async def sync_tldv_meeting(
 
     stats = stats or TldvSyncStats()
     meeting_payload = preloaded_meeting or await client.get_meeting(meeting_id)
+
+    # ── Skip expensive API calls for already-synced meetings ──────────────────
+    # If we already have this meeting with a summary, there's nothing new to do.
+    # Transcript, highlights, recording, and Claude calls are only needed once.
+    existing_meeting = await _find_existing_meeting(session, meeting_id)
+    if existing_meeting and existing_meeting.ai_summary:
+        stats.meetings_updated += 1
+        return {"skipped": True, "meeting_id": meeting_id, "reason": "already_synced"}
+
     if preloaded_transcript is not None:
         transcript_payload = preloaded_transcript
     else:
@@ -753,7 +762,8 @@ async def sync_tldv_meeting(
         next_steps=list(dict.fromkeys(ai_bundle.get("next_steps") or action_items)),
     )
 
-    meeting = await _find_existing_meeting(session, meeting_id)
+    # existing_meeting already fetched above (for the skip check) — reuse it
+    meeting = existing_meeting
     created = meeting is None
     if not meeting:
         meeting = Meeting(title=str(meeting_payload.get("name") or "Meeting"))
@@ -897,6 +907,9 @@ async def sync_tldv_history(
     if client.mock:
         raise ValueError("tl;dv API key is not configured")
 
+    # Read enabled flag once — the task layer already checked this before calling
+    # us, but we check here too for direct callers. We do NOT re-read it on every
+    # page to avoid one DB round-trip per page.
     if not await _is_tldv_sync_enabled(session):
         return {
             "processed": 0,
@@ -920,14 +933,6 @@ async def sync_tldv_history(
     sync_started_at = datetime.utcnow()
 
     while True:
-        if not await _is_tldv_sync_enabled(session):
-            return {
-                "processed": processed,
-                "stopped": True,
-                "reason": "disabled_during_run",
-                **stats.as_dict(),
-            }
-
         payload = await client.list_meetings(page=page, page_size=page_size)
         results = payload.get("results") or []
         if not results:
