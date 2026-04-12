@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
+  CalendarDays,
   ChartColumnBig,
   Compass,
   KanbanSquare,
@@ -20,6 +21,7 @@ const NAV = [
   { to: "/account-sourcing", label: "Account Sourcing", description: "Import, score, and prioritize target accounts.", icon: Search },
   { to: "/prospecting", label: "Prospecting", description: "Activate personas, ownership, and outreach readiness.", icon: Radar },
   { to: "/sales-analytics", label: "Sales Analytics", description: "See pipeline quality, activity, and forecast health.", icon: ChartColumnBig },
+  { to: "/meetings", label: "Meetings", description: "Schedule calls, track demos, and review meeting history.", icon: CalendarDays },
   { to: "/pre-meeting-assistance", label: "Pre-Meeting Assistance", description: "Prepare before calls with briefs, context, and signals.", icon: Compass },
   { to: "/tasks", label: "Tasks", description: "Work the queue and accept Beacon recommendations.", icon: CheckSquare },
 ];

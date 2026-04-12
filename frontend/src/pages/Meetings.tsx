@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
-import { CalendarDays, Plus, X } from "lucide-react";
-import { companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
-import type { Company, Contact, Deal, Meeting } from "../types";
+import { CalendarDays, Filter, Plus, X } from "lucide-react";
+import { authApi, companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
+import type { Company, Contact, Deal, Meeting, User } from "../types";
 import { formatDate } from "../lib/utils";
 
 const MEETING_TYPES = ["discovery", "demo", "poc", "qbr", "other"];
@@ -135,14 +136,19 @@ const styles: Record<string, CSSProperties> = {
 };
 
 export default function Meetings() {
+  const { isAdmin } = useAuth();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [form, setForm] = useState({
     title: "",
     company_id: "",
@@ -155,14 +161,16 @@ export default function Meetings() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [ms, cs, ds] = await Promise.all([
-        meetingsApi.list(0, 200),
+      const [ms, cs, ds, us] = await Promise.all([
+        meetingsApi.list(0, 300),
         companiesApi.list(),
-        dealsApi.list(0, 300),
+        dealsApi.list(0, 500),
+        isAdmin ? authApi.listAllUsers().catch(() => []) : Promise.resolve([]),
       ]);
       setMeetings(ms);
       setCompanies(cs);
       setDeals(ds);
+      setUsers(us);
     } finally {
       setLoading(false);
     }
@@ -184,6 +192,34 @@ export default function Meetings() {
   const companyDeals = useMemo(() => {
     return deals.filter((d) => !form.company_id || d.company_id === form.company_id);
   }, [deals, form.company_id]);
+
+  // deal_id → assigned_to_id lookup for assignee filter
+  const dealAssigneeMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const d of deals) {
+      if (d.assigned_to_id) map.set(d.id, d.assigned_to_id);
+    }
+    return map;
+  }, [deals]);
+
+  const meetingTypes = useMemo(
+    () => Array.from(new Set(meetings.map((m) => m.meeting_type))).sort(),
+    [meetings]
+  );
+
+  const filtered = useMemo(() => {
+    return meetings.filter((m) => {
+      if (statusFilter !== "all" && m.status !== statusFilter) return false;
+      if (typeFilter !== "all" && m.meeting_type !== typeFilter) return false;
+      if (assigneeFilter !== "all") {
+        const assigneeId = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
+        if (assigneeId !== assigneeFilter) return false;
+      }
+      return true;
+    });
+  }, [meetings, statusFilter, typeFilter, assigneeFilter, dealAssigneeMap]);
+
+  const hasFilters = statusFilter !== "all" || typeFilter !== "all" || assigneeFilter !== "all";
 
   const handleCreate = async () => {
     if (!form.title.trim()) {
@@ -221,16 +257,75 @@ export default function Meetings() {
   return (
     <div style={styles.page}>
       <div style={{ ...styles.panel, ...styles.toolbar }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={styles.chip}>
-            <span style={{ fontWeight: 800 }}>{meetings.length}</span>
-            Meetings
-          </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={styles.chip}>
+              <span style={{ fontWeight: 800 }}>{meetings.length}</span>
+              Meetings
+            </span>
+            {hasFilters && (
+              <span style={{ ...styles.chip, background: "#fff7ed", color: "#b94a20", borderColor: "#ffd3be" }}>
+                {filtered.length} shown
+              </span>
+            )}
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: "#7a8ea4", maxWidth: 560 }}>
+            Log discovery calls, demos, and QBRs here. Beacon sends a pre-meeting intel brief to the assigned rep 12 hours before each scheduled meeting — covering account context, prior meeting notes, and email threads.
+          </p>
         </div>
         <button style={styles.buttonPrimary} onClick={() => setShowModal(true)}>
           <Plus size={14} />
           New Meeting
         </button>
+      </div>
+
+      {/* Filters */}
+      <div style={{ ...styles.panel, padding: "14px 18px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: "#55657a" }}>
+          <Filter size={13} />
+          Filter
+        </span>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ height: 36, borderRadius: 8, border: "1px solid #d7e2ee", padding: "0 10px", fontSize: 13, background: "#fff", color: "#25384d" }}
+        >
+          <option value="all">All statuses</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          style={{ height: 36, borderRadius: 8, border: "1px solid #d7e2ee", padding: "0 10px", fontSize: 13, background: "#fff", color: "#25384d" }}
+        >
+          <option value="all">All types</option>
+          {meetingTypes.map((t) => (
+            <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+          ))}
+        </select>
+        {isAdmin && users.length > 0 && (
+          <select
+            value={assigneeFilter}
+            onChange={(e) => setAssigneeFilter(e.target.value)}
+            style={{ height: 36, borderRadius: 8, border: "1px solid #d7e2ee", padding: "0 10px", fontSize: 13, background: "#fff", color: "#25384d" }}
+          >
+            <option value="all">All reps</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </select>
+        )}
+        {hasFilters && (
+          <button
+            type="button"
+            onClick={() => { setStatusFilter("all"); setTypeFilter("all"); setAssigneeFilter("all"); }}
+            style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          >
+            Reset
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -252,7 +347,7 @@ export default function Meetings() {
                 </tr>
               </thead>
               <tbody>
-                {meetings.map((m) => (
+                {filtered.map((m) => (
                   <tr key={m.id}>
                     <td style={styles.td}>
                       <Link
@@ -271,10 +366,17 @@ export default function Meetings() {
                     <td style={styles.td}>{m.meeting_score ?? "-"}</td>
                   </tr>
                 ))}
-                {meetings.length === 0 && (
+                {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={6} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "38px 12px" }}>
-                      No meetings yet.
+                    <td colSpan={6} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "48px 12px" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#25384d", marginBottom: 6 }}>
+                        {meetings.length === 0 ? "No meetings scheduled" : "No meetings match these filters"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#7a8ea4", maxWidth: 420, margin: "0 auto" }}>
+                        {meetings.length === 0
+                          ? "Create a meeting and link it to a deal. Beacon will automatically generate a pre-meeting intel brief and send it to the assigned rep 12 hours before the call."
+                          : "Try adjusting the filters above to see more results."}
+                      </div>
                     </td>
                   </tr>
                 )}

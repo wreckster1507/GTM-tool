@@ -284,6 +284,12 @@ async def add_deal_contact(deal_id: UUID, body: DealContactCreate, session: DBSe
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
 
+    # Idempotent link behavior for repeated client retries.
+    existing_contacts = await repo.list_contacts(deal_id)
+    existing = next((c for c in existing_contacts if c.contact_id == body.contact_id), None)
+    if existing:
+        return existing
+
     # Verify contact exists
     contact = await session.get(Contact, body.contact_id)
     if not contact:
@@ -306,6 +312,13 @@ async def add_deal_contact(deal_id: UUID, body: DealContactCreate, session: DBSe
 
     contacts = await repo.list_contacts(deal_id)
     return next((c for c in contacts if c.contact_id == body.contact_id), dc)
+
+
+@router.post("/{deal_id}/contacts/{contact_id}", response_model=DealContactRead, status_code=201)
+async def add_deal_contact_by_path(deal_id: UUID, contact_id: UUID, session: DBSession, _user: CurrentUser):
+    """Backward-compatible route used by older clients/tests."""
+    payload = DealContactCreate(contact_id=contact_id)
+    return await add_deal_contact(deal_id, payload, session, _user)
 
 
 @router.delete("/{deal_id}/contacts/{contact_id}", status_code=204)

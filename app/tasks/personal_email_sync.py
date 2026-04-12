@@ -161,7 +161,31 @@ async def _async_sync_inbox(connection_id: str) -> dict:
                 await session.commit()
 
             if not messages:
-                # Update cursor even when no emails
+                # No emails — still run calendar sync
+                cal_meetings_created = 0
+                try:
+                    from app.clients.google_calendar import fetch_upcoming_events
+                    from app.services.calendar_sync import sync_calendar_events
+
+                    cal_events, updated_token = await fetch_upcoming_events(
+                        token_data=connection.token_data,
+                        client_id=settings.gmail_client_id,
+                        client_secret=settings.gmail_client_secret,
+                        days_ahead=60,
+                        max_results=100,
+                    )
+                    if updated_token is not connection.token_data:
+                        connection.token_data = updated_token
+                    if cal_events:
+                        cal_stats = await sync_calendar_events(
+                            session=session,
+                            events=cal_events,
+                            user_email=connection.email_address,
+                        )
+                        cal_meetings_created = cal_stats["meetings_created"]
+                except Exception as cal_exc:
+                    logger.warning("calendar_sync (no-mail path) failed: %s", cal_exc)
+
                 connection.last_sync_epoch = current_epoch
                 if not connection.backfill_completed:
                     connection.backfill_completed = True
@@ -172,6 +196,7 @@ async def _async_sync_inbox(connection_id: str) -> dict:
                     "status": "completed",
                     "emails_found": 0,
                     "activities_created": 0,
+                    "meetings_from_calendar": cal_meetings_created,
                 }
 
             # Process emails
@@ -181,6 +206,41 @@ async def _async_sync_inbox(connection_id: str) -> dict:
                 connection=connection,
                 sync_user=user,
             )
+
+            # ── Calendar sync (runs every cycle, not just backfill) ───────
+            try:
+                from app.clients.google_calendar import fetch_upcoming_events
+                from app.services.calendar_sync import sync_calendar_events
+
+                cal_events, updated_token = await fetch_upcoming_events(
+                    token_data=connection.token_data,
+                    client_id=settings.gmail_client_id,
+                    client_secret=settings.gmail_client_secret,
+                    days_ahead=60,
+                    max_results=100,
+                )
+
+                # Persist refreshed token if calendar refresh rotated it
+                if updated_token is not connection.token_data:
+                    connection.token_data = updated_token
+
+                if cal_events:
+                    cal_stats = await sync_calendar_events(
+                        session=session,
+                        events=cal_events,
+                        user_email=connection.email_address,
+                    )
+                    stats["meetings_from_calendar"] = cal_stats["meetings_created"]
+                    stats["meetings_updated_from_calendar"] = cal_stats["meetings_updated"]
+                    logger.info(
+                        "calendar_sync: %s → %d new, %d updated meetings",
+                        connection.email_address,
+                        cal_stats["meetings_created"],
+                        cal_stats["meetings_updated"],
+                    )
+            except Exception as cal_exc:
+                # Calendar failure must not block email sync
+                logger.warning("calendar_sync failed for %s: %s", connection.email_address, cal_exc)
 
             # Update connection state
             connection.last_sync_epoch = current_epoch
@@ -192,13 +252,14 @@ async def _async_sync_inbox(connection_id: str) -> dict:
 
             logger.info(
                 "personal_email_sync: %s → %d emails, %d activities, %d contacts, "
-                "%d companies, %d tasks",
+                "%d companies, %d tasks, %d meetings (calendar)",
                 connection.email_address,
                 stats["emails_processed"],
                 stats["activities_created"],
                 stats["contacts_created"],
                 stats["companies_created"],
                 stats["tasks_created"],
+                stats.get("meetings_from_calendar", 0),
             )
             return {"status": "completed", **stats}
 

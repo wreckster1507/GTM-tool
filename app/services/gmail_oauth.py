@@ -12,17 +12,21 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+# Combined scope requested during OAuth — both mail and calendar in one consent
+PERSONAL_OAUTH_SCOPES = f"{GMAIL_SCOPE} {CALENDAR_SCOPE}"
 STATE_ALGORITHM = "HS256"
 
 
-def build_gmail_connect_url(state: str) -> str:
+def build_gmail_connect_url(state: str, include_calendar: bool = True) -> str:
     from urllib.parse import urlencode
 
+    scope = PERSONAL_OAUTH_SCOPES if include_calendar else GMAIL_SCOPE
     params = {
         "client_id": settings.gmail_client_id,
         "redirect_uri": settings.GMAIL_OAUTH_REDIRECT_URI,
         "response_type": "code",
-        "scope": GMAIL_SCOPE,
+        "scope": scope,
         "access_type": "offline",
         "prompt": "consent",
         "state": state,

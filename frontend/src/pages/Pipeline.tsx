@@ -1588,8 +1588,12 @@ export default function Pipeline() {
     <>
       <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
         <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2744", marginBottom: 4 }}>Pipeline</div>
+            <div style={{ fontSize: 11, color: "#7a96b0", lineHeight: 1.5 }}>Drag cards across lanes to move deals or prospects through your stages. Click any card to open the detail drawer.</div>
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 2 }}>Pipeline</span>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 2 }}>View</span>
             {[{ key: "deal" as const, label: "Deals", sub: "Sales pipeline", icon: DollarSign, active: "#175089", soft: "#eaf2ff" }, { key: "prospect" as const, label: "Prospects", sub: "Live outreach board", icon: Target, active: "#177b75", soft: "#e7f7f5" }].map((item) => {
               const Icon = item.icon;
               const active = tab === item.key;
@@ -1604,7 +1608,10 @@ export default function Pipeline() {
 
           <div style={{ height: 1, background: "#e8eef5" }} />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Summary</span>
+            <div>
+              <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Funnel summary</span>
+              <div style={{ fontSize: 10, color: "#a0b2c5", marginTop: 2 }}>ToFU = top, MoFU = mid, BoFU = bottom</div>
+            </div>
             {isAdmin && <button type="button" onClick={() => setShowFunnelSettings(true)} style={{ border: "1px solid #dbe6f2", background: "#fff", borderRadius: 8, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#5e738b", cursor: "pointer" }} title={`${tab === "deal" ? "Deal" : "Prospect"} summary settings`}><Settings2 size={14} /></button>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -1697,7 +1704,7 @@ export default function Pipeline() {
               <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999, background: accentBg, color: accentColor, border: `1px solid ${accentBorder}` }}>{currentBoardLoading ? "Loading..." : `${summary.total} visible`}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#6b7f95" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><GripVertical size={11} />Drag cards across lanes</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><GripVertical size={11} />{tab === "deal" ? "Drag to move stages · Click to open deal" : "Drag to move · Move to Meeting Booked to convert"}</span>
               {busyStage && <span style={{ color: "#2563eb", fontWeight: 600 }}>Updating lane...</span>}
             </div>
           </div>

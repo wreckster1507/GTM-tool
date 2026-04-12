@@ -19,7 +19,7 @@ import MeetingDetail from "./pages/MeetingDetail";
 import Battlecards from "./pages/Battlecards";
 import SalesWorkspace from "./pages/SalesWorkspace";
 import SalesAnalytics from "./pages/SalesAnalytics";
-import PreMeetingPlaceholder from "./pages/PreMeetingPlaceholder";
+import PreMeetingAssistance from "./pages/PreMeetingAssistance";
 import CustomDemoAssistance from "./pages/CustomDemoAssistance";
 import AccountSourcing from "./pages/AccountSourcing";
 import AccountSourcingCompanyDetail from "./pages/AccountSourcingCompanyDetail";
@@ -82,7 +82,7 @@ export default function App() {
             <Route path="prospecting" element={<Contacts />} />
             <Route path="contacts/:id" element={<ContactDetail />} />
             <Route path="meetings" element={<Meetings />} />
-            <Route path="pre-meeting-assistance" element={<PreMeetingPlaceholder />} />
+            <Route path="pre-meeting-assistance" element={<PreMeetingAssistance />} />
             <Route path="custom-demo-assistance" element={<CustomDemoAssistance />} />
             <Route path="meetings/:id" element={<MeetingDetail />} />
             <Route path="battlecards" element={<Battlecards />} />

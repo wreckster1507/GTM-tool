@@ -427,6 +427,243 @@ def _build_meeting_recommendations(
     return recommendations[:5]
 
 
+async def _collect_crm_signals(
+    session: AsyncSession,
+    *,
+    deal_id: UUID | None,
+    company_id: UUID | None,
+    meeting_id: UUID,
+) -> dict[str, Any]:
+    """
+    Collect first-party CRM signals that are richer than any web search:
+      - Prior TLDV meeting transcripts / AI summaries
+      - Email thread context (Zippy + personal sync)
+      - Aircall call history (outcomes, duration, who picked up)
+      - Instantly outreach activity (what messaging was sent / opened)
+      - Deal stage history and current stage context
+    """
+    from sqlmodel import select as sm_select
+    from app.models.activity import Activity
+    from app.models.deal import Deal
+    from app.models.meeting import Meeting
+
+    crm_signals: dict[str, Any] = {
+        "prior_meetings": [],
+        "email_threads": [],
+        "call_history": [],
+        "outreach_activity": [],
+        "deal_context": None,
+        "meeting_number": 1,
+    }
+
+    try:
+        # ── Prior TLDV meetings (same deal or company) ────────────────────────
+        prior_meeting_filter = []
+        if deal_id:
+            prior_meeting_filter.append(Meeting.deal_id == deal_id)
+        if company_id:
+            prior_meeting_filter.append(Meeting.company_id == company_id)
+
+        if prior_meeting_filter:
+            from sqlalchemy import or_
+            prior_meetings_result = await session.execute(
+                sm_select(Meeting).where(
+                    or_(*prior_meeting_filter),
+                    Meeting.id != meeting_id,
+                    Meeting.status.in_(["completed", "scheduled"]),
+                ).order_by(Meeting.scheduled_at.desc()).limit(5)
+            )
+            prior_meetings = prior_meetings_result.scalars().all()
+            crm_signals["meeting_number"] = len(prior_meetings) + 1
+
+            for pm in prior_meetings:
+                entry: dict[str, Any] = {
+                    "title": pm.title,
+                    "scheduled_at": pm.scheduled_at.isoformat() if pm.scheduled_at else None,
+                    "meeting_type": pm.meeting_type,
+                    "status": pm.status,
+                    "ai_summary": pm.ai_summary,
+                    "next_steps": pm.next_steps,
+                    "what_went_right": pm.what_went_right,
+                    "what_went_wrong": pm.what_went_wrong,
+                }
+                # Pull transcript from associated Activity if available
+                if pm.id:
+                    transcript_result = await session.execute(
+                        sm_select(Activity).where(
+                            Activity.type == "transcript",
+                            Activity.external_source == "tldv",
+                        ).where(
+                            Activity.deal_id == deal_id if deal_id else Activity.id.isnot(None)
+                        ).order_by(Activity.created_at.desc()).limit(1)
+                    )
+                    transcript_act = transcript_result.scalar_one_or_none()
+                    if transcript_act:
+                        entry["transcript_summary"] = transcript_act.ai_summary
+                        entry["transcript_content"] = (transcript_act.content or "")[:800]
+
+                crm_signals["prior_meetings"].append(entry)
+
+        # ── Email thread context ──────────────────────────────────────────────
+        if deal_id:
+            email_result = await session.execute(
+                sm_select(Activity).where(
+                    Activity.deal_id == deal_id,
+                    Activity.type == "email",
+                ).order_by(Activity.created_at.desc()).limit(12)
+            )
+            email_acts = email_result.scalars().all()
+            for act in email_acts:
+                crm_signals["email_threads"].append({
+                    "subject": act.email_subject,
+                    "from_addr": act.email_from,
+                    "ai_summary": act.ai_summary,
+                    "source": act.source,
+                    "snippet": (act.content or "")[:300],
+                    "date": act.created_at.isoformat() if act.created_at else None,
+                })
+
+        # ── Aircall call history ──────────────────────────────────────────────
+        if deal_id:
+            call_result = await session.execute(
+                sm_select(Activity).where(
+                    Activity.deal_id == deal_id,
+                    Activity.type == "call",
+                ).order_by(Activity.created_at.desc()).limit(10)
+            )
+            call_acts = call_result.scalars().all()
+            for act in call_acts:
+                crm_signals["call_history"].append({
+                    "outcome": act.call_outcome,
+                    "duration_seconds": act.call_duration,
+                    "agent": act.aircall_user_name,
+                    "ai_summary": act.ai_summary,
+                    "date": act.created_at.isoformat() if act.created_at else None,
+                })
+
+        # ── Instantly outreach activity ───────────────────────────────────────
+        if deal_id or company_id:
+            outreach_filter = []
+            if deal_id:
+                outreach_filter.append(Activity.deal_id == deal_id)
+            outreach_result = await session.execute(
+                sm_select(Activity).where(
+                    Activity.source == "instantly",
+                    *outreach_filter,
+                ).order_by(Activity.created_at.desc()).limit(8)
+            )
+            outreach_acts = outreach_result.scalars().all()
+            for act in outreach_acts:
+                crm_signals["outreach_activity"].append({
+                    "subject": act.email_subject,
+                    "outcome": act.ai_summary,
+                    "date": act.created_at.isoformat() if act.created_at else None,
+                })
+
+        # ── Deal context (stage, health, days in stage) ───────────────────────
+        if deal_id:
+            deal = await session.get(Deal, deal_id)
+            if deal:
+                crm_signals["deal_context"] = {
+                    "name": deal.name,
+                    "stage": deal.stage,
+                    "health": deal.health,
+                    "days_in_stage": deal.days_in_stage,
+                    "priority": deal.priority,
+                    "last_activity_at": deal.last_activity_at.isoformat() if deal.last_activity_at else None,
+                }
+
+    except Exception as exc:
+        logger.warning("CRM signal collection failed: %s", exc)
+
+    return crm_signals
+
+
+async def _auto_link_attendees_to_deal(
+    session: AsyncSession,
+    *,
+    meeting: Any,
+    deal_id: UUID | None,
+    company_id: UUID | None,
+) -> int:
+    """
+    Auto-link meeting attendees to deal contacts.
+    Creates Contact + DealContact rows for any attendee email not already in CRM.
+    Returns count of new links created.
+    """
+    from sqlmodel import select as sm_select
+    from app.models.contact import Contact
+    from app.models.deal import DealContact
+
+    if not deal_id:
+        return 0
+
+    attendees = meeting.attendees if isinstance(meeting.attendees, list) else []
+    if not attendees:
+        return 0
+
+    linked = 0
+    for attendee in attendees:
+        if not isinstance(attendee, dict):
+            continue
+        email = (attendee.get("email") or "").strip().lower()
+        name = (attendee.get("name") or "").strip()
+        title = (attendee.get("title") or "").strip()
+        contact_id = attendee.get("contact_id")
+
+        contact: Contact | None = None
+
+        # Try by contact_id first
+        if contact_id:
+            contact = await session.get(Contact, contact_id)
+
+        # Try by email
+        if not contact and email:
+            result = await session.execute(
+                sm_select(Contact).where(Contact.email == email)
+            )
+            contact = result.scalar_one_or_none()
+
+        # Create stub contact if totally unknown
+        if not contact and (email or name):
+            from datetime import datetime as _dt
+            parts = name.split(" ", 1) if name else []
+            first = parts[0] if parts else (email.split("@")[0].title() if email else "Unknown")
+            last = parts[1] if len(parts) > 1 else "Attendee"
+            contact = Contact(
+                first_name=first,
+                last_name=last,
+                email=email or None,
+                title=title or None,
+                company_id=company_id,
+                created_at=_dt.utcnow(),
+                updated_at=_dt.utcnow(),
+            )
+            session.add(contact)
+            await session.flush()
+
+        if not contact:
+            continue
+
+        # Check if already linked
+        existing_link = await session.execute(
+            sm_select(DealContact).where(
+                DealContact.deal_id == deal_id,
+                DealContact.contact_id == contact.id,
+            )
+        )
+        if not existing_link.scalar_one_or_none():
+            session.add(DealContact(deal_id=deal_id, contact_id=contact.id))
+            await session.flush()
+            linked += 1
+
+    if linked:
+        await session.commit()
+        logger.info("pre_meeting_intel: auto-linked %d attendees to deal %s", linked, deal_id)
+
+    return linked
+
+
 async def run_pre_meeting_intelligence(
     meeting_id: UUID, session: AsyncSession
 ) -> dict[str, Any]:
@@ -594,6 +831,22 @@ async def run_pre_meeting_intelligence(
                 "email_verified": c.email_verified,
             })
 
+    # ── 9b. Auto-link meeting attendees to deal contacts ─────────────────────
+    await _auto_link_attendees_to_deal(
+        session,
+        meeting=meeting,
+        deal_id=meeting.deal_id,
+        company_id=meeting.company_id,
+    )
+
+    # ── 9c. First-party CRM signals (transcripts, emails, calls, outreach) ───
+    crm_signals = await _collect_crm_signals(
+        session,
+        deal_id=meeting.deal_id,
+        company_id=meeting.company_id,
+        meeting_id=meeting_id,
+    )
+
     attendee_intelligence = _build_attendee_intelligence(meeting.attendees, stakeholders)
     why_now_signals = _build_why_now_signals(
         company_profile=company_profile,
@@ -643,6 +896,7 @@ async def run_pre_meeting_intelligence(
             why_now_signals=why_now_signals,
             meeting_type=meeting.meeting_type,
             kb_context=kb_context,
+            crm_signals=crm_signals,
         )
 
     meeting_recommendations = _build_meeting_recommendations(
@@ -670,6 +924,7 @@ async def run_pre_meeting_intelligence(
         "meeting_recommendations": meeting_recommendations,
         "relevant_battlecards": relevant_battlecards,
         "executive_briefing": executive_briefing,
+        "crm_signals": crm_signals,
     }
 
     meeting.research_data = research_data
@@ -954,36 +1209,46 @@ async def _generate_executive_briefing(
     why_now_signals: list[dict[str, Any]],
     meeting_type: str,
     kb_context: str = "",
+    crm_signals: dict[str, Any] | None = None,
 ) -> str | None:
     """
-    GPT-4o synthesises ALL collected intelligence into a concise executive
-    briefing — the #1 thing a sales rep reads before walking into the meeting.
+    GPT-4o synthesises ALL collected intelligence — web research AND first-party
+    CRM signals — into a focused, actionable pre-meeting briefing.
     """
+    if crm_signals is None:
+        crm_signals = {}
+
     name = company_profile.get("name", "the company")
+    domain = company_profile.get("domain", "")
     industry = company_profile.get("industry", "")
+    vertical = company_profile.get("vertical", "")
     employees = company_profile.get("employee_count", "")
     funding = company_profile.get("funding_stage", "")
     icp_tier = company_profile.get("icp_tier", "")
+    icp_score = company_profile.get("icp_score", "")
+    has_dap = company_profile.get("has_dap", False)
     dap_tool = company_profile.get("dap_tool", "")
+    tech_stack = company_profile.get("tech_stack") or {}
+    meeting_number = crm_signals.get("meeting_number", 1)
 
-    bg = company_background.get("extract", "") if company_background else ""
+    bg = (company_background or {}).get("extract", "") if company_background else ""
 
-    # Website analysis summary
+    # ── Website analysis ──────────────────────────────────────────────────────
     wa_lines = ""
     if website_analysis:
-        wa_lines = "\n".join(f"  {k}: {v}" for k, v in website_analysis.items())
+        for k, v in website_analysis.items():
+            if v and str(v).strip():
+                wa_lines += f"  {k}: {str(v)[:200]}\n"
 
-    # News
+    # ── Market signals ────────────────────────────────────────────────────────
     news_lines = "\n".join(
         f"- {n.get('title', '')}" for n in (recent_news or [])[:4]
     ) or "None found."
 
-    # Google News
     gnews_lines = "\n".join(
-        f"- [{n.get('source', '')}] {n.get('title', '')}" for n in (google_news or [])[:4]
+        f"- [{n.get('source', '')}] {n.get('title', '')}" for n in (google_news or [])[:3]
     ) or "None."
 
-    # Intent signals
     intent_lines = ""
     for category in ("hiring", "funding", "product"):
         items = (intent_signals or {}).get(category, [])
@@ -993,105 +1258,177 @@ async def _generate_executive_briefing(
                 intent_lines += f"\n    - {s.get('title', s.get('snippet', ''))}"
     intent_lines = intent_lines or "\n  No strong buying signals detected."
 
-    # Competitors
+    why_now_lines = "\n".join(
+        f"- {item.get('detail', '')}"
+        for item in (why_now_signals or [])[:4]
+        if item.get("detail")
+    ) or "None."
+
     comp_lines = "\n".join(
         f"- {c.get('title', '')}" for c in (competitive_landscape or [])[:3]
     ) or "No competitor mentions found."
 
-    # Hunter firmographics
-    hunter_lines = ""
-    if hunter_company:
-        for k in ("industry", "type", "size", "founded", "country"):
-            v = hunter_company.get(k)
-            if v:
-                hunter_lines += f"\n  {k}: {v}"
-
-    # Stakeholders
-    personas = ""
-    if stakeholders:
-        for s in stakeholders[:5]:
-            personas += f"\n  - {s['name']} | {s.get('title', 'Unknown title')} | {s.get('persona', 'unknown')}"
-
+    # ── Stakeholders ──────────────────────────────────────────────────────────
+    stakeholder_cards = (attendee_intelligence or {}).get("stakeholder_cards", [])
     stakeholder_lines = ""
-    stakeholder_cards = attendee_intelligence.get("stakeholder_cards", []) if isinstance(attendee_intelligence, dict) else []
-    if stakeholder_cards:
-        for card in stakeholder_cards[:6]:
-            stakeholder_lines += (
-                f"\n  - {card.get('name')} | {card.get('title') or 'Unknown title'} | "
-                f"{card.get('role_label', 'Stakeholder')} | {card.get('status')}"
-                f"\n    focus: {card.get('likely_focus', '')}"
-            )
-
-    committee = attendee_intelligence.get("committee_coverage", {}) if isinstance(attendee_intelligence, dict) else {}
-    committee_lines = ""
-    if committee:
-        discovered = ", ".join(item.get("label", "") for item in committee.get("discovered_roles", [])) or "None"
-        attending = ", ".join(item.get("label", "") for item in committee.get("attending_roles", [])) or "None"
-        missing = ", ".join(item.get("label", "") for item in committee.get("meeting_gaps", [])) or "None"
-        committee_lines = (
-            f"\n  Coverage score: {committee.get('coverage_score', 0)}"
-            f"\n  Discovered roles: {discovered}"
-            f"\n  In this meeting: {attending}"
-            f"\n  Missing from this meeting: {missing}"
+    for card in stakeholder_cards[:6]:
+        stakeholder_lines += (
+            f"\n  - {card.get('name')} | {card.get('title') or 'Unknown'} | "
+            f"{card.get('role_label', 'Stakeholder')} [{card.get('status')}]\n"
+            f"    Likely focus: {card.get('likely_focus', '')}\n"
+            f"    Talk track: {card.get('talk_track', '')}"
         )
+    stakeholder_lines = stakeholder_lines or "  No attendee data. Use discovered contacts below."
 
-    why_now_lines = "\n".join(
-        f"- {item.get('detail', '')}"
-        for item in (why_now_signals or [])[:5]
-        if item.get("detail")
-    ) or "None."
+    all_contacts_lines = "\n".join(
+        f"  - {s.get('name')} | {s.get('title', 'Unknown')} | {s.get('persona', 'unknown')} | "
+        f"{'email verified' if s.get('email_verified') else 'email unverified'}"
+        for s in (stakeholders or [])[:8]
+    ) or "  No contacts mapped yet."
+
+    committee = (attendee_intelligence or {}).get("committee_coverage", {})
+    missing_roles = ", ".join(
+        item.get("label", "") for item in (committee or {}).get("meeting_gaps", [])
+    ) or "None"
+
+    # ── CRM first-party signals ───────────────────────────────────────────────
+    prior_meetings = crm_signals.get("prior_meetings", [])
+    prior_meeting_lines = ""
+    for pm in prior_meetings[:3]:
+        prior_meeting_lines += f"\n  [{pm.get('meeting_type', '?').upper()}] {pm.get('title', 'Meeting')} ({pm.get('scheduled_at', 'unknown date')[:10]})"
+        if pm.get("ai_summary"):
+            prior_meeting_lines += f"\n    Summary: {pm['ai_summary'][:200]}"
+        if pm.get("transcript_summary"):
+            prior_meeting_lines += f"\n    Transcript: {pm['transcript_summary'][:300]}"
+        if pm.get("next_steps"):
+            prior_meeting_lines += f"\n    Agreed next steps: {pm['next_steps'][:150]}"
+        if pm.get("what_went_wrong"):
+            prior_meeting_lines += f"\n    What went wrong: {pm['what_went_wrong'][:150]}"
+    prior_meeting_lines = prior_meeting_lines or "  None — this is the first meeting."
+
+    email_threads = crm_signals.get("email_threads", [])
+    email_lines = ""
+    for et in email_threads[:6]:
+        summary = et.get("ai_summary") or et.get("snippet", "")[:100]
+        if summary:
+            email_lines += f"\n  [{et.get('source', 'email')}] {et.get('subject', '(no subject)')}: {summary}"
+    email_lines = email_lines or "  No email activity found."
+
+    call_history = crm_signals.get("call_history", [])
+    call_lines = ""
+    answered = sum(1 for c in call_history if c.get("outcome") == "answered")
+    missed = sum(1 for c in call_history if c.get("outcome") in ("missed", "voicemail"))
+    if call_history:
+        call_lines = f"\n  {len(call_history)} calls total | {answered} answered | {missed} missed/voicemail"
+        for c in call_history[:3]:
+            dur = f"{c['duration_seconds'] // 60}m" if c.get("duration_seconds") else "?"
+            summary = c.get("ai_summary") or ""
+            call_lines += f"\n  - {c.get('outcome', '?')} | {dur} | {summary[:120]}"
+    call_lines = call_lines or "  No call history."
+
+    outreach = crm_signals.get("outreach_activity", [])
+    outreach_lines = "\n".join(
+        f"  - {o.get('subject', '?')}: {o.get('outcome', '')}"
+        for o in outreach[:4]
+    ) or "  No Instantly outreach found."
+
+    deal_ctx = crm_signals.get("deal_context") or {}
+    deal_lines = ""
+    if deal_ctx:
+        deal_lines = (
+            f"\n  Stage: {deal_ctx.get('stage', '?')} | "
+            f"Health: {deal_ctx.get('health', '?')} | "
+            f"Days in stage: {deal_ctx.get('days_in_stage', '?')} | "
+            f"Priority: {deal_ctx.get('priority', '?')}"
+        )
+        if deal_ctx.get("last_activity_at"):
+            deal_lines += f"\n  Last activity: {deal_ctx['last_activity_at'][:10]}"
+
+    tech_stack_str = ", ".join(f"{k}: {v}" for k, v in (tech_stack or {}).items()) or "None detected"
 
     system = (
-        "You are a senior enterprise sales strategist for Beacon.li. "
-        "Synthesise the intelligence below into a concise EXECUTIVE BRIEFING that a sales rep "
-        "can read in 2 minutes before a meeting. Structure it as:\n\n"
-        "## Company Snapshot\n1-2 sentences on who they are and what they do.\n\n"
-        "## Why They're a Fit\nTop 3 reasons this prospect matches our ICP.\n\n"
-        "## Key Buying Signals\nBullet points of timing/urgency indicators.\n\n"
-        "## Potential Risks & Objections\nWhat could block the deal + how to handle.\n\n"
-        "## Stakeholder Guidance\nWho is likely in the room, what they care about, and how to tailor the conversation.\n\n"
-        "## Recommended Approach\n2-3 sentences on how to run this meeting.\n\n"
-        "## Key Questions to Ask\n3-5 discovery questions tailored to their situation.\n\n"
-        "Be specific to THIS company. No generic advice."
+        "You are a senior enterprise AE at Beacon.li preparing for a sales meeting. "
+        "Beacon automates enterprise SaaS deployments — it removes implementation drag, manual coordination, and rollout risk.\n\n"
+        "Write a FOCUSED pre-meeting intelligence brief using ONLY the information provided. "
+        "Omit any section where you have no signal. Be specific, direct, and actionable. "
+        "Every bullet should answer 'so what?' for the rep.\n\n"
+        "Use exactly these sections (skip a section only if you have zero signal for it):\n\n"
+        "## Account Snapshot\n"
+        "Who they are, what domain they play in, their scale, and the core problem Beacon solves for them (1-2 sentences).\n\n"
+        "## Problem Statement & Fit\n"
+        "What pain does this company have that Beacon directly solves? Reference their tech stack, DAP status, and industry specifics.\n\n"
+        "## Why Now\n"
+        "Bullet the strongest timing signals — funding, hiring surges, product launches, recent news, deal urgency.\n\n"
+        "## What We Know From Past Conversations\n"
+        "Synthesise what was said in prior meetings, email threads, and calls. What did they care about? What was agreed? "
+        "What was left unresolved? (Skip if no prior touchpoints.)\n\n"
+        "## Their People\n"
+        "For each key stakeholder: name, role, what they likely care about, and how to tailor your message to them.\n\n"
+        "## Deal Momentum & Engagement\n"
+        "Call pickup rate, email response patterns, Instantly engagement. Are they warm or cold? Any signs of multi-threading?\n\n"
+        "## Risks & Objections to Prepare For\n"
+        "What could stall or kill this deal? How to address each.\n\n"
+        "## Meeting Strategy\n"
+        "What to open with, what to cover, what NOT to bring up. Meeting-type specific guidance.\n\n"
+        "## Questions to Ask\n"
+        "4-5 specific, non-generic discovery questions for THIS company and meeting number.\n\n"
+        "No generic advice. No filler. If you don't have signal for something, omit it."
     )
 
     user = f"""
-Company: {name}
-Industry: {industry} | Employees: {employees} | Funding: {funding} | ICP: {icp_tier}
-Current DAP: {dap_tool or 'None detected'}
-Meeting type: {meeting_type}
+ACCOUNT: {name} ({domain})
+Industry: {industry} | Vertical: {vertical} | Employees: {employees} | Funding: {funding}
+ICP Score: {icp_score} | ICP Tier: {icp_tier}
+Has DAP today: {'Yes — ' + dap_tool if has_dap and dap_tool else 'No DAP detected'}
+Tech Stack: {tech_stack_str}
+Meeting #{meeting_number} | Type: {meeting_type}
 
-Background: {bg[:400] if bg else 'Not available'}
+BACKGROUND (website):
+{bg[:400] if bg else 'Not available'}
 
-Website Analysis:
+WEBSITE ANALYSIS:
 {wa_lines or '  Not available'}
 
-Recent News (DuckDuckGo):
+RECENT NEWS & SIGNALS:
 {news_lines}
 
-Google News Headlines:
+GOOGLE NEWS:
 {gnews_lines}
 
-Buying Intent Signals:{intent_lines}
+INTENT SIGNALS:{intent_lines}
 
-Why Now:
+WHY NOW:
 {why_now_lines}
 
-Competitive Landscape:
+COMPETITIVE LANDSCAPE:
 {comp_lines}
 
-Hunter Firmographics:{hunter_lines or '  Not available'}
+STAKEHOLDERS IN THIS MEETING:
+{stakeholder_lines}
 
-Key Stakeholders:{personas or '  No contacts discovered yet.'}
+ALL KNOWN CONTACTS AT THIS ACCOUNT:
+{all_contacts_lines}
 
-Meeting Stakeholder Matrix:{stakeholder_lines or '  No explicit attendee data. Use discovered contacts as a fallback.'}
+COMMITTEE GAP (roles missing from meeting): {missing_roles}
 
-Committee Coverage:{committee_lines or '  Not available'}
+PRIOR MEETINGS:
+{prior_meeting_lines}
+
+EMAIL THREAD HISTORY:
+{email_lines}
+
+CALL HISTORY:
+{call_lines}
+
+OUTREACH (Instantly):
+{outreach_lines}
+
+DEAL STATUS:{deal_lines or '  No deal linked.'}
 {kb_context}
 """.strip()
 
     try:
-        result = await ai.complete(system, user, max_tokens=800)
+        result = await ai.complete(system, user, max_tokens=1200)
         return result
     except Exception as e:
         logger.warning(f"Executive briefing generation failed: {e}")

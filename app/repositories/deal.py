@@ -10,6 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import Activity
+from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
 from app.models.company import Company
 from app.models.deal import (
@@ -195,13 +196,20 @@ class DealRepository(BaseRepository[Deal]):
     # ── Cascade delete ───────────────────────────────────────────────────────
 
     async def delete_with_cascade(self, deal_id: UUID) -> None:
-        """Delete deal, its activities, and contact links."""
+        """Delete deal, its activities, contact links, and dependent milestones."""
         for act in (
             await self.session.execute(
                 select(Activity).where(Activity.deal_id == deal_id)
             )
         ).scalars().all():
             await self.session.delete(act)
+
+        for milestone in (
+            await self.session.execute(
+                select(CompanyStageMilestone).where(CompanyStageMilestone.deal_id == deal_id)
+            )
+        ).scalars().all():
+            await self.session.delete(milestone)
 
         for dc in (
             await self.session.execute(

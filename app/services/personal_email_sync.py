@@ -28,6 +28,7 @@ from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
+from app.models.meeting import Meeting
 from app.models.task import Task
 from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
@@ -361,6 +362,81 @@ async def _create_ai_task_for_deal(
     return True
 
 
+async def _ensure_meeting_for_deal(
+    session: AsyncSession,
+    deal: Deal,
+    msg: EmailMessage,
+    contact_ids: list[UUID],
+) -> bool:
+    """
+    Create a meeting record when an email signals a call was booked.
+    Deduped by gmail thread_id so re-syncing won't create duplicates.
+    Returns True if a new meeting was created.
+    """
+    # Deduplicate: one meeting per Gmail thread per deal
+    thread_source_id = f"gmail_thread:{msg.thread_id}" if msg.thread_id else f"gmail_msg:{msg.message_id}"
+    existing = await session.execute(
+        select(Meeting).where(
+            Meeting.deal_id == deal.id,
+            Meeting.external_source == "personal_email_sync",
+            Meeting.external_source_id == thread_source_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        return False
+
+    # Build attendees list from contacts in this thread
+    attendees = []
+    if contact_ids:
+        contacts_result = await session.execute(
+            select(
+                Contact.id, Contact.first_name, Contact.last_name,
+                Contact.email, Contact.title,
+            ).where(Contact.id.in_(contact_ids[:6]))
+        )
+        for row in contacts_result.all():
+            attendees.append({
+                "contact_id": str(row.id),
+                "name": f"{row.first_name} {row.last_name}".strip(),
+                "email": row.email or "",
+                "title": row.title or "",
+            })
+
+    # Infer meeting type from subject
+    subject_lower = (msg.subject or "").lower()
+    if any(w in subject_lower for w in ["demo", "demo call", "product demo"]):
+        meeting_type = "demo"
+    elif any(w in subject_lower for w in ["discovery", "intro call", "first call"]):
+        meeting_type = "discovery"
+    elif any(w in subject_lower for w in ["poc", "pilot", "trial"]):
+        meeting_type = "poc"
+    elif any(w in subject_lower for w in ["qbr", "business review"]):
+        meeting_type = "qbr"
+    else:
+        meeting_type = "discovery"
+
+    title = msg.subject.strip() if msg.subject and msg.subject.strip() else "Meeting (from email)"
+    meeting = Meeting(
+        title=title[:200],
+        deal_id=deal.id,
+        company_id=deal.company_id,
+        meeting_type=meeting_type,
+        status="scheduled",
+        external_source="personal_email_sync",
+        external_source_id=thread_source_id,
+        attendees=attendees or None,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add(meeting)
+    await session.flush()
+    logger.info(
+        "personal_email_sync: auto-created meeting '%s' for deal %s (thread=%s)",
+        title, deal.id, msg.thread_id,
+    )
+    return True
+
+
 # ── Main processing entry point ───────────────────────────────────────────────
 
 async def process_personal_emails(
@@ -614,6 +690,16 @@ async def process_personal_emails(
                 )
                 if created:
                     stats["tasks_created"] += 1
+
+                # Auto-create meeting record when a booking intent is detected
+                if intent_key == "book_workshop_session":
+                    all_contact_ids = list({
+                        cid for cid in matched_contact_ids
+                        if cid
+                    })
+                    await _ensure_meeting_for_deal(
+                        session, deal, msg, all_contact_ids,
+                    )
 
     await session.commit()
     return stats

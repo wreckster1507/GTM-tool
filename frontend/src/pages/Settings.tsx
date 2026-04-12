@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  CalendarDays,
   CheckCircle2,
   GripVertical,
   Link2,
@@ -840,15 +841,15 @@ export default function SettingsPage() {
                 <div>
                   <div className="crm-chip" style={{ marginBottom: 10, background: "#f0f4ff", color: "#3b4dc8", borderColor: "#d4dcf8" }}>
                     <Mail size={13} />
-                    Personal Inbox Sync
+                    Personal Inbox + Calendar Sync
                   </div>
                   <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>
-                    Connect your personal Gmail
+                    Connect your personal Gmail &amp; Calendar
                   </h3>
                   <p className="crm-muted" style={{ maxWidth: 600, lineHeight: 1.7, fontSize: 14 }}>
-                    Beacon scans your past and ongoing email conversations, maps them to deals and prospects,
-                    auto-creates missing contacts, and generates tasks when it detects key moments
-                    (POC agreement, pricing request, meeting ask, etc.).
+                    Beacon scans your past emails and upcoming calendar events. Emails are matched to deals and
+                    contacts. Calendar events with external attendees are auto-created as meetings — complete with
+                    scheduled time, Meet link, and pre-meeting intel 12 hours before the call.
                   </p>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -927,6 +928,20 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </div>
+
+              {personalEmail?.connected && !personalEmail?.last_error && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 10, background: "#f0f6ff", border: "1px solid #c8daf8", color: "#1a4fa8", fontSize: 13 }}>
+                  <CalendarDays size={16} style={{ marginTop: 1, flexShrink: 0 }} />
+                  <span>
+                    <strong>Calendar sync active.</strong> Beacon will pull your upcoming Google Calendar events every 10 minutes
+                    and auto-create meetings for any event with external (customer) attendees matched to your CRM.
+                    If you connected before calendar access was added, <button
+                      onClick={handleConnectPersonalEmail}
+                      style={{ background: "none", border: "none", color: "#1a4fa8", fontWeight: 700, textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13 }}
+                    >reconnect to grant calendar access</button>.
+                  </span>
+                </div>
+              )}
 
               {personalEmail?.last_error && (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "#fff4e6", border: "1px solid #f0d4ac", color: "#a46206", fontSize: 14 }}>

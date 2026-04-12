@@ -56,6 +56,11 @@ async def _get_or_create_settings(session: AsyncSession) -> WorkspaceSettings:
 
 
 async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> list[UUID]:
+    """
+    Only the deal's assigned person receives pre-meeting intel.
+    If no deal, fall back to company assigned rep.
+    This ensures reps only see intel for their own meetings.
+    """
     recipient_ids: list[UUID] = []
     seen: set[UUID] = set()
 
@@ -65,92 +70,108 @@ async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> lis
             recipient_ids.append(value)
 
     deal = await session.get(Deal, meeting.deal_id) if meeting.deal_id else None
-    company = await session.get(Company, meeting.company_id) if meeting.company_id else None
 
-    push(deal.assigned_to_id if deal else None)
-    if company:
-        push(company.assigned_to_id)
-        push(company.sdr_id)
-
-    attendees = meeting.attendees if isinstance(meeting.attendees, list) else []
-    attendee_contact_ids = [
-        UUID(str(item.get("contact_id")))
-        for item in attendees
-        if isinstance(item, dict) and item.get("contact_id")
-    ]
-    if attendee_contact_ids:
-        contacts = (
-            await session.execute(select(Contact).where(Contact.id.in_(attendee_contact_ids)))
-        ).scalars().all()
-        for contact in contacts:
-            push(contact.assigned_to_id)
-            push(contact.sdr_id)
+    if deal and deal.assigned_to_id:
+        # Primary: the AE/rep assigned to this specific deal
+        push(deal.assigned_to_id)
+    elif meeting.company_id:
+        # Fallback: company assigned rep (only if no deal assigned)
+        company = await session.get(Company, meeting.company_id)
+        if company:
+            push(company.assigned_to_id)
 
     return recipient_ids
 
 
 def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str]:
+    """
+    Build a focused pre-meeting intel email.
+    Sends the full executive briefing as the body so the rep has everything
+    they need without having to open the CRM.
+    """
     research = meeting.research_data if isinstance(meeting.research_data, dict) else {}
     executive_briefing = str(research.get("executive_briefing") or meeting.pre_brief or "").strip()
     recommendations = research.get("meeting_recommendations") if isinstance(research.get("meeting_recommendations"), list) else []
     why_now_signals = research.get("why_now_signals") if isinstance(research.get("why_now_signals"), list) else []
+    crm_signals = research.get("crm_signals") if isinstance(research.get("crm_signals"), dict) else {}
     attendee_cards = (
         ((research.get("attendee_intelligence") or {}).get("stakeholder_cards"))
         if isinstance(research.get("attendee_intelligence"), dict)
         else []
-    )
+    ) or []
+    company_profile = research.get("company_profile") or {}
+
     frontend_base = (settings.FRONTEND_URL or "http://localhost:8080").rstrip("/")
     meeting_link = f"{frontend_base}/meetings/{meeting.id}"
-    scheduled_label = meeting.scheduled_at.strftime("%b %d, %Y %I:%M %p UTC") if meeting.scheduled_at else "TBD"
+    scheduled_label = meeting.scheduled_at.strftime("%b %d, %Y at %I:%M %p UTC") if meeting.scheduled_at else "TBD"
+    meeting_number = crm_signals.get("meeting_number", 1)
 
-    why_now_lines = []
-    for item in why_now_signals[:3]:
-        if isinstance(item, dict):
-            detail = str(item.get("detail") or item.get("title") or "").strip()
-            if detail:
-                why_now_lines.append(f"- {detail}")
+    subject = f"Meeting #{meeting_number} prep: {meeting.title} — {scheduled_label}"
 
-    attendee_lines = []
-    for item in attendee_cards[:3]:
-        if isinstance(item, dict):
-            name = str(item.get("name") or "Stakeholder").strip()
-            title = str(item.get("title") or item.get("role_label") or "").strip()
-            focus = str(item.get("likely_focus") or "").strip()
-            line = f"- {name}"
-            if title:
-                line += f" | {title}"
-            if focus:
-                line += f" | Focus: {focus}"
-            attendee_lines.append(line)
-
-    action_lines = []
-    for item in recommendations[:4]:
-        if isinstance(item, str) and item.strip():
-            action_lines.append(f"- {item.strip()}")
-
-    body_sections = [
-        f"Pre-meeting intel for: {meeting.title}",
-        f"Scheduled time: {scheduled_label}",
+    # ── Plain text body ───────────────────────────────────────────────────────
+    lines = [
+        f"PRE-MEETING INTEL — {meeting.title}",
+        f"Scheduled: {scheduled_label} | Meeting #{meeting_number}",
+        f"Type: {meeting.meeting_type.upper() if meeting.meeting_type else 'Meeting'}",
         "",
     ]
-    if executive_briefing:
-        body_sections.extend(["Executive briefing:", executive_briefing, ""])
-    if why_now_lines:
-        body_sections.extend(["Why now:", *why_now_lines, ""])
-    if attendee_lines:
-        body_sections.extend(["Attendees to focus on:", *attendee_lines, ""])
-    if action_lines:
-        body_sections.extend(["Recommended meeting focus:", *action_lines, ""])
-    body_sections.extend(
-        [
-            f"Open the full prep page: {meeting_link}",
-            "",
-            "Beacon generated this automatically from the account, stakeholders, and recent meeting signals.",
-        ]
-    )
 
-    subject = f"Pre-meeting intel: {meeting.title}"
-    return subject, "\n".join(body_sections).strip()
+    if company_profile:
+        lines += [
+            "ACCOUNT",
+            f"  {company_profile.get('name', '')} | {company_profile.get('domain', '')}",
+            f"  {company_profile.get('industry', '')} | {company_profile.get('employee_count', '?')} employees | {company_profile.get('funding_stage', '')}",
+            f"  ICP: {company_profile.get('icp_tier', '?')} (score {company_profile.get('icp_score', '?')})",
+            "",
+        ]
+
+    if executive_briefing:
+        lines += [
+            "─" * 60,
+            "FULL INTEL BRIEF",
+            "─" * 60,
+            executive_briefing,
+            "",
+        ]
+    else:
+        # Fallback sections when briefing wasn't generated
+        if why_now_signals:
+            lines += ["WHY NOW"]
+            for item in why_now_signals[:3]:
+                detail = str((item or {}).get("detail") or "").strip()
+                if detail:
+                    lines.append(f"  • {detail}")
+            lines.append("")
+
+        if attendee_cards:
+            lines += ["KEY PEOPLE IN THIS MEETING"]
+            for card in attendee_cards[:4]:
+                name = str(card.get("name") or "Stakeholder").strip()
+                title = str(card.get("title") or card.get("role_label") or "").strip()
+                focus = str(card.get("likely_focus") or "").strip()
+                line = f"  • {name}"
+                if title:
+                    line += f" | {title}"
+                if focus:
+                    line += f"\n    Focus: {focus}"
+                lines.append(line)
+            lines.append("")
+
+        if recommendations:
+            lines += ["RECOMMENDED APPROACH"]
+            for item in recommendations[:4]:
+                if isinstance(item, str) and item.strip():
+                    lines.append(f"  • {item.strip()}")
+            lines.append("")
+
+    lines += [
+        "─" * 60,
+        f"Full prep page: {meeting_link}",
+        "",
+        "Beacon generated this from account data, prior meetings, email threads, and call history.",
+    ]
+
+    return subject, "\n".join(lines).strip()
 
 
 async def run_due_pre_meeting_intel_once() -> dict[str, int]:

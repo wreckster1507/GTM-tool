@@ -301,6 +301,30 @@ def _validate_funnel_stage_ids(stage_ids: list[str], allowed_stages: set[str] | 
         raise HTTPException(status_code=422, detail=f"Unknown {scope} stages in funnel settings: {', '.join(sorted(set(invalid)))}")
 
 
+@router.get("/workspace", response_model=dict)
+async def get_workspace_settings(session: DBSession, _user: CurrentUser):
+    """Return a compact snapshot of workspace-level settings."""
+    row = await _get_or_create(session)
+    normalized_deal_stages = normalize_deal_stage_settings(row.deal_stage_settings)
+    return {
+        "id": row.id,
+        "outreach_step_delays": row.outreach_step_delays or _DEFAULTS,
+        "outreach_content_settings": _normalized_outreach_content(
+            row.outreach_content_settings,
+            step_count=len(row.outreach_step_delays or _DEFAULTS),
+        ).model_dump(),
+        "deal_stage_settings": normalized_deal_stages,
+        "pipeline_summary": _normalized_pipeline_summary_settings(row).model_dump(),
+        "role_permissions": _normalized_role_permissions(row.role_permissions).model_dump(),
+        "pre_meeting_automation_settings": _normalized_pre_meeting_settings(
+            row.pre_meeting_automation_settings
+        ).model_dump(),
+        "sync_schedule_settings": _normalized_sync_schedule(row.sync_schedule_settings).model_dump(),
+        "clickup_crm_settings": _normalized_clickup_crm_settings(row.clickup_crm_settings).model_dump(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
 @router.get("/deal-stages", response_model=DealStageSettingsRead)
 async def get_deal_stage_settings(session: DBSession, _user: CurrentUser):
     row = await _get_or_create(session)
