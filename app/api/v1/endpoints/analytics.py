@@ -11,6 +11,7 @@ from sqlalchemy import or_, select
 
 from app.core.dependencies import DBSession
 from app.models.activity import Activity
+from app.models.company import Company
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
 from app.models.deal import Deal
