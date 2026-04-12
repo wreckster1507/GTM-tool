@@ -23,6 +23,7 @@ import {
 import { settingsApi, personalEmailSyncApi } from "../lib/api";
 import type { PersonalEmailStatus } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
+import { useToast } from "../lib/ToastContext";
 import type {
   ClickUpCrmSettings,
   DealStageSettings,
@@ -70,6 +71,7 @@ function slugifyStageId(label: string) {
 
 export default function SettingsPage() {
   const { isAdmin } = useAuth();
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>("email-sync");
   const [gmail, setGmail] = useState<GmailSyncSettings | null>(null);
   const [inbox, setInbox] = useState("zippy@beacon.li");
@@ -104,6 +106,8 @@ export default function SettingsPage() {
   const [connectingPersonal, setConnectingPersonal] = useState(false);
   const [disconnectingPersonal, setDisconnectingPersonal] = useState(false);
   const [syncingPersonal, setSyncingPersonal] = useState(false);
+  const [monitorPersonalSync, setMonitorPersonalSync] = useState(false);
+  const [personalSyncBaseline, setPersonalSyncBaseline] = useState<number | null>(null);
 
   const statusTone = useMemo(() => {
     if (!gmail) return { bg: "#eef2ff", color: "#4b56c7", label: "Loading" };
@@ -149,9 +153,25 @@ export default function SettingsPage() {
     }
   };
 
+  const refreshPersonalEmailStatus = async () => {
+    const status = await personalEmailSyncApi.getStatus();
+    setPersonalEmail(status);
+    return status;
+  };
+
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (!message) return;
+    toast.success(message, "Done");
+  }, [message]);
+
+  useEffect(() => {
+    if (!error) return;
+    toast.error(error, "Something needs attention");
+  }, [error]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -166,6 +186,8 @@ export default function SettingsPage() {
     }
     if (gmailConnected === "1") {
       setMessage(`Personal Gmail connected${connectedEmail ? ` (${connectedEmail})` : ""}. Your inbox is being scanned now — activities and contacts will appear shortly.`);
+      setMonitorPersonalSync(true);
+      setPersonalSyncBaseline(null);
       loadSettings();
     }
     if (gmailStatus || gmailConnected) {
@@ -176,6 +198,53 @@ export default function SettingsPage() {
       window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
     }
   }, []);
+
+  useEffect(() => {
+    if (!personalEmail?.connected || !monitorPersonalSync) return;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const status = await refreshPersonalEmailStatus();
+        if (cancelled) return;
+
+        if (status.last_error) {
+          setMonitorPersonalSync(false);
+          setPersonalSyncBaseline(null);
+          return;
+        }
+
+        const syncAdvanced =
+          typeof status.last_sync_epoch === "number" &&
+          (personalSyncBaseline == null || status.last_sync_epoch !== personalSyncBaseline);
+
+        if (status.backfill_completed && (syncAdvanced || personalSyncBaseline == null)) {
+          setMonitorPersonalSync(false);
+          setPersonalSyncBaseline(null);
+          setMessage(
+            personalSyncBaseline == null
+              ? "Initial inbox scan is complete. Your email activity and meetings are ready."
+              : "Personal inbox sync finished. Refresh any deal or meeting view to see the latest activity.",
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setMonitorPersonalSync(false);
+          setPersonalSyncBaseline(null);
+        }
+      }
+    };
+
+    void pollStatus();
+    const timer = window.setInterval(() => {
+      void pollStatus();
+    }, 10000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [monitorPersonalSync, personalEmail?.connected, personalSyncBaseline]);
 
   const handleSaveInbox = async () => {
     setSavingInbox(true);
@@ -231,7 +300,7 @@ export default function SettingsPage() {
       const result = await settingsApi.triggerEmailSync();
       setMessage(
         result.status === "queued"
-          ? "Sync queued. Beacon will pull new emails into deal activity shortly."
+          ? "Shared inbox sync queued. Beacon is checking for new emails in the background."
           : (result.message ?? "Sync request completed."),
       );
       await loadSettings();
@@ -276,12 +345,14 @@ export default function SettingsPage() {
     setMessage(null);
     try {
       const result = await personalEmailSyncApi.trigger();
+      setPersonalSyncBaseline(personalEmail?.last_sync_epoch ?? null);
+      setMonitorPersonalSync(true);
       setMessage(
         result.status === "queued"
-          ? `Sync queued for ${result.email_address}. New activities and contacts will appear shortly.`
+          ? `Sync started for ${result.email_address}. Beacon is checking recent emails and calendar events now.`
           : "Sync request sent.",
       );
-      await loadSettings();
+      await refreshPersonalEmailStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to trigger personal email sync");
     } finally {
@@ -303,6 +374,49 @@ export default function SettingsPage() {
       setStoppingTldv(false);
     }
   };
+
+  const personalSyncStatusCopy = useMemo(() => {
+    if (personalEmail?.last_error) {
+      return {
+        tone: "warning" as const,
+        title: "Beacon needs you to reconnect this inbox",
+        body: `${personalEmail.last_error} Reconnect Gmail to resume email and calendar sync.`,
+      };
+    }
+    if (!personalEmail?.connected) {
+      return {
+        tone: "info" as const,
+        title: "Connect once, then Beacon keeps watching in the background",
+        body: "After you connect Gmail, Beacon will keep checking your inbox and upcoming calendar events without you staying on this page.",
+      };
+    }
+    if (monitorPersonalSync && !personalEmail.backfill_completed) {
+      return {
+        tone: "info" as const,
+        title: "Initial inbox scan is running",
+        body: "Beacon is scanning recent inbox history and upcoming meetings. This first pass can take a few minutes, and you can keep using the app while it works.",
+      };
+    }
+    if (monitorPersonalSync) {
+      return {
+        tone: "info" as const,
+        title: "Fresh sync is running",
+        body: "Beacon is checking for any new messages and calendar changes right now. You can leave this page and come back.",
+      };
+    }
+    if (!personalEmail.backfill_completed) {
+      return {
+        tone: "warning" as const,
+        title: "Initial sync is still catching up",
+        body: "Beacon has the connection, but the first historical pass is not done yet. New activities and meetings will keep appearing as it catches up.",
+      };
+    }
+    return {
+      tone: "info" as const,
+      title: "Everything is connected",
+      body: "Use Sync now anytime you want Beacon to check immediately instead of waiting for the next scheduled background run.",
+    };
+  }, [monitorPersonalSync, personalEmail]);
 
   const updateOutreachField = (field: keyof OutreachContentSettings, value: string) => {
     setOutreachContent((current) => {
@@ -894,10 +1008,10 @@ export default function SettingsPage() {
                   <div style={{
                     display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px",
                     borderRadius: 20, fontSize: 13, fontWeight: 700,
-                    background: personalEmail?.connected ? "#e8f8ee" : "#f3f5fc",
-                    color: personalEmail?.connected ? "#217a49" : "#66748f",
+                    background: !personalEmail?.connected ? "#f3f5fc" : monitorPersonalSync ? "#eef5ff" : "#e8f8ee",
+                    color: !personalEmail?.connected ? "#66748f" : monitorPersonalSync ? "#3b4dc8" : "#217a49",
                   }}>
-                    {personalEmail?.connected ? "Connected" : "Not connected"}
+                    {!personalEmail?.connected ? "Not connected" : monitorPersonalSync ? "Syncing…" : "Connected"}
                   </div>
                 </div>
 
@@ -929,26 +1043,42 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {personalEmail?.connected && !personalEmail?.last_error && (
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 10, background: "#f0f6ff", border: "1px solid #c8daf8", color: "#1a4fa8", fontSize: 13 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  background: personalSyncStatusCopy.tone === "warning" ? "#fff4e6" : "#f0f6ff",
+                  border: personalSyncStatusCopy.tone === "warning" ? "1px solid #f0d4ac" : "1px solid #c8daf8",
+                  color: personalSyncStatusCopy.tone === "warning" ? "#a46206" : "#1a4fa8",
+                  fontSize: 13,
+                }}
+              >
+                {personalSyncStatusCopy.tone === "warning" ? (
+                  <AlertTriangle size={16} style={{ marginTop: 1, flexShrink: 0 }} />
+                ) : monitorPersonalSync ? (
+                  <RefreshCw size={16} className="animate-spin" style={{ marginTop: 1, flexShrink: 0 }} />
+                ) : (
                   <CalendarDays size={16} style={{ marginTop: 1, flexShrink: 0 }} />
-                  <span>
-                    <strong>Calendar sync active.</strong> Beacon will pull your upcoming Google Calendar events every 10 minutes
-                    and auto-create meetings for any event with external (customer) attendees matched to your CRM.
-                    If you connected before calendar access was added, <button
-                      onClick={handleConnectPersonalEmail}
-                      style={{ background: "none", border: "none", color: "#1a4fa8", fontWeight: 700, textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13 }}
-                    >reconnect to grant calendar access</button>.
-                  </span>
-                </div>
-              )}
-
-              {personalEmail?.last_error && (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "#fff4e6", border: "1px solid #f0d4ac", color: "#a46206", fontSize: 14 }}>
-                  <AlertTriangle size={16} />
-                  <span>{personalEmail.last_error} — reconnect your Gmail to fix this.</span>
-                </div>
-              )}
+                )}
+                <span>
+                  <strong>{personalSyncStatusCopy.title}.</strong> {personalSyncStatusCopy.body}
+                  {personalEmail?.connected && !personalEmail?.last_error ? (
+                    <>
+                      {" "}Beacon also checks your upcoming Google Calendar events every 10 minutes and auto-creates meetings for customer calls. If you connected before calendar access was added,{" "}
+                      <button
+                        onClick={handleConnectPersonalEmail}
+                        style={{ background: "none", border: "none", color: "inherit", fontWeight: 700, textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13 }}
+                      >
+                        reconnect once to refresh permissions
+                      </button>
+                      .
+                    </>
+                  ) : null}
+                </span>
+              </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                 {[
