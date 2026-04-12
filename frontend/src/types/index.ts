@@ -167,6 +167,8 @@ export interface Deal {
   assigned_rep_name?: string;
   contact_count?: number;
   meddpicc_score?: number;
+  seller_engagement_at?: string;
+  client_engagement_at?: string;
 }
 
 export interface MeddpiccAiDimension {
@@ -537,6 +539,7 @@ export interface StageBucketSettings {
   tofu: string[];
   mofu: string[];
   bofu: string[];
+  visible_cards: string[];
 }
 
 export interface PipelineSummarySettings {

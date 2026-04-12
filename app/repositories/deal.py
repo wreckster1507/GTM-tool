@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.activity import Activity
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
@@ -59,6 +60,65 @@ class DealRepository(BaseRepository[Deal]):
                 data["email_cc_alias"] = normalized
         return await super().update(obj, data)
 
+    @staticmethod
+    def _email_domain(value: str | None) -> str:
+        email = (value or "").strip().lower()
+        if "@" not in email:
+            return ""
+        return email.split("@", 1)[1]
+
+    @classmethod
+    def _is_internal_email(cls, value: str | None) -> bool:
+        domain = cls._email_domain(value)
+        shared_domain = cls._email_domain(settings.GMAIL_SHARED_INBOX)
+        return bool(domain and domain in {"beacon.li", shared_domain})
+
+    @classmethod
+    def _is_seller_touch(cls, row) -> bool:
+        if row.type == "email":
+            return cls._is_internal_email(row.email_from)
+        return row.type in {"call", "meeting", "transcript", "note"} or row.source in {"aircall", "tldv", "google_calendar"}
+
+    @classmethod
+    def _is_client_touch(cls, row) -> bool:
+        if row.type == "email":
+            return bool(row.email_from) and not cls._is_internal_email(row.email_from)
+        return bool(row.contact_id) or row.type in {"call", "meeting", "transcript"}
+
+    async def _build_engagement_maps(self, deal_ids: list[UUID]) -> tuple[dict[UUID, datetime], dict[UUID, datetime]]:
+        if not deal_ids:
+            return {}, {}
+
+        activity_rows = (
+            await self.session.execute(
+                select(
+                    Activity.deal_id,
+                    Activity.created_at,
+                    Activity.type,
+                    Activity.source,
+                    Activity.email_from,
+                    Activity.contact_id,
+                ).where(
+                    Activity.deal_id.in_(deal_ids)
+                )
+            )
+        ).all()
+
+        seller_engagement: dict[UUID, datetime] = {}
+        client_engagement: dict[UUID, datetime] = {}
+        for row in activity_rows:
+            if not row.deal_id:
+                continue
+            if self._is_seller_touch(row):
+                current = seller_engagement.get(row.deal_id)
+                if current is None or row.created_at > current:
+                    seller_engagement[row.deal_id] = row.created_at
+            if self._is_client_touch(row):
+                current = client_engagement.get(row.deal_id)
+                if current is None or row.created_at > current:
+                    client_engagement[row.deal_id] = row.created_at
+        return seller_engagement, client_engagement
+
     # ── Board query ──────────────────────────────────────────────────────────
 
     async def board(self, pipeline_type: str = "deal") -> dict[str, list[DealRead]]:
@@ -88,6 +148,7 @@ class DealRepository(BaseRepository[Deal]):
 
         result = await self.session.execute(stmt)
         rows = result.all()
+        seller_engagement, client_engagement = await self._build_engagement_maps([deal.id for deal, *_ in rows if deal.id])
 
         board: dict[str, list[DealRead]] = {}
         now = datetime.utcnow()
@@ -97,6 +158,8 @@ class DealRepository(BaseRepository[Deal]):
             read.assigned_rep_name = rep_name
             read.contact_count = cc or 0
             read.meddpicc_score = compute_meddpicc_score(deal.qualification)
+            read.seller_engagement_at = seller_engagement.get(deal.id)
+            read.client_engagement_at = client_engagement.get(deal.id)
             # Compute days_in_stage live so reps always see real-time staleness
             if deal.stage_entered_at:
                 read.days_in_stage = (now - deal.stage_entered_at).days
@@ -137,11 +200,14 @@ class DealRepository(BaseRepository[Deal]):
             return None
 
         deal, company_name, rep_name, cc = row
+        seller_engagement, client_engagement = await self._build_engagement_maps([deal.id])
         read = DealRead.model_validate(deal)
         read.company_name = company_name
         read.assigned_rep_name = rep_name
         read.contact_count = cc or 0
         read.meddpicc_score = compute_meddpicc_score(deal.qualification)
+        read.seller_engagement_at = seller_engagement.get(deal.id)
+        read.client_engagement_at = client_engagement.get(deal.id)
         # Compute days_in_stage live
         if deal.stage_entered_at:
             read.days_in_stage = (datetime.utcnow() - deal.stage_entered_at).days

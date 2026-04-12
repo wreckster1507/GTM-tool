@@ -23,10 +23,6 @@ interface Props {
   onConvert?: (deal: Deal) => void;
 }
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "#dc2626", high: "#f59e0b", normal: "#94a3b8", low: "#cbd5e1",
-};
-
 const PERSONA_STYLE: Record<string, { bg: string; color: string }> = {
   economic_buyer: { bg: "#ffe8de", color: "#7b3a1d" },
   champion: { bg: "#e4fbf3", color: "#1b6f53" },
@@ -59,6 +55,26 @@ const MEDDPICC_DIMENSIONS = [
 const MEDDPICC_LEVEL_LABELS = ["Not Started", "Identified", "Validated", "Confirmed"] as const;
 const MEDDPICC_LEVEL_COLORS = ["#94a3b8", "#f59e0b", "#3b82f6", "#22c55e"] as const;
 
+function engagementTone(timestamp?: string) {
+  if (!timestamp) {
+    return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef" };
+  }
+  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  if (ageDays <= 3) {
+    return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0" };
+  }
+  if (ageDays <= 7) {
+    return { label: "Warm", background: "#fff7ed", color: "#c2410c", border: "#fed7aa" };
+  }
+  return { label: "Needs love", background: "#fff1f2", color: "#be123c", border: "#fecdd3" };
+}
+
+function engagementSubtitle(timestamp?: string) {
+  if (!timestamp) return "No recent activity";
+  return `Last touch ${formatDate(timestamp)}`;
+}
+
 export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert }: Props) {
   const { isAdmin } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -76,7 +92,6 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(deal.name);
   const [showStageMenu, setShowStageMenu] = useState(false);
-  const [showPriorityMenu, setShowPriorityMenu] = useState(false);
 
   // Link contact
   const [showLinkContact, setShowLinkContact] = useState(false);
@@ -269,6 +284,8 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   };
 
   const stageLabel = stages.find((s) => s.id === deal.stage)?.label ?? deal.stage;
+  const sellerEngagement = engagementTone(deal.seller_engagement_at);
+  const clientEngagement = engagementTone(deal.client_engagement_at);
   const emailSyncAddress = deal.email_cc_alias && sharedInbox.includes("@")
     ? (() => {
         const [local, domain] = sharedInbox.split("@");
@@ -346,7 +363,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
             </button>
           </div>
 
-          {/* Stage + Priority badges */}
+          {/* Stage + engagement badges */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {/* Stage badge with dropdown */}
             <div style={{ position: "relative" }}>
@@ -391,44 +408,41 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               )}
             </div>
 
-            {/* Priority badge */}
-            <div style={{ position: "relative" }}>
-              <button
-                onClick={() => setShowPriorityMenu(!showPriorityMenu)}
+            <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap" }}>
+              <div
                 style={{
-                  display: "flex", alignItems: "center", gap: 5,
-                  padding: "4px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                  background: "#f8f9fc", color: "#4d6178", border: "1px solid #e2eaf2",
-                  cursor: "pointer",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 2,
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  background: sellerEngagement.background,
+                  color: sellerEngagement.color,
+                  border: `1px solid ${sellerEngagement.border}`,
+                  minWidth: 128,
                 }}
               >
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIORITY_COLOR[deal.priority] }} />
-                {deal.priority}
-                <ChevronDown size={11} />
-              </button>
-              {showPriorityMenu && (
-                <div style={{
-                  position: "absolute", top: "100%", left: 0, marginTop: 4,
-                  background: "#fff", border: "1px solid #dbe6f2", borderRadius: 10,
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.12)", padding: 4, zIndex: 10,
-                }}>
-                  {["urgent", "high", "normal", "low"].map((p) => (
-                    <button
-                      key={p}
-                      onClick={async () => { setShowPriorityMenu(false); await patchDeal({ priority: p }); }}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 8, width: "100%",
-                        padding: "6px 12px", borderRadius: 6, fontSize: 13, border: "none",
-                        cursor: "pointer", background: p === deal.priority ? "#f0f6ff" : "transparent",
-                        color: "#2d4258", textTransform: "capitalize",
-                      }}
-                    >
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIORITY_COLOR[p] }} />
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              )}
+                <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>Rep engagement</span>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{sellerEngagement.label}</span>
+                <span style={{ fontSize: 10, opacity: 0.8 }}>{engagementSubtitle(deal.seller_engagement_at)}</span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 2,
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  background: clientEngagement.background,
+                  color: clientEngagement.color,
+                  border: `1px solid ${clientEngagement.border}`,
+                  minWidth: 128,
+                }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>Client engagement</span>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{clientEngagement.label}</span>
+                <span style={{ fontSize: 10, opacity: 0.8 }}>{engagementSubtitle(deal.client_engagement_at)}</span>
+              </div>
             </div>
 
             {/* Convert button for prospects */}

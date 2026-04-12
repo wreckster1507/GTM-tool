@@ -126,6 +126,7 @@ _DEFAULT_DEAL_FUNNEL = {
     "tofu": ["qualified_lead", "poc_agreed"],
     "mofu": ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
     "bofu": ["closed_won"],
+    "visible_cards": ["active", "inactive", "tofu", "mofu", "bofu", "total"],
 }
 _DEFAULT_PROSPECT_FUNNEL = {
     "active": ["outreach", "in_progress", "meeting_booked"],
@@ -133,7 +134,9 @@ _DEFAULT_PROSPECT_FUNNEL = {
     "tofu": ["outreach"],
     "mofu": ["in_progress"],
     "bofu": ["meeting_booked"],
+    "visible_cards": ["active", "inactive", "tofu", "mofu", "bofu", "total"],
 }
+_SUMMARY_CARD_KEYS = {"active", "inactive", "tofu", "mofu", "bofu", "total"}
 _DEFAULT_ROLE_PERMISSIONS = {
     "ae": {
         "crm_import": False,
@@ -285,12 +288,26 @@ def _normalized_deal_funnel_config(value: dict | None) -> DealFunnelSettingsRead
     return DealFunnelSettingsRead(tofu=normalized.tofu, mofu=normalized.mofu, bofu=normalized.bofu)
 
 
+def _normalized_visible_cards(value: dict | None, defaults: dict) -> list[str]:
+    visible_cards = value.get("visible_cards") if isinstance(value, dict) else None
+    if not isinstance(visible_cards, list):
+        visible_cards = defaults.get("visible_cards")
+    normalized = [card for card in visible_cards or [] if card in _SUMMARY_CARD_KEYS]
+    return normalized or list(defaults.get("visible_cards") or ["active", "inactive", "tofu", "mofu", "bofu", "total"])
+
+
 def _normalized_pipeline_summary_settings(row: WorkspaceSettings) -> PipelineSummarySettingsRead:
     allowed_deal_stage_ids = [stage["id"] for stage in normalize_deal_stage_settings(row.deal_stage_settings)]
     normalized_deal_funnel = filter_funnel_config_to_stage_ids(row.deal_funnel_config, allowed_deal_stage_ids, _DEFAULT_DEAL_FUNNEL)
     return PipelineSummarySettingsRead(
-        deal=_normalized_bucket_config(normalized_deal_funnel, _DEFAULT_DEAL_FUNNEL),
-        prospect=_normalized_bucket_config(row.prospect_funnel_config, _DEFAULT_PROSPECT_FUNNEL),
+        deal={
+            **_normalized_bucket_config(normalized_deal_funnel, _DEFAULT_DEAL_FUNNEL).model_dump(),
+            "visible_cards": _normalized_visible_cards(normalized_deal_funnel, _DEFAULT_DEAL_FUNNEL),
+        },
+        prospect={
+            **_normalized_bucket_config(row.prospect_funnel_config, _DEFAULT_PROSPECT_FUNNEL).model_dump(),
+            "visible_cards": _normalized_visible_cards(row.prospect_funnel_config, _DEFAULT_PROSPECT_FUNNEL),
+        },
     )
 
 
@@ -299,6 +316,12 @@ def _validate_funnel_stage_ids(stage_ids: list[str], allowed_stages: set[str] | 
     invalid = [stage for stage in stage_ids if stage not in allowed]
     if invalid:
         raise HTTPException(status_code=422, detail=f"Unknown {scope} stages in funnel settings: {', '.join(sorted(set(invalid)))}")
+
+
+def _validate_visible_cards(cards: list[str], scope: str) -> None:
+    invalid = [card for card in cards if card not in _SUMMARY_CARD_KEYS]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"Unknown {scope} summary cards: {', '.join(sorted(set(invalid)))}")
 
 
 @router.get("/workspace", response_model=dict)
@@ -571,6 +594,8 @@ async def update_pipeline_summary_settings(
         _validate_funnel_stage_ids(bucket, allowed_deal_stage_ids, "deal")
     for bucket in (body.prospect.active, body.prospect.inactive, body.prospect.tofu, body.prospect.mofu, body.prospect.bofu):
         _validate_funnel_stage_ids(bucket, _PROSPECT_STAGES, "prospect")
+    _validate_visible_cards(body.deal.visible_cards, "deal")
+    _validate_visible_cards(body.prospect.visible_cards, "prospect")
 
     row = await _get_or_create(session)
     row.deal_funnel_config = {
@@ -579,6 +604,7 @@ async def update_pipeline_summary_settings(
         "tofu": body.deal.tofu,
         "mofu": body.deal.mofu,
         "bofu": body.deal.bofu,
+        "visible_cards": body.deal.visible_cards,
     }
     row.prospect_funnel_config = {
         "active": body.prospect.active,
@@ -586,6 +612,7 @@ async def update_pipeline_summary_settings(
         "tofu": body.prospect.tofu,
         "mofu": body.prospect.mofu,
         "bofu": body.prospect.bofu,
+        "visible_cards": body.prospect.visible_cards,
     }
     session.add(row)
     await session.commit()

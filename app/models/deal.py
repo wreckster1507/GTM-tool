@@ -126,6 +126,8 @@ class DealRead(DealBase):
     contact_count: int = 0
     # Computed from qualification.meddpicc
     meddpicc_score: Optional[int] = None
+    seller_engagement_at: Optional[datetime] = None
+    client_engagement_at: Optional[datetime] = None
 
 
 class DealUpdate(SQLModel):

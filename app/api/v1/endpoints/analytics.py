@@ -183,6 +183,19 @@ def _label_for_rep(rep_id: UUID | None, users: dict[UUID, str]) -> tuple[str, Op
     return "unassigned", None, "Unassigned"
 
 
+def _normalize_geography_key(value: str | None) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    if raw in {"us", "usa", "united states", "united states of america", "na", "north america", "americas", "latam", "latin america", "canada", "mexico"}:
+        return "Americas"
+    if raw in {"india", "in"}:
+        return "India"
+    if raw in {"apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan"}:
+        return "APAC"
+    return "Rest of World"
+
+
 def _contact_meeting_signal(contact_row) -> bool:
     status_blob = " ".join(
         str(value or "").strip().lower()
@@ -245,6 +258,7 @@ async def _load_monthly_unique_funnel(
     *,
     months: int = 12,
     rep_id: UUID | None = None,
+    geography: str | None = None,
 ) -> list[MonthlyUniqueFunnelRow]:
     await backfill_company_stage_milestones(session)
     month_keys = _rolling_month_keys(months)
@@ -253,16 +267,21 @@ async def _load_monthly_unique_funnel(
         select(
             CompanyStageMilestone.milestone_key,
             CompanyStageMilestone.first_reached_at,
-        ).where(
+            Deal.geography.label("deal_geography"),
+        )
+        .outerjoin(Deal, CompanyStageMilestone.deal_id == Deal.id)
+        .where(
             CompanyStageMilestone.first_reached_at >= earliest_month,
             CompanyStageMilestone.milestone_key.in_(list(MILESTONE_LABELS.keys())),
         )
     )
     if rep_id:
-        stmt = stmt.join(Deal, CompanyStageMilestone.deal_id == Deal.id).where(Deal.assigned_to_id == rep_id)
+        stmt = stmt.where(Deal.assigned_to_id == rep_id)
     milestone_rows = (
         await session.execute(stmt)
     ).all()
+    if geography:
+        milestone_rows = [row for row in milestone_rows if _normalize_geography_key(row.deal_geography) == geography]
     return _build_monthly_unique_funnel_rows(milestone_rows, months=months)
 
 
@@ -279,12 +298,19 @@ async def sales_dashboard(
     session: DBSession,
     window_days: int = Query(90, ge=30, le=365),
     rep_id: UUID | None = Query(default=None),
+    geography: str | None = Query(default=None),
 ):
     filter_rep_id = rep_id
+    filter_geography = _normalize_geography_key(geography)
     now = datetime.utcnow()
     today = date.today()
     window_start = now - timedelta(days=window_days)
-    monthly_unique_funnel = await _load_monthly_unique_funnel(session, months=12, rep_id=filter_rep_id)
+    monthly_unique_funnel = await _load_monthly_unique_funnel(
+        session,
+        months=12,
+        rep_id=filter_rep_id,
+        geography=filter_geography or None,
+    )
 
     stage_settings = await get_configured_deal_stages(session)
     stage_map = {stage["id"]: stage for stage in stage_settings}
@@ -301,10 +327,14 @@ async def sales_dashboard(
         Deal.assigned_to_id,
         Deal.created_at,
         Deal.updated_at,
+        Deal.geography,
     )
     if filter_rep_id:
         deal_stmt = deal_stmt.where(Deal.assigned_to_id == filter_rep_id)
     deal_rows = (await session.execute(deal_stmt)).all()
+    if filter_geography:
+        deal_rows = [row for row in deal_rows if _normalize_geography_key(row.geography) == filter_geography]
+    allowed_deal_ids = {row.id for row in deal_rows}
 
     contact_stmt = select(
         Contact.id,
@@ -313,10 +343,15 @@ async def sales_dashboard(
         Contact.outreach_lane,
         Contact.sequence_status,
         Contact.instantly_status,
+        Company.region.label("company_region"),
     )
+    contact_stmt = contact_stmt.outerjoin(Company, Contact.company_id == Company.id)
     if filter_rep_id:
         contact_stmt = contact_stmt.where(Contact.assigned_to_id == filter_rep_id)
     contact_rows = (await session.execute(contact_stmt)).all()
+    if filter_geography:
+        contact_rows = [row for row in contact_rows if _normalize_geography_key(row.company_region) == filter_geography]
+    allowed_contact_ids = {row.id for row in contact_rows}
 
     activity_rows = (
         await session.execute(
@@ -331,6 +366,8 @@ async def sales_dashboard(
             ).where(Activity.created_at >= window_start)
         )
     ).all()
+    if filter_geography:
+        activity_rows = [row for row in activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
 
     meetings_rows = (
         await session.execute(
@@ -347,6 +384,8 @@ async def sales_dashboard(
             )
         )
     ).all()
+    if filter_geography:
+        meetings_rows = [row for row in meetings_rows if row.deal_id in allowed_deal_ids]
 
     user_rows = (await session.execute(select(User.id, User.name))).all()
     users = {row.id: row.name for row in user_rows}

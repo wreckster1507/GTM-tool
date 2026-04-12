@@ -14,6 +14,7 @@ token refresh, and cursor management.
 """
 from __future__ import annotations
 
+import email.utils
 import logging
 import re
 from datetime import datetime
@@ -23,7 +24,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.google_docs import fetch_google_doc_context
 from app.clients.gmail_inbox import EmailMessage
+from app.config import settings
 from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
@@ -32,6 +35,7 @@ from app.models.meeting import Meeting
 from app.models.task import Task
 from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
+from app.services.tasks import refresh_system_tasks_for_entity
 
 logger = logging.getLogger(__name__)
 FREE_EMAIL_PROVIDERS = {
@@ -62,6 +66,8 @@ INTENT_TASK_MAP = [
       "just wanted to follow", "haven't heard"], "follow_up_buyer_thread"),
     (["poc update", "poc progress", "poc status", "how is the poc",
       "update on the poc"], "move_deal_stage:poc_wip"),
+    (["poc completed", "poc complete", "completed the poc", "pilot completed",
+      "pilot complete", "wrapped up the poc", "finished the poc"], "move_deal_stage:poc_done"),
 ]
 
 
@@ -115,6 +121,78 @@ def _detect_intent(text: str) -> str | None:
         if any(phrase in lower for phrase in phrases):
             return system_key
     return None
+
+
+def _parse_message_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.utcnow()
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+        if parsed is None:
+            return datetime.utcnow()
+        if parsed.tzinfo is not None:
+            return parsed.astimezone().replace(tzinfo=None)
+        return parsed
+    except Exception:
+        return datetime.utcnow()
+
+
+def _detect_latest_intent(segments: list[str]) -> str | None:
+    for segment in reversed(segments):
+        intent = _detect_intent(segment)
+        if intent:
+            return intent
+    combined = "\n\n".join(segments[-4:])
+    return _detect_intent(combined)
+
+
+async def _load_existing_thread_segments(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    thread_id: str,
+) -> list[str]:
+    if not thread_id:
+        return []
+    rows = (
+        await session.execute(
+            select(
+                Activity.created_at,
+                Activity.email_subject,
+                Activity.content,
+                Activity.event_metadata,
+            ).where(
+                Activity.deal_id == deal_id,
+                Activity.type == "email",
+            ).order_by(Activity.created_at.asc())
+        )
+    ).all()
+
+    segments: list[str] = []
+    for row in rows:
+        metadata = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+        if metadata.get("gmail_thread_id") != thread_id:
+            continue
+        latest_message_text = str(metadata.get("thread_latest_message_text") or "").strip()
+        google_doc_transcript = str(metadata.get("google_doc_transcript") or "").strip()
+        snippet = "\n".join(
+            part for part in [row.email_subject or "", latest_message_text or row.content or "", google_doc_transcript] if part
+        ).strip()
+        if snippet:
+            segments.append(snippet)
+    return segments
+
+
+async def _count_open_system_tasks(session: AsyncSession, deal_id: UUID) -> int:
+    result = await session.execute(
+        select(Task.id).where(
+            Task.entity_type == "deal",
+            Task.entity_id == deal_id,
+            Task.task_type == "system",
+            Task.status == "open",
+        )
+    )
+    return len(result.all())
 
 
 async def _ai_classify_email(
@@ -492,6 +570,10 @@ async def process_personal_emails(
         contact_company_map[row.id] = row.company_id
         all_contact_names.append(f"{row.first_name} {row.last_name}")
 
+    touched_deal_ids: set[UUID] = set()
+    open_task_counts_before: dict[UUID, int] = {}
+    thread_context_cache: dict[tuple[UUID, str], list[str]] = {}
+
     for msg in messages:
         stats["emails_processed"] += 1
 
@@ -505,6 +587,19 @@ async def process_personal_emails(
 
         if not all_addrs:
             continue
+
+        google_doc_contexts, updated_token = await fetch_google_doc_context(
+            msg.body_text,
+            token_data=connection.token_data,
+            client_id=settings.gmail_client_id,
+            client_secret=settings.gmail_client_secret,
+        )
+        if updated_token is not connection.token_data:
+            connection.token_data = updated_token
+        google_doc_transcript = "\n\n".join(context["text"] for context in google_doc_contexts if context.get("text")).strip()
+        latest_message_text = "\n".join(
+            part for part in [msg.subject or "", msg.body_text or "", google_doc_transcript] if part
+        ).strip()
 
         # ── Pass 1: exact email address match → contact → deal ──────────────
         matched_contact_ids: list[UUID] = []
@@ -636,10 +731,6 @@ async def process_personal_emails(
         sender_contact_id: UUID | None = contact_email_map.get(msg.from_addr)
         ai_summary = await _generate_email_summary(msg.subject, msg.body_text)
 
-        # Detect intent from raw text (cheap, no AI)
-        body_lower = (msg.subject + " " + msg.body_text).lower()
-        intent_key = _detect_intent(body_lower)
-
         for deal_id in deal_ids:
             # Dedup check
             existing = await session.execute(
@@ -656,6 +747,20 @@ async def process_personal_emails(
             deal = await session.get(Deal, deal_id)
             if not deal:
                 continue
+
+            if deal_id not in open_task_counts_before:
+                open_task_counts_before[deal_id] = await _count_open_system_tasks(session, deal_id)
+
+            thread_cache_key = (deal_id, msg.thread_id or msg.message_id)
+            if thread_cache_key not in thread_context_cache:
+                thread_context_cache[thread_cache_key] = await _load_existing_thread_segments(
+                    session,
+                    deal_id=deal_id,
+                    thread_id=msg.thread_id or msg.message_id,
+                )
+            thread_segments = [*thread_context_cache[thread_cache_key], latest_message_text]
+            thread_latest_intent = _detect_latest_intent(thread_segments)
+            thread_context_excerpt = "\n\n".join(thread_segments[-4:])[:4000]
 
             activity = Activity(
                 type="email",
@@ -674,33 +779,28 @@ async def process_personal_emails(
                     "synced_by_user_id": str(sync_user.id),
                     "synced_by_email": connection.email_address,
                     "gmail_thread_id": msg.thread_id or None,
-                    "intent_detected": intent_key,
+                    "intent_detected": thread_latest_intent,
+                    "thread_latest_intent": thread_latest_intent,
+                    "thread_latest_message_text": latest_message_text[:2500],
+                    "thread_context_excerpt": thread_context_excerpt,
+                    "google_doc_links": [context["url"] for context in google_doc_contexts] or None,
+                    "google_doc_transcript": google_doc_transcript[:4000] or None,
                 },
             )
             session.add(activity)
             stats["activities_created"] += 1
+            touched_deal_ids.add(deal_id)
+            thread_context_cache[thread_cache_key] = thread_segments
 
-            # AI task generation
-            if intent_key:
-                created = await _create_ai_task_for_deal(
-                    session, deal_id, deal,
-                    intent_key=intent_key,
-                    email_subject=msg.subject,
-                    synced_by_user_id=sync_user.id,
-                )
-                if created:
-                    stats["tasks_created"] += 1
+            if thread_latest_intent == "book_workshop_session":
+                all_contact_ids = list({cid for cid in matched_contact_ids if cid})
+                await _ensure_meeting_for_deal(session, deal, msg, all_contact_ids)
 
-                # Auto-create meeting record when a booking intent is detected
-                if intent_key == "book_workshop_session":
-                    all_contact_ids = list({
-                        cid for cid in matched_contact_ids
-                        if cid
-                    })
-                    await _ensure_meeting_for_deal(
-                        session, deal, msg, all_contact_ids,
-                    )
-
+    await session.commit()
+    for deal_id in touched_deal_ids:
+        await refresh_system_tasks_for_entity(session, "deal", deal_id)
+        tasks_after = await _count_open_system_tasks(session, deal_id)
+        stats["tasks_created"] += max(0, tasks_after - open_task_counts_before.get(deal_id, 0))
     await session.commit()
     return stats
 

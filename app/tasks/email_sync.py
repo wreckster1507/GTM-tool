@@ -108,12 +108,14 @@ async def _async_sync() -> dict:
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
+    from app.clients.google_docs import fetch_google_doc_context
     from app.clients.gmail_inbox import GmailInboxClient
     from app.models.activity import Activity
     from app.models.company import Company
     from app.models.contact import Contact
     from app.models.deal import Deal, DealContact
     from app.models.settings import WorkspaceSettings
+    from app.services.personal_email_sync import _detect_latest_intent, _load_existing_thread_segments
     from app.services.tasks import refresh_system_tasks_for_entity
 
     # Fresh engine per task
@@ -163,6 +165,7 @@ async def _async_sync() -> dict:
 
         activities_created = 0
         touched_deal_ids: set = set()
+        thread_context_cache: dict[tuple[str, str], list[str]] = {}
 
         async with SessionLocal() as session:
             for msg in messages:
@@ -233,6 +236,18 @@ async def _async_sync() -> dict:
                 ai_summary = None
                 if len(msg.body_text) >= settings.EMAIL_SUMMARY_MIN_CHARS:
                     ai_summary = await _summarize_email(msg.subject, msg.body_text)
+                google_doc_contexts, updated_token = await fetch_google_doc_context(
+                    msg.body_text,
+                    token_data=gmail.updated_token_payload or token_payload,
+                    client_id=settings.gmail_client_id,
+                    client_secret=settings.gmail_client_secret,
+                )
+                if updated_token and updated_token != (gmail.updated_token_payload or token_payload):
+                    gmail.updated_token_payload = updated_token
+                google_doc_transcript = "\n\n".join(context["text"] for context in google_doc_contexts if context.get("text")).strip()
+                latest_message_text = "\n".join(
+                    part for part in [msg.subject or "", msg.body_text or "", google_doc_transcript] if part
+                ).strip()
 
                 # Create activity for each linked deal (with dedup)
                 for deal_id in deal_ids:
@@ -296,6 +311,17 @@ async def _async_sync() -> dict:
                     if existing.first():
                         continue  # Already logged
 
+                    thread_cache_key = (str(deal_id), msg.thread_id or msg.message_id)
+                    if thread_cache_key not in thread_context_cache:
+                        thread_context_cache[thread_cache_key] = await _load_existing_thread_segments(
+                            session,
+                            deal_id=deal_id,
+                            thread_id=msg.thread_id or msg.message_id,
+                        )
+                    thread_segments = [*thread_context_cache[thread_cache_key], latest_message_text]
+                    thread_latest_intent = _detect_latest_intent(thread_segments)
+                    thread_context_excerpt = "\n\n".join(thread_segments[-4:])[:4000]
+
                     activity = Activity(
                         type="email",
                         source="gmail_sync",
@@ -314,11 +340,17 @@ async def _async_sync() -> dict:
                             "gmail_thread_id": msg.thread_id or None,
                             "suggested_existing_contacts": suggested_existing_contacts or None,
                             "suggested_new_participants": suggested_new_participants or None,
+                            "thread_latest_intent": thread_latest_intent,
+                            "thread_latest_message_text": latest_message_text[:2500],
+                            "thread_context_excerpt": thread_context_excerpt,
+                            "google_doc_links": [context["url"] for context in google_doc_contexts] or None,
+                            "google_doc_transcript": google_doc_transcript[:4000] or None,
                         },
                     )
                     session.add(activity)
                     activities_created += 1
                     touched_deal_ids.add(deal_id)
+                    thread_context_cache[thread_cache_key] = thread_segments
 
             settings_row = await session.get(WorkspaceSettings, 1)
             if settings_row:

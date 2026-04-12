@@ -170,6 +170,21 @@ async def global_search(
 
     sections: list[GlobalSearchSection] = []
 
+    deal_items = []
+    for deal, company_name in deal_rows:
+        deal_items.append(
+            GlobalSearchItem(
+                id=str(deal.id),
+                kind="deal",
+                title=deal.name,
+                subtitle=company_name or deal.stage.replace("_", " "),
+                meta=deal.stage.replace("_", " ").title(),
+                link=f"/pipeline?deal={deal.id}",
+            )
+        )
+    if deal_items:
+        sections.append(GlobalSearchSection(key="deals", label="Deals", items=deal_items))
+
     company_items = [
         GlobalSearchItem(
             id=str(company.id),
@@ -200,21 +215,6 @@ async def global_search(
         )
     if contact_items:
         sections.append(GlobalSearchSection(key="contacts", label="Prospects", items=contact_items))
-
-    deal_items = []
-    for deal, company_name in deal_rows:
-        deal_items.append(
-            GlobalSearchItem(
-                id=str(deal.id),
-                kind="deal",
-                title=deal.name,
-                subtitle=company_name or deal.stage.replace("_", " "),
-                meta=deal.stage.replace("_", " ").title(),
-                link=f"/pipeline?deal={deal.id}",
-            )
-        )
-    if deal_items:
-        sections.append(GlobalSearchSection(key="deals", label="Deals", items=deal_items))
 
     meeting_items = []
     for meeting, company_name in meeting_rows:

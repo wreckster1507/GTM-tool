@@ -13,8 +13,9 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 # Combined scope requested during OAuth — both mail and calendar in one consent
-PERSONAL_OAUTH_SCOPES = f"{GMAIL_SCOPE} {CALENDAR_SCOPE}"
+PERSONAL_OAUTH_SCOPES = f"{GMAIL_SCOPE} {CALENDAR_SCOPE} {DRIVE_SCOPE}"
 STATE_ALGORITHM = "HS256"
 
 

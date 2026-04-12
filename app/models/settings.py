@@ -95,11 +95,12 @@ class WorkspaceSettings(SQLModel, table=True):
             "tofu": ["qualified_lead", "poc_agreed"],
             "mofu": ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
             "bofu": ["closed_won"],
+            "visible_cards": ["active", "inactive", "tofu", "mofu", "bofu", "total"],
         },
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"active":["reprospect","demo_scheduled","demo_done","qualified_lead","poc_agreed","poc_wip","poc_done","commercial_negotiation","msa_review"],"inactive":["closed_won","churned","not_a_fit","cold","closed_lost","on_hold","nurture","closed"],"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"]}',
+            server_default='{"active":["reprospect","demo_scheduled","demo_done","qualified_lead","poc_agreed","poc_wip","poc_done","commercial_negotiation","msa_review"],"inactive":["closed_won","churned","not_a_fit","cold","closed_lost","on_hold","nurture","closed"],"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"],"visible_cards":["active","inactive","tofu","mofu","bofu","total"]}',
         ),
     )
     deal_stage_settings: list[dict] = Field(
@@ -192,11 +193,12 @@ class WorkspaceSettings(SQLModel, table=True):
             "tofu": ["outreach"],
             "mofu": ["in_progress"],
             "bofu": ["meeting_booked"],
+            "visible_cards": ["active", "inactive", "tofu", "mofu", "bofu", "total"],
         },
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"active":["outreach","in_progress","meeting_booked"],"inactive":["negative_response","no_response","not_a_fit"],"tofu":["outreach"],"mofu":["in_progress"],"bofu":["meeting_booked"]}',
+            server_default='{"active":["outreach","in_progress","meeting_booked"],"inactive":["negative_response","no_response","not_a_fit"],"tofu":["outreach"],"mofu":["in_progress"],"bofu":["meeting_booked"],"visible_cards":["active","inactive","tofu","mofu","bofu","total"]}',
         ),
     )
 
@@ -260,6 +262,10 @@ class StageBucketSettings(SQLModel):
     bofu: list[str]
 
 
+class PipelineSummarySectionSettings(StageBucketSettings):
+    visible_cards: list[str] = Field(default_factory=lambda: ["active", "inactive", "tofu", "mofu", "bofu", "total"])
+
+
 class DealStageSetting(SQLModel):
     id: str
     label: str
@@ -284,13 +290,13 @@ class ProspectStageSettingsUpdate(SQLModel):
 
 
 class PipelineSummarySettingsRead(SQLModel):
-    deal: StageBucketSettings
-    prospect: StageBucketSettings
+    deal: PipelineSummarySectionSettings
+    prospect: PipelineSummarySectionSettings
 
 
 class PipelineSummarySettingsUpdate(SQLModel):
-    deal: StageBucketSettings
-    prospect: StageBucketSettings
+    deal: PipelineSummarySectionSettings
+    prospect: PipelineSummarySectionSettings
 
 
 class RolePermissionFlags(SQLModel):

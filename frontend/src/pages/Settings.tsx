@@ -414,7 +414,7 @@ export default function SettingsPage() {
     return {
       tone: "info" as const,
       title: "Everything is connected",
-      body: "Use Sync now anytime you want Beacon to check immediately instead of waiting for the next scheduled background run.",
+      body: "Beacon automatically checks your inbox and calendar every 10 minutes. Use Sync now anytime you want it to check immediately.",
     };
   }, [monitorPersonalSync, personalEmail]);
 

@@ -98,4 +98,5 @@ def filter_funnel_config_to_stage_ids(config: dict[str, list[str]] | None, allow
         "tofu": [stage for stage in (config or {}).get("tofu", fallback.get("tofu", [])) if stage in allowed] or [stage for stage in fallback.get("tofu", []) if stage in allowed],
         "mofu": [stage for stage in (config or {}).get("mofu", fallback.get("mofu", [])) if stage in allowed] or [stage for stage in fallback.get("mofu", []) if stage in allowed],
         "bofu": [stage for stage in (config or {}).get("bofu", fallback.get("bofu", [])) if stage in allowed] or [stage for stage in fallback.get("bofu", []) if stage in allowed],
+        "visible_cards": list((config or {}).get("visible_cards") or fallback.get("visible_cards", [])),
     }

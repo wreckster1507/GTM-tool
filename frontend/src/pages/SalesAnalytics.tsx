@@ -25,6 +25,7 @@ import {
 import type { User } from "../types";
 
 const WINDOW_OPTIONS = [30, 90, 180] as const;
+const GEO_OPTIONS = ["all", "Americas", "India", "APAC", "Rest of World"] as const;
 
 function formatShortCurrency(value?: number | null) {
   const amount = Number(value ?? 0);
@@ -418,6 +419,7 @@ export default function SalesAnalytics() {
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [repFilter, setRepFilter] = useState<string>("all");
+  const [geographyFilter, setGeographyFilter] = useState<string>("all");
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -446,7 +448,11 @@ export default function SalesAnalytics() {
     setError(null);
 
     analyticsApi
-      .salesDashboard(windowDays, repFilter === "all" ? undefined : repFilter)
+      .salesDashboard(
+        windowDays,
+        repFilter === "all" ? undefined : repFilter,
+        geographyFilter === "all" ? undefined : geographyFilter,
+      )
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -460,7 +466,7 @@ export default function SalesAnalytics() {
     return () => {
       cancelled = true;
     };
-  }, [windowDays, repFilter]);
+  }, [windowDays, repFilter, geographyFilter]);
 
   const metricCards: Array<{
     label: string;
@@ -597,6 +603,31 @@ export default function SalesAnalytics() {
                 ))}
               </select>
             </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
+                Geography
+              </label>
+              <select
+                value={geographyFilter}
+                onChange={(event) => setGeographyFilter(event.target.value)}
+                style={{
+                  height: 40,
+                  borderRadius: 12,
+                  border: "1px solid #d9e3ef",
+                  background: "#fff",
+                  color: "#203244",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  padding: "0 12px",
+                }}
+              >
+                {GEO_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option === "all" ? "All geographies" : option}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Window</p>
@@ -619,6 +650,10 @@ export default function SalesAnalytics() {
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: selectedRep ? "#eef4ff" : "#f7f9fc", border: selectedRep ? "1px solid #d7e2fb" : "1px solid #e3ebf4", color: selectedRep ? "#3555c4" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <BarChart3 size={14} />
             Scope: {selectedRep?.name ?? "All reps"}
+          </div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: geographyFilter !== "all" ? "#eefbf6" : "#f7f9fc", border: geographyFilter !== "all" ? "1px solid #cdebdc" : "1px solid #e3ebf4", color: geographyFilter !== "all" ? "#157347" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
+            <CalendarRange size={14} />
+            Geography: {geographyFilter === "all" ? "All" : geographyFilter}
           </div>
           <p style={{ margin: 0, fontSize: 12, color: "#74869c" }}>
             {loading ? "Refreshing dashboard..." : `Snapshot updated ${formatSnapshotTime(data?.generated_at)}`}

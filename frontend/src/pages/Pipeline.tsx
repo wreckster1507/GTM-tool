@@ -14,6 +14,8 @@ type DragItem = { kind: "deal"; id: string; fromStage: string } | { kind: "prosp
 type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
 type FunnelKey = "active" | "inactive" | "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
+type SummaryCardKey = "active" | "inactive" | "tofu" | "mofu" | "bofu" | "total";
+type PipelineSummarySectionConfig = PipelineSummarySettings["deal"];
 
 const DEFAULT_DEAL_STAGES: StageMeta[] = [
   { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
@@ -44,7 +46,6 @@ const PROSPECT_STAGES: Array<StageMeta & { id: ProspectStageId }> = [
   { id: "not_a_fit", label: "Not a Fit", group: "closed" },
 ];
 
-const PRIORITY_COLOR: Record<string, string> = { urgent: "#dc2626", high: "#f59e0b", normal: "#94a3b8", low: "#cbd5e1" };
 const STAGE_COLOR: Record<string, string> = {
   reprospect: "#8b5cf6", demo_scheduled: "#6366f1", demo_done: "#8b5cf6", qualified_lead: "#2563eb",
   poc_agreed: "#0ea5e9", poc_wip: "#06b6d4", poc_done: "#14b8a6", commercial_negotiation: "#f59e0b",
@@ -52,6 +53,15 @@ const STAGE_COLOR: Record<string, string> = {
   not_a_fit: "#9ca3af", on_hold: "#a78bfa", nurture: "#67e8f9", churned: "#ef4444",
   outreach: "#2563eb", in_progress: "#7c3aed", meeting_booked: "#0ea5e9", negative_response: "#ef4444", no_response: "#94a3b8",
 };
+const DEFAULT_VISIBLE_SUMMARY_CARDS: SummaryCardKey[] = ["active", "inactive", "tofu", "mofu", "bofu", "total"];
+const SUMMARY_CARD_META: Array<{ key: SummaryCardKey; label: string; tone?: "default" | "accent" | "success" }> = [
+  { key: "active", label: "Active", tone: "accent" },
+  { key: "inactive", label: "Inactive" },
+  { key: "tofu", label: "ToFU" },
+  { key: "mofu", label: "MoFU" },
+  { key: "bofu", label: "BoFU", tone: "success" },
+  { key: "total", label: "Total" },
+];
 const DEFAULT_FUNNEL: FunnelConfig = {
   active: ["reprospect", "demo_scheduled", "demo_done", "qualified_lead", "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review"],
   inactive: ["closed_won", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
@@ -78,11 +88,37 @@ function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, default
   };
 }
 
+function normalizeVisibleCards(value?: string[] | null): SummaryCardKey[] {
+  const normalized = (value ?? []).filter((item): item is SummaryCardKey => DEFAULT_VISIBLE_SUMMARY_CARDS.includes(item as SummaryCardKey));
+  return normalized.length ? normalized : DEFAULT_VISIBLE_SUMMARY_CARDS;
+}
+
 function normalizePipelineSummarySettings(value?: Partial<PipelineSummarySettings> | null): PipelineSummarySettings {
   return {
-    deal: normalizeBucketConfig(value?.deal, DEFAULT_FUNNEL),
-    prospect: normalizeBucketConfig(value?.prospect, DEFAULT_PROSPECT_FUNNEL),
+    deal: {
+      ...normalizeBucketConfig(value?.deal, DEFAULT_FUNNEL),
+      visible_cards: normalizeVisibleCards(value?.deal?.visible_cards),
+    },
+    prospect: {
+      ...normalizeBucketConfig(value?.prospect, DEFAULT_PROSPECT_FUNNEL),
+      visible_cards: normalizeVisibleCards(value?.prospect?.visible_cards),
+    },
   };
+}
+
+function engagementTone(timestamp?: string) {
+  if (!timestamp) {
+    return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef" };
+  }
+  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  if (ageDays <= 3) {
+    return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0" };
+  }
+  if (ageDays <= 7) {
+    return { label: "Warm", background: "#fff7ed", color: "#c2410c", border: "#fed7aa" };
+  }
+  return { label: "Needs love", background: "#fff1f2", color: "#be123c", border: "#fecdd3" };
 }
 
 function normalizeGeo(raw?: string | null): "Americas" | "India" | "APAC" | "Rest of World" | "" {
@@ -267,16 +303,22 @@ function FunnelSettingsModal({
   title: string;
   description: string;
   stages: StageMeta[];
-  config: FunnelConfig;
-  defaultConfig: FunnelConfig;
+  config: PipelineSummarySectionConfig;
+  defaultConfig: PipelineSummarySectionConfig;
   saving: boolean;
-  onSave: (config: FunnelConfig) => void;
+  onSave: (config: PipelineSummarySectionConfig) => void;
   onClose: () => void;
 }) {
-  const [draft, setDraft] = useState<FunnelConfig>(config);
+  const [draft, setDraft] = useState<PipelineSummarySectionConfig>(config);
   const toggle = (bucket: FunnelKey, stageId: string) => setDraft((current) => ({
     ...current,
     [bucket]: current[bucket].includes(stageId) ? current[bucket].filter((item) => item !== stageId) : [...current[bucket], stageId],
+  }));
+  const toggleCard = (cardKey: SummaryCardKey) => setDraft((current) => ({
+    ...current,
+    visible_cards: current.visible_cards.includes(cardKey)
+      ? current.visible_cards.filter((item) => item !== cardKey)
+      : [...current.visible_cards, cardKey],
   }));
 
   useEffect(() => {
@@ -312,6 +354,21 @@ function FunnelSettingsModal({
                 </div>
               </div>
             ))}
+          </div>
+
+          <div style={{ marginTop: 18, border: "1px solid #e8eef5", borderRadius: 14, padding: 14, background: "#fbfdff" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", marginBottom: 6 }}>Visible summary cards</div>
+            <div style={{ fontSize: 12, color: "#6b7f95", marginBottom: 12 }}>
+              Choose which sidebar summary cards stay visible for the team.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+              {SUMMARY_CARD_META.map((card) => (
+                <label key={card.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#41566d" }}>
+                  <input type="checkbox" checked={draft.visible_cards.includes(card.key)} onChange={() => toggleCard(card.key)} />
+                  <span>{card.label}</span>
+                </label>
+              ))}
+            </div>
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18 }}>
@@ -586,16 +643,25 @@ function CrmImportModal({
 
 function DealCard({ deal, onClick, onDragStart, onDragEnd }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void }) {
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
+  const repEngagement = engagementTone(deal.seller_engagement_at);
+  const clientEngagement = engagementTone(deal.client_engagement_at);
   return (
     <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onClick} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0 }} />
-        <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 5, background: PRIORITY_COLOR[deal.priority] ?? "#94a3b8" }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d", lineHeight: 1.35, flex: 1 }}>{deal.name}</span>
       </div>
       {deal.company_name && <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#5e738b" }}><Building2 size={11} /><span>{deal.company_name}</span></div>}
       <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
       {deal.next_step && <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>{deal.next_step}</div>}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 8px", borderRadius: 999, background: repEngagement.background, color: repEngagement.color, border: `1px solid ${repEngagement.border}` }}>
+          Rep: {repEngagement.label}
+        </span>
+        <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 8px", borderRadius: 999, background: clientEngagement.background, color: clientEngagement.color, border: `1px solid ${clientEngagement.border}` }}>
+          Client: {clientEngagement.label}
+        </span>
+      </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
         {(deal.tags ?? []).slice(0, 2).map((tag) => <span key={tag} style={chip("#f8f0ff", "#6b46a0", "#e8d8f8")}>{tag}</span>)}
       </div>
@@ -1293,7 +1359,7 @@ export default function Pipeline() {
     return {
       total: visible.length,
       active: visible.filter((deal) => activeStageIds.has(deal.stage)).length,
-      closed: visible.filter((deal) => inactiveStageIds.has(deal.stage)).length,
+      inactive: visible.filter((deal) => inactiveStageIds.has(deal.stage)).length,
       tofu: visible.filter((deal) => pipelineSummaryConfig.deal.tofu.includes(deal.stage)).length,
       mofu: visible.filter((deal) => pipelineSummaryConfig.deal.mofu.includes(deal.stage)).length,
       bofu: visible.filter((deal) => pipelineSummaryConfig.deal.bofu.includes(deal.stage)).length,
@@ -1309,7 +1375,7 @@ export default function Pipeline() {
       active: Object.entries(filteredProspects)
         .filter(([stageId]) => activeStageIds.has(stageId))
         .reduce((sum, [, items]) => sum + items.length, 0),
-      closed: Object.entries(filteredProspects)
+      inactive: Object.entries(filteredProspects)
         .filter(([stageId]) => closedStageIds.has(stageId))
         .reduce((sum, [, items]) => sum + items.length, 0),
       tofu: Array.from(new Set(pipelineSummaryConfig.prospect.tofu)).reduce(
@@ -1328,6 +1394,11 @@ export default function Pipeline() {
   }, [filteredProspects, pipelineSummaryConfig.prospect]);
 
   const summary = tab === "deal" ? dealSummary : prospectSummary;
+  const visibleSummaryCards = tab === "deal" ? pipelineSummaryConfig.deal.visible_cards : pipelineSummaryConfig.prospect.visible_cards;
+  const summaryCards = SUMMARY_CARD_META.filter((card) => visibleSummaryCards.includes(card.key)).map((card) => ({
+    ...card,
+    value: summary[card.key],
+  }));
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
   const canImportCrm =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
@@ -1343,7 +1414,9 @@ export default function Pipeline() {
   const accentBg = tab === "deal" ? "#f0f6ff" : "#f0faf9";
   const accentBorder = tab === "deal" ? "#b8d0f0" : "#b2e0dc";
   const activeFunnelConfig = tab === "deal" ? pipelineSummaryConfig.deal : pipelineSummaryConfig.prospect;
-  const activeFunnelDefaults = tab === "deal" ? DEFAULT_FUNNEL : DEFAULT_PROSPECT_FUNNEL;
+  const activeFunnelDefaults = tab === "deal"
+    ? normalizePipelineSummarySettings({ deal: { ...DEFAULT_FUNNEL, visible_cards: DEFAULT_VISIBLE_SUMMARY_CARDS } }).deal
+    : normalizePipelineSummarySettings({ prospect: { ...DEFAULT_PROSPECT_FUNNEL, visible_cards: DEFAULT_VISIBLE_SUMMARY_CARDS } }).prospect;
   const funnelModalTitle = tab === "deal" ? "Deal summary settings" : "Prospect summary settings";
   const funnelModalDescription =
     tab === "deal"
@@ -1515,7 +1588,7 @@ export default function Pipeline() {
     }
   };
 
-  const handleSaveFunnelSettings = async (config: FunnelConfig) => {
+  const handleSaveFunnelSettings = async (config: PipelineSummarySectionConfig) => {
     if (!isAdmin) return;
     setSavingFunnelSettings(true);
     try {
@@ -1615,12 +1688,9 @@ export default function Pipeline() {
             {isAdmin && <button type="button" onClick={() => setShowFunnelSettings(true)} style={{ border: "1px solid #dbe6f2", background: "#fff", borderRadius: 8, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#5e738b", cursor: "pointer" }} title={`${tab === "deal" ? "Deal" : "Prospect"} summary settings`}><Settings2 size={14} /></button>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <SummaryCard label="Active" value={summary.active} tone="accent" />
-            <SummaryCard label="Inactive" value={summary.closed} />
-            <SummaryCard label="ToFU" value={summary.tofu} />
-            <SummaryCard label="MoFU" value={summary.mofu} />
-            <SummaryCard label="BoFU" value={summary.bofu} tone="success" />
-            <SummaryCard label="Total" value={summary.total} />
+            {summaryCards.map((card) => (
+              <SummaryCard key={card.key} label={card.label} value={card.value} tone={card.tone ?? "default"} />
+            ))}
           </div>
 
           <div style={{ height: 1, background: "#e8eef5" }} />
