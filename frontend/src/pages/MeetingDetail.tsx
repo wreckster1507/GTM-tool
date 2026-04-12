@@ -6,9 +6,10 @@ import {
   Building2, TrendingUp, Lightbulb, Search, PlayCircle,
   Swords, MessageSquareWarning, ArrowRight, Briefcase, Zap,
   Globe, Target, Mail, UserPlus, FileText, Crosshair, Trash2,
+  Link2, Link2Off, Plus, X, Save,
 } from "lucide-react";
-import { companiesApi, contactsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
-import type { Company, Contact, Meeting, Signal } from "../types";
+import { companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
+import type { Company, Contact, Deal, Meeting, Signal } from "../types";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -243,6 +244,19 @@ export default function MeetingDetail() {
   const [error, setError]             = useState("");
   const [statusMsg, setStatusMsg]     = useState("");
 
+  // ── Manual linking state ────────────────────────────────────────────────────
+  const [showLinkPanel, setShowLinkPanel]   = useState(false);
+  const [allCompanies, setAllCompanies]     = useState<Company[]>([]);
+  const [allDeals, setAllDeals]             = useState<Deal[]>([]);
+  const [allContacts, setAllContacts]       = useState<Contact[]>([]);
+  const [linkCompanyId, setLinkCompanyId]   = useState<string>("");
+  const [linkDealId, setLinkDealId]         = useState<string>("");
+  const [linkSaving, setLinkSaving]         = useState(false);
+  // attendee editor
+  const [editingAttendees, setEditingAttendees] = useState(false);
+  const [attendeeList, setAttendeeList]         = useState<Array<{ contact_id: string; name: string; title?: string; email?: string; role?: string }>>([]);
+  const [attendeeSaving, setAttendeeSaving]     = useState(false);
+
   // ── Load all existing DB data on mount ──────────────────────────────────────
   const loadAll = async () => {
     if (!id) return;
@@ -381,6 +395,79 @@ export default function MeetingDetail() {
     }
   };
 
+  // ── Open link panel: load companies + deals once ────────────────────────────
+  const handleOpenLinkPanel = async () => {
+    setLinkCompanyId(meeting?.company_id ?? "");
+    setLinkDealId(meeting?.deal_id ?? "");
+    if (allCompanies.length === 0) {
+      const [cs, ds] = await Promise.all([companiesApi.list(), dealsApi.list(0, 300)]);
+      setAllCompanies(cs);
+      setAllDeals(ds);
+    }
+    setShowLinkPanel(true);
+  };
+
+  const handleSaveLink = async () => {
+    if (!id) return;
+    setLinkSaving(true);
+    try {
+      const payload: Record<string, string | null> = {};
+      if (linkCompanyId !== (meeting?.company_id ?? "")) payload.company_id = linkCompanyId || null;
+      if (linkDealId !== (meeting?.deal_id ?? "")) payload.deal_id = linkDealId || null;
+      if (Object.keys(payload).length > 0) {
+        await meetingsApi.update(id, payload as any);
+        await loadAll();
+      }
+      setShowLinkPanel(false);
+    } finally {
+      setLinkSaving(false);
+    }
+  };
+
+  // ── Open attendee editor: load contacts for linked company ───────────────────
+  const handleOpenAttendeeEditor = async () => {
+    const existing = Array.isArray(meeting?.attendees) ? meeting!.attendees as any[] : [];
+    setAttendeeList(existing.map((a: any) => ({
+      contact_id: a.contact_id ?? "",
+      name: a.name ?? "",
+      title: a.title ?? "",
+      email: a.email ?? "",
+      role: a.role ?? "attendee",
+    })));
+    if (meeting?.company_id && allContacts.length === 0) {
+      const cs = await contactsApi.list(0, 100, meeting.company_id);
+      setAllContacts(cs);
+    }
+    setEditingAttendees(true);
+  };
+
+  const handleAddAttendee = (contact: Contact) => {
+    if (attendeeList.some(a => a.contact_id === contact.id)) return;
+    setAttendeeList(prev => [...prev, {
+      contact_id: contact.id,
+      name: `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim(),
+      title: contact.title ?? "",
+      email: contact.email ?? "",
+      role: "attendee",
+    }]);
+  };
+
+  const handleRemoveAttendee = (contactId: string) => {
+    setAttendeeList(prev => prev.filter(a => a.contact_id !== contactId));
+  };
+
+  const handleSaveAttendees = async () => {
+    if (!id) return;
+    setAttendeeSaving(true);
+    try {
+      await meetingsApi.update(id, { attendees: attendeeList } as any);
+      await loadAll();
+      setEditingAttendees(false);
+    } finally {
+      setAttendeeSaving(false);
+    }
+  };
+
   if (loading) return <div className="crm-panel p-14 text-center crm-muted">Loading meeting workspace...</div>;
   if (!meeting) return <div className="crm-panel p-14 text-center crm-muted">Meeting not found.</div>;
 
@@ -435,18 +522,156 @@ export default function MeetingDetail() {
                     {company.domain} <ExternalLink size={12} />
                   </a>
                 </>
-              ) : "No linked company"}
+              ) : <span className="text-[#f59e0b] font-semibold">No company linked</span>}
               {meeting.scheduled_at && <span>· {formatDate(meeting.scheduled_at)}</span>}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {statusMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{statusMsg}</span>}
+            <button className="crm-button soft" onClick={handleOpenAttendeeEditor}>
+              <Users size={14} /> Manage Attendees
+            </button>
+            <button className="crm-button soft" onClick={handleOpenLinkPanel}>
+              <Link2 size={14} /> {company ? "Re-link" : "Link Company / Deal"}
+            </button>
             <button className="crm-button soft" onClick={handleRunIntelligence} disabled={running}>
               {running ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
               {running ? "Searching…" : intelWasRun ? "Re-run Web Intel" : "Run Web Intel"}
             </button>
           </div>
         </div>
+
+        {/* ── Link Company / Deal panel ── */}
+        {showLinkPanel && (
+          <div style={{ marginTop: 20, padding: "16px 18px", borderRadius: 14, border: "1px solid #d5e5ff", background: "#f3f8ff" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#24364b", display: "flex", alignItems: "center", gap: 6 }}>
+                <Link2 size={14} style={{ color: "#1f6feb" }} /> Link Company &amp; Deal
+              </span>
+              <button type="button" onClick={() => setShowLinkPanel(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a8ea4" }}>
+                <X size={14} />
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#546679", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5 }}>Company</label>
+                <select
+                  value={linkCompanyId}
+                  onChange={(e) => setLinkCompanyId(e.target.value)}
+                  style={{ width: "100%", height: 36, borderRadius: 9, border: "1px solid #c8d8ee", padding: "0 10px", fontSize: 13, color: "#24364b", background: "#fff" }}
+                >
+                  <option value="">— No company —</option>
+                  {allCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#546679", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5 }}>Deal</label>
+                <select
+                  value={linkDealId}
+                  onChange={(e) => setLinkDealId(e.target.value)}
+                  style={{ width: "100%", height: 36, borderRadius: 9, border: "1px solid #c8d8ee", padding: "0 10px", fontSize: 13, color: "#24364b", background: "#fff" }}
+                >
+                  <option value="">— No deal —</option>
+                  {allDeals.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                disabled={linkSaving}
+                onClick={handleSaveLink}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "#1f6feb", border: "1px solid #1f6feb", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                <Save size={13} /> {linkSaving ? "Saving…" : "Save"}
+              </button>
+              <button type="button" onClick={() => setShowLinkPanel(false)}
+                style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid #d9e1ec", background: "#fff", color: "#546679", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                Cancel
+              </button>
+              {(meeting.company_id || meeting.deal_id) && (
+                <button type="button"
+                  onClick={async () => {
+                    setLinkCompanyId("");
+                    setLinkDealId("");
+                    await meetingsApi.update(id!, { company_id: null, deal_id: null } as any);
+                    await loadAll();
+                    setShowLinkPanel(false);
+                  }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "1px solid #fcc", background: "#fff5f5", color: "#c0392b", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  <Link2Off size={12} /> Unlink all
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Attendee editor panel ── */}
+        {editingAttendees && (
+          <div style={{ marginTop: 20, padding: "16px 18px", borderRadius: 14, border: "1px solid #d3f0e2", background: "#f0fdf4" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#1a3d2b", display: "flex", alignItems: "center", gap: 6 }}>
+                <Users size={14} style={{ color: "#16a34a" }} /> Meeting Attendees
+              </span>
+              <button type="button" onClick={() => setEditingAttendees(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a8ea4" }}>
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Current attendee list */}
+            {attendeeList.length > 0 ? (
+              <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
+                {attendeeList.map((a) => (
+                  <div key={a.contact_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderRadius: 10, background: "#fff", border: "1px solid #c3e6cb" }}>
+                    <div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#1a3d2b" }}>{a.name}</span>
+                      {a.title && <span style={{ fontSize: 12, color: "#4a7a5a", marginLeft: 8 }}>{a.title}</span>}
+                      {a.email && <span style={{ fontSize: 11, color: "#7aad8a", marginLeft: 8 }}>{a.email}</span>}
+                    </div>
+                    <button type="button" onClick={() => handleRemoveAttendee(a.contact_id)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#e05050", padding: 4 }}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ fontSize: 13, color: "#4a7a5a", marginBottom: 12 }}>No attendees added yet.</p>
+            )}
+
+            {/* Add from linked company's contacts */}
+            {allContacts.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#4a7a5a", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                  Add from {company?.name ?? "linked company"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {allContacts
+                    .filter(c => !attendeeList.some(a => a.contact_id === c.id))
+                    .map(c => (
+                      <button key={c.id} type="button" onClick={() => handleAddAttendee(c)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, border: "1px solid #a8d5b5", background: "#fff", color: "#1a5c34", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                        <Plus size={11} />
+                        {c.first_name} {c.last_name}
+                        {c.title && <span style={{ color: "#7aad8a", fontWeight: 400 }}>· {c.title}</span>}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" disabled={attendeeSaving} onClick={handleSaveAttendees}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "#16a34a", border: "1px solid #16a34a", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                <Save size={13} /> {attendeeSaving ? "Saving…" : "Save Attendees"}
+              </button>
+              <button type="button" onClick={() => setEditingAttendees(false)}
+                style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid #c3e6cb", background: "#fff", color: "#4a7a5a", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid gap-3 md:grid-cols-4" style={{ gap: 12 }}>

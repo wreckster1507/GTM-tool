@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  AlertTriangle,
   BrainCircuit,
   CalendarDays,
   CheckCircle2,
@@ -11,7 +12,11 @@ import {
   MailCheck,
   RefreshCw,
   Sparkles,
+  Target,
+  TrendingUp,
   User,
+  Users,
+  Zap,
 } from "lucide-react";
 import { authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
@@ -72,11 +77,29 @@ function MeetingIntelCard({
     upcoming: { bg: "#f4f7ff", color: "#4b60cf", border: "#d7dffb", label: hours !== null ? `${hours}h away` : "Upcoming" },
   }[urgency];
 
+  // ── Extract intel snippets from research_data ────────────────────────────
+  const rd = (meeting.research_data ?? {}) as Record<string, any>;
+  const execBriefing: string | null = rd.executive_briefing ?? null;
+  const whyNow: Array<{ title: string; detail: string }> = rd.why_now_signals ?? [];
+  const recommendations: string[] = rd.meeting_recommendations ?? [];
+  const attendeeIntel = rd.attendee_intelligence ?? {};
+  const stakeholders: Array<{ name: string; title?: string; persona?: string }> =
+    attendeeIntel.stakeholder_cards ?? [];
+  const coverage: number | null = attendeeIntel.committee_coverage?.coverage_score ?? null;
+  const risks: string[] = [];
+  if (rd.intent_signals?.hiring?.length) risks.push("Active hiring signals");
+  if (rd.competitive_landscape?.length) risks.push("Competitive activity detected");
+  const topAction = recommendations[0] ?? null;
+  // First ~180 chars of executive briefing as teaser
+  const briefTeaser = execBriefing
+    ? execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").split("\n").filter(Boolean)[0]?.slice(0, 200)
+    : null;
+
   return (
     <div
       style={{
         background: "#fff",
-        border: `1px solid ${colors.border}`,
+        border: `1px solid ${urgency === "imminent" ? "#ffd3be" : colors.border}`,
         borderRadius: 16,
         padding: "18px 20px",
         display: "grid",
@@ -150,82 +173,106 @@ function MeetingIntelCard({
       {/* Intel status row */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {hasResearch ? (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "5px 10px",
-              borderRadius: 999,
-              background: colors.greenSoft,
-              color: colors.green,
-              border: "1px solid #cfe8d7",
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.greenSoft, color: colors.green, border: "1px solid #cfe8d7", fontSize: 12, fontWeight: 700 }}>
             <CheckCircle2 size={13} />
             Intel ready
           </span>
         ) : (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "5px 10px",
-              borderRadius: 999,
-              background: colors.amberSoft,
-              color: colors.amber,
-              border: `1px solid #ffe3b3`,
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.amberSoft, color: colors.amber, border: `1px solid #ffe3b3`, fontSize: 12, fontWeight: 700 }}>
             <BrainCircuit size={13} />
             No intel yet
           </span>
         )}
-
         {hasIntelSent && (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "5px 10px",
-              borderRadius: 999,
-              background: colors.primarySoft,
-              color: colors.primary,
-              border: "1px solid #d5e5ff",
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.primarySoft, color: colors.primary, border: "1px solid #d5e5ff", fontSize: 12, fontWeight: 700 }}>
             <MailCheck size={13} />
             Brief sent
           </span>
         )}
-
         {meeting.meeting_score != null && (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              padding: "5px 10px",
-              borderRadius: 999,
-              background: colors.violetSoft,
-              color: colors.violet,
-              border: "1px solid #eadbff",
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: colors.violetSoft, color: colors.violet, border: "1px solid #eadbff", fontSize: 12, fontWeight: 700 }}>
             Score {meeting.meeting_score}/100
           </span>
         )}
+        {coverage !== null && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: coverage >= 75 ? colors.greenSoft : colors.amberSoft, color: coverage >= 75 ? colors.green : colors.amber, border: `1px solid ${coverage >= 75 ? "#cfe8d7" : "#ffe3b3"}`, fontSize: 12, fontWeight: 700 }}>
+            <Target size={11} />
+            {coverage}% coverage
+          </span>
+        )}
+        {risks.length > 0 && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: "#fff5f0", color: colors.orange, border: "1px solid #ffd3be", fontSize: 12, fontWeight: 700 }}>
+            <AlertTriangle size={11} />
+            {risks[0]}
+          </span>
+        )}
       </div>
+
+      {/* ── Intel preview panel (only when research_data exists) ── */}
+      {hasResearch && (
+        <div style={{ display: "grid", gap: 10 }}>
+
+          {/* Executive briefing teaser */}
+          {briefTeaser && (
+            <div style={{ padding: "10px 14px", borderRadius: 12, background: "#fff8f5", border: "1px solid #ffd5be" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#b05a2a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
+                <Sparkles size={10} /> Executive Briefing
+              </div>
+              <p style={{ fontSize: 12.5, color: "#3d5268", lineHeight: 1.55, margin: 0 }}>
+                {briefTeaser}{execBriefing && execBriefing.length > 200 ? "…" : ""}
+              </p>
+            </div>
+          )}
+
+          {/* Why-now signals + stakeholders side by side */}
+          {(whyNow.length > 0 || stakeholders.length > 0) && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {whyNow.length > 0 && (
+                <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f3f8ff", border: "1px solid #d5e5ff" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#24567e", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                    <Zap size={10} /> Why Now ({whyNow.length})
+                  </div>
+                  <div style={{ display: "grid", gap: 5 }}>
+                    {whyNow.slice(0, 2).map((s, i) => (
+                      <div key={i}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#24364b" }}>{s.title}</div>
+                        <div style={{ fontSize: 11, color: "#546679", lineHeight: 1.4 }}>{s.detail?.slice(0, 80)}{(s.detail?.length ?? 0) > 80 ? "…" : ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {stakeholders.length > 0 && (
+                <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f5f0ff", border: "1px solid #e0d3ff" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#5a1fa5", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                    <Users size={10} /> Stakeholders ({stakeholders.length})
+                  </div>
+                  <div style={{ display: "grid", gap: 5 }}>
+                    {stakeholders.slice(0, 3).map((s, i) => (
+                      <div key={i} style={{ fontSize: 11, color: "#3d2d5e" }}>
+                        <span style={{ fontWeight: 700 }}>{s.name}</span>
+                        {s.title && <span style={{ color: "#7a6fa5" }}> · {s.title}</span>}
+                      </div>
+                    ))}
+                    {stakeholders.length > 3 && <div style={{ fontSize: 11, color: "#7a6fa5" }}>+{stakeholders.length - 3} more</div>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Top recommended action */}
+          {topAction && (
+            <div style={{ padding: "9px 14px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <TrendingUp size={13} style={{ color: "#15803d", marginTop: 2, flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Top Recommendation</div>
+                <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>{topAction}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Action buttons */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -247,11 +294,7 @@ function MeetingIntelCard({
             cursor: isRunning ? "wait" : "pointer",
           }}
         >
-          {isRunning ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <Sparkles size={13} />
-          )}
+          {isRunning ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
           {isRunning ? "Generating..." : hasResearch ? "Regenerate intel" : "Run intel now"}
         </button>
 

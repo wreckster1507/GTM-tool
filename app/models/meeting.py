@@ -93,6 +93,8 @@ class MeetingRead(MeetingBase):
 
 class MeetingUpdate(SQLModel):
     title: Optional[str] = None
+    company_id: Optional[UUID] = None
+    deal_id: Optional[UUID] = None
     scheduled_at: Optional[datetime] = None
     status: Optional[str] = None
     meeting_type: Optional[str] = None

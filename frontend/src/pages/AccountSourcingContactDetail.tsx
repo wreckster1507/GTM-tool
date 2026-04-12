@@ -336,6 +336,9 @@ export default function AccountSourcingContactDetail() {
   const [showEngagementTimeline, setShowEngagementTimeline] = useState(false);
   const [noteInput, setNoteInput] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
+  const [editingDomain, setEditingDomain] = useState(false);
+  const [domainInput, setDomainInput] = useState("");
+  const [domainSaving, setDomainSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -492,6 +495,20 @@ export default function AccountSourcingContactDetail() {
       await load();
     } finally {
       setCompanyEnriching(false);
+    }
+  };
+
+  const handleSaveDomain = async () => {
+    if (!company) return;
+    const trimmed = domainInput.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (!trimmed) return;
+    setDomainSaving(true);
+    try {
+      await accountSourcingApi.updateCompany(company.id, { domain: trimmed });
+      await load();
+      setEditingDomain(false);
+    } finally {
+      setDomainSaving(false);
     }
   };
 
@@ -1040,7 +1057,36 @@ export default function AccountSourcingContactDetail() {
               {company ? (
                 <>
                   <KV label="Company" value={<Link to={`/account-sourcing/${company.id}`} style={{ color: colors.primary, textDecoration: "none" }}>{company.name}</Link>} />
-                  <KV label="Domain" value={company.domain} />
+                  <KV label="Domain" value={
+                    editingDomain ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          autoFocus
+                          value={domainInput}
+                          onChange={(e) => setDomainInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveDomain(); if (e.key === "Escape") setEditingDomain(false); }}
+                          placeholder="e.g. acme.com"
+                          style={{ height: 28, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                        />
+                        <button type="button" disabled={domainSaving} onClick={handleSaveDomain}
+                          style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          {domainSaving ? "Saving…" : "Save"}
+                        </button>
+                        <button type="button" onClick={() => setEditingDomain(false)}
+                          style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span>{company.domain || <span style={{ color: colors.faint, fontStyle: "italic" }}>No domain set</span>}</span>
+                        <button type="button" onClick={() => { setDomainInput(company.domain || ""); setEditingDomain(true); }}
+                          style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.primary, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                          Edit
+                        </button>
+                      </span>
+                    )
+                  } />
                   <KV label="Account Thesis" value={company.account_thesis} />
                   <KV label="Why Now" value={company.why_now} />
                   <KV label="Beacon Angle" value={company.beacon_angle} />
