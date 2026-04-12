@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Building2, ChevronDown, Clock3, DollarSign, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, Trash2, Upload, UserCircle2 } from "lucide-react";
+import { Building2, CalendarDays, ChevronDown, Clock3, DollarSign, FileText, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, Trash2, Upload, UserCircle2 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
@@ -106,19 +106,163 @@ function normalizePipelineSummarySettings(value?: Partial<PipelineSummarySetting
   };
 }
 
+function relativeTime(timestamp?: string): string {
+  if (!timestamp) return "";
+  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (ageHours < 1) return "just now";
+  if (ageHours < 24) return `${Math.max(1, Math.floor(ageHours))}h ago`;
+  const ageDays = (Date.now() - new Date(timestamp).getTime()) / (1000 * 60 * 60 * 24);
+  if (ageDays < 1) return "today";
+  if (ageDays < 2) return "yesterday";
+  return `${Math.floor(ageDays)}d ago`;
+}
+
 function engagementTone(timestamp?: string) {
   if (!timestamp) {
-    return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef" };
+    return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef", accent: "#cbd5e1" };
   }
   const ageMs = Date.now() - new Date(timestamp).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   if (ageDays <= 3) {
-    return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0" };
+    return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0", accent: "#22c55e" };
   }
   if (ageDays <= 7) {
-    return { label: "Warm", background: "#fff7ed", color: "#c2410c", border: "#fed7aa" };
+    return { label: "Watch", background: "#fff7ed", color: "#c2410c", border: "#fed7aa", accent: "#f59e0b" };
   }
-  return { label: "Needs love", background: "#fff1f2", color: "#be123c", border: "#fecdd3" };
+  return { label: "Stale", background: "#fff1f2", color: "#be123c", border: "#fecdd3", accent: "#f43f5e" };
+}
+
+type EngagementSignal = NonNullable<Deal["seller_engagement_signal"]>;
+
+function engagementSummary(signal: EngagementSignal | undefined, side: "rep" | "client") {
+  if (!signal) {
+    return {
+      title: side === "rep" ? "No rep touch logged" : "No client touch logged",
+      detail: side === "rep" ? "Waiting for email, call, note, or meeting activity." : "Waiting for client reply, call, or meeting activity.",
+      Icon: Clock3,
+    };
+  }
+
+  switch (signal.type) {
+    case "email":
+      return {
+        title: side === "rep" ? "Rep reached out by email" : "Client replied by email",
+        detail: signal.label,
+        Icon: Mail,
+      };
+    case "call":
+      return {
+        title: side === "rep" ? "Rep logged a call" : "Client was active on a call",
+        detail: signal.label,
+        Icon: Phone,
+      };
+    case "meeting":
+      return {
+        title: side === "rep" ? "Rep had a meeting touch" : "Client joined a meeting",
+        detail: signal.label,
+        Icon: CalendarDays,
+      };
+    case "transcript":
+      return {
+        title: side === "rep" ? "Rep has fresh meeting intel" : "Client discussion was captured",
+        detail: signal.label,
+        Icon: FileText,
+      };
+    case "note":
+      return {
+        title: "Fresh rep note logged",
+        detail: signal.label,
+        Icon: FileText,
+      };
+    default:
+      return {
+        title: side === "rep" ? "Rep activity updated" : "Client activity updated",
+        detail: signal.label,
+        Icon: Clock3,
+      };
+  }
+}
+
+function EngagementBadge({
+  side,
+  timestamp,
+  signal,
+}: {
+  side: "rep" | "client";
+  timestamp?: string;
+  signal?: EngagementSignal;
+}) {
+  const tone = engagementTone(timestamp);
+  const summary = engagementSummary(signal, side);
+  const Icon = summary.Icon;
+
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        flex: 1,
+        borderRadius: 12,
+        border: `1px solid ${tone.border}`,
+        background: `linear-gradient(180deg, ${tone.background} 0%, #ffffff 100%)`,
+        padding: "8px 9px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 5,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.6)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <span
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 999,
+              background: "#ffffffcc",
+              border: `1px solid ${tone.border}`,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: tone.color,
+              flexShrink: 0,
+            }}
+          >
+            <Icon size={10} />
+          </span>
+          <span style={{ fontSize: 9, fontWeight: 800, color: "#5f6f84", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            {side === "rep" ? "Rep" : "Client"}
+          </span>
+        </div>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            color: tone.color,
+            background: "#ffffffb8",
+            border: `1px solid ${tone.border}`,
+            padding: "2px 6px",
+            borderRadius: 999,
+            flexShrink: 0,
+          }}
+        >
+          {tone.label}
+        </span>
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.3 }}>
+        {summary.title}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: tone.accent, flexShrink: 0 }} />
+        <span style={{ fontSize: 10, color: "#6b7b92", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {summary.detail}
+        </span>
+      </div>
+      <div style={{ fontSize: 10, color: "#8a9ab0", fontWeight: 600 }}>
+        {timestamp ? `Updated ${relativeTime(timestamp)}` : "No recent signal"}
+      </div>
+    </div>
+  );
 }
 
 function normalizeGeo(raw?: string | null): "Americas" | "India" | "APAC" | "Rest of World" | "" {
@@ -643,8 +787,6 @@ function CrmImportModal({
 
 function DealCard({ deal, onClick, onDragStart, onDragEnd }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void }) {
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
-  const repEngagement = engagementTone(deal.seller_engagement_at);
-  const clientEngagement = engagementTone(deal.client_engagement_at);
   return (
     <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onClick} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
@@ -654,14 +796,10 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd }: { deal: Deal; onCli
       {deal.company_name && <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#5e738b" }}><Building2 size={11} /><span>{deal.company_name}</span></div>}
       <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
       {deal.next_step && <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>{deal.next_step}</div>}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 8px", borderRadius: 999, background: repEngagement.background, color: repEngagement.color, border: `1px solid ${repEngagement.border}` }}>
-          Rep: {repEngagement.label}
-        </span>
-        <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 8px", borderRadius: 999, background: clientEngagement.background, color: clientEngagement.color, border: `1px solid ${clientEngagement.border}` }}>
-          Client: {clientEngagement.label}
-        </span>
-      </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+          <EngagementBadge side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} />
+          <EngagementBadge side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} />
+        </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
         {(deal.tags ?? []).slice(0, 2).map((tag) => <span key={tag} style={chip("#f8f0ff", "#6b46a0", "#e8d8f8")}>{tag}</span>)}
       </div>

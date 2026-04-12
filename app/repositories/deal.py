@@ -85,9 +85,42 @@ class DealRepository(BaseRepository[Deal]):
             return bool(row.email_from) and not cls._is_internal_email(row.email_from)
         return bool(row.contact_id) or row.type in {"call", "meeting", "transcript"}
 
-    async def _build_engagement_maps(self, deal_ids: list[UUID]) -> tuple[dict[UUID, datetime], dict[UUID, datetime]]:
+    @staticmethod
+    def _signal_label(row) -> dict:
+        """Return a human-readable signal object for an activity row."""
+        activity_type = row.type or "activity"
+        source = row.source or ""
+
+        if activity_type == "email":
+            sender = (row.email_from or "").strip()
+            label = f"Email · {sender}" if sender else "Email"
+        elif activity_type == "call":
+            if source == "aircall":
+                label = "Aircall · call"
+            else:
+                label = "Call"
+        elif activity_type == "meeting":
+            if source == "google_calendar":
+                label = "Calendar · meeting"
+            else:
+                label = "Meeting"
+        elif activity_type == "transcript":
+            if source == "tldv":
+                label = "tl;dv · transcript"
+            else:
+                label = "Call transcript"
+        elif activity_type == "note":
+            label = "Note logged"
+        else:
+            label = activity_type.replace("_", " ").capitalize()
+
+        return {"type": activity_type, "source": source, "label": label}
+
+    async def _build_engagement_maps(
+        self, deal_ids: list[UUID]
+    ) -> tuple[dict[UUID, datetime], dict[UUID, datetime], dict[UUID, dict], dict[UUID, dict]]:
         if not deal_ids:
-            return {}, {}
+            return {}, {}, {}, {}
 
         activity_rows = (
             await self.session.execute(
@@ -106,6 +139,8 @@ class DealRepository(BaseRepository[Deal]):
 
         seller_engagement: dict[UUID, datetime] = {}
         client_engagement: dict[UUID, datetime] = {}
+        seller_signal: dict[UUID, dict] = {}
+        client_signal: dict[UUID, dict] = {}
         for row in activity_rows:
             if not row.deal_id:
                 continue
@@ -113,11 +148,13 @@ class DealRepository(BaseRepository[Deal]):
                 current = seller_engagement.get(row.deal_id)
                 if current is None or row.created_at > current:
                     seller_engagement[row.deal_id] = row.created_at
+                    seller_signal[row.deal_id] = self._signal_label(row)
             if self._is_client_touch(row):
                 current = client_engagement.get(row.deal_id)
                 if current is None or row.created_at > current:
                     client_engagement[row.deal_id] = row.created_at
-        return seller_engagement, client_engagement
+                    client_signal[row.deal_id] = self._signal_label(row)
+        return seller_engagement, client_engagement, seller_signal, client_signal
 
     # ── Board query ──────────────────────────────────────────────────────────
 
@@ -148,7 +185,7 @@ class DealRepository(BaseRepository[Deal]):
 
         result = await self.session.execute(stmt)
         rows = result.all()
-        seller_engagement, client_engagement = await self._build_engagement_maps([deal.id for deal, *_ in rows if deal.id])
+        seller_engagement, client_engagement, seller_signal, client_signal = await self._build_engagement_maps([deal.id for deal, *_ in rows if deal.id])
 
         board: dict[str, list[DealRead]] = {}
         now = datetime.utcnow()
@@ -160,6 +197,8 @@ class DealRepository(BaseRepository[Deal]):
             read.meddpicc_score = compute_meddpicc_score(deal.qualification)
             read.seller_engagement_at = seller_engagement.get(deal.id)
             read.client_engagement_at = client_engagement.get(deal.id)
+            read.seller_engagement_signal = seller_signal.get(deal.id)
+            read.client_engagement_signal = client_signal.get(deal.id)
             # Compute days_in_stage live so reps always see real-time staleness
             if deal.stage_entered_at:
                 read.days_in_stage = (now - deal.stage_entered_at).days
@@ -200,7 +239,7 @@ class DealRepository(BaseRepository[Deal]):
             return None
 
         deal, company_name, rep_name, cc = row
-        seller_engagement, client_engagement = await self._build_engagement_maps([deal.id])
+        seller_engagement, client_engagement, seller_signal, client_signal = await self._build_engagement_maps([deal.id])
         read = DealRead.model_validate(deal)
         read.company_name = company_name
         read.assigned_rep_name = rep_name
@@ -208,6 +247,8 @@ class DealRepository(BaseRepository[Deal]):
         read.meddpicc_score = compute_meddpicc_score(deal.qualification)
         read.seller_engagement_at = seller_engagement.get(deal.id)
         read.client_engagement_at = client_engagement.get(deal.id)
+        read.seller_engagement_signal = seller_signal.get(deal.id)
+        read.client_engagement_signal = client_signal.get(deal.id)
         # Compute days_in_stage live
         if deal.stage_entered_at:
             read.days_in_stage = (datetime.utcnow() - deal.stage_entered_at).days

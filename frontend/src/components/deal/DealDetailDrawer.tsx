@@ -57,22 +57,162 @@ const MEDDPICC_LEVEL_COLORS = ["#94a3b8", "#f59e0b", "#3b82f6", "#22c55e"] as co
 
 function engagementTone(timestamp?: string) {
   if (!timestamp) {
-    return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef" };
+    return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef", accent: "#cbd5e1" };
   }
   const ageMs = Date.now() - new Date(timestamp).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   if (ageDays <= 3) {
-    return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0" };
+    return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0", accent: "#22c55e" };
   }
   if (ageDays <= 7) {
-    return { label: "Warm", background: "#fff7ed", color: "#c2410c", border: "#fed7aa" };
+    return { label: "Watch", background: "#fff7ed", color: "#c2410c", border: "#fed7aa", accent: "#f59e0b" };
   }
-  return { label: "Needs love", background: "#fff1f2", color: "#be123c", border: "#fecdd3" };
+  return { label: "Stale", background: "#fff1f2", color: "#be123c", border: "#fecdd3", accent: "#f43f5e" };
 }
 
-function engagementSubtitle(timestamp?: string) {
-  if (!timestamp) return "No recent activity";
-  return `Last touch ${formatDate(timestamp)}`;
+function relativeTime(timestamp?: string): string {
+  if (!timestamp) return "";
+  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (ageHours < 1) return "just now";
+  if (ageHours < 24) return `${Math.max(1, Math.floor(ageHours))}h ago`;
+  const ageDays = (Date.now() - new Date(timestamp).getTime()) / (1000 * 60 * 60 * 24);
+  if (ageDays < 1) return "today";
+  if (ageDays < 2) return "yesterday";
+  return `${Math.floor(ageDays)}d ago`;
+}
+
+type EngagementSignal = NonNullable<Deal["seller_engagement_signal"]>;
+
+function engagementSummary(signal: EngagementSignal | undefined, side: "rep" | "client") {
+  if (!signal) {
+    return {
+      title: side === "rep" ? "No rep touch logged" : "No client touch logged",
+      detail: side === "rep" ? "Waiting for email, call, meeting, or note activity." : "Waiting for client reply, meeting, or call activity.",
+      Icon: Clock3,
+    };
+  }
+
+  switch (signal.type) {
+    case "email":
+      return {
+        title: side === "rep" ? "Rep reached out by email" : "Client replied by email",
+        detail: signal.label,
+        Icon: Mail,
+      };
+    case "call":
+      return {
+        title: side === "rep" ? "Rep logged a call" : "Client was active on a call",
+        detail: signal.label,
+        Icon: Phone,
+      };
+    case "meeting":
+      return {
+        title: side === "rep" ? "Rep touched this in a meeting" : "Client joined a meeting",
+        detail: signal.label,
+        Icon: CalendarDays,
+      };
+    case "transcript":
+      return {
+        title: side === "rep" ? "Rep has fresh meeting intel" : "Client conversation was captured",
+        detail: signal.label,
+        Icon: FileText,
+      };
+    case "note":
+      return {
+        title: "Fresh rep note logged",
+        detail: signal.label,
+        Icon: FileText,
+      };
+    default:
+      return {
+        title: side === "rep" ? "Rep activity updated" : "Client activity updated",
+        detail: signal.label,
+        Icon: ActivityIcon,
+      };
+  }
+}
+
+function EngagementPanel({
+  side,
+  timestamp,
+  signal,
+}: {
+  side: "rep" | "client";
+  timestamp?: string;
+  signal?: EngagementSignal;
+}) {
+  const tone = engagementTone(timestamp);
+  const summary = engagementSummary(signal, side);
+  const Icon = summary.Icon;
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        minWidth: 180,
+        borderRadius: 14,
+        border: `1px solid ${tone.border}`,
+        background: `linear-gradient(180deg, ${tone.background} 0%, #ffffff 100%)`,
+        padding: "10px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.7)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 999,
+              border: `1px solid ${tone.border}`,
+              background: "#ffffffd1",
+              color: tone.color,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Icon size={12} />
+          </span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#5f6f84", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            {side === "rep" ? "Rep engagement" : "Client engagement"}
+          </span>
+        </div>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            color: tone.color,
+            background: "#ffffffbf",
+            border: `1px solid ${tone.border}`,
+            padding: "3px 8px",
+            borderRadius: 999,
+            flexShrink: 0,
+          }}
+        >
+          {tone.label}
+        </span>
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.35 }}>
+        {summary.title}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <span style={{ width: 7, height: 7, borderRadius: 999, background: tone.accent, flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: "#62748a", lineHeight: 1.35 }}>
+          {summary.detail}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11, color: "#7d8da4" }}>
+        <span>{timestamp ? `Updated ${relativeTime(timestamp)}` : "No recent signal yet"}</span>
+        {timestamp && <span style={{ whiteSpace: "nowrap" }}>{formatDate(timestamp)}</span>}
+      </div>
+    </div>
+  );
 }
 
 export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert }: Props) {
@@ -284,8 +424,6 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   };
 
   const stageLabel = stages.find((s) => s.id === deal.stage)?.label ?? deal.stage;
-  const sellerEngagement = engagementTone(deal.seller_engagement_at);
-  const clientEngagement = engagementTone(deal.client_engagement_at);
   const emailSyncAddress = deal.email_cc_alias && sharedInbox.includes("@")
     ? (() => {
         const [local, domain] = sharedInbox.split("@");
@@ -408,41 +546,9 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               )}
             </div>
 
-            <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap" }}>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 2,
-                  padding: "6px 10px",
-                  borderRadius: 10,
-                  background: sellerEngagement.background,
-                  color: sellerEngagement.color,
-                  border: `1px solid ${sellerEngagement.border}`,
-                  minWidth: 128,
-                }}
-              >
-                <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>Rep engagement</span>
-                <span style={{ fontSize: 12, fontWeight: 700 }}>{sellerEngagement.label}</span>
-                <span style={{ fontSize: 10, opacity: 0.8 }}>{engagementSubtitle(deal.seller_engagement_at)}</span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 2,
-                  padding: "6px 10px",
-                  borderRadius: 10,
-                  background: clientEngagement.background,
-                  color: clientEngagement.color,
-                  border: `1px solid ${clientEngagement.border}`,
-                  minWidth: 128,
-                }}
-              >
-                <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>Client engagement</span>
-                <span style={{ fontSize: 12, fontWeight: 700 }}>{clientEngagement.label}</span>
-                <span style={{ fontSize: 10, opacity: 0.8 }}>{engagementSubtitle(deal.client_engagement_at)}</span>
-              </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <EngagementPanel side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} />
+              <EngagementPanel side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} />
             </div>
 
             {/* Convert button for prospects */}

@@ -128,6 +128,9 @@ class DealRead(DealBase):
     meddpicc_score: Optional[int] = None
     seller_engagement_at: Optional[datetime] = None
     client_engagement_at: Optional[datetime] = None
+    # Signal justification — what activity drove the latest touch
+    seller_engagement_signal: Optional[dict] = None  # {type, source, label}
+    client_engagement_signal: Optional[dict] = None  # {type, source, label}
 
 
 class DealUpdate(SQLModel):

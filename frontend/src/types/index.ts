@@ -169,6 +169,8 @@ export interface Deal {
   meddpicc_score?: number;
   seller_engagement_at?: string;
   client_engagement_at?: string;
+  seller_engagement_signal?: { type: string; source: string; label: string };
+  client_engagement_signal?: { type: string; source: string; label: string };
 }
 
 export interface MeddpiccAiDimension {
