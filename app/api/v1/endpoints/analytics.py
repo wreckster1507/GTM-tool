@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
@@ -288,7 +288,7 @@ async def _load_monthly_unique_funnel(
 @router.get("/monthly-funnel-summary", response_model=list[MonthlyUniqueFunnelRow])
 async def monthly_funnel_summary(
     session: DBSession,
-    months: int = Query(12, ge=3, le=24),
+    months: Annotated[int, Query(ge=3, le=24)] = 12,
 ):
     return await _load_monthly_unique_funnel(session, months=months)
 
@@ -296,9 +296,9 @@ async def monthly_funnel_summary(
 @router.get("/sales-dashboard", response_model=SalesDashboardRead)
 async def sales_dashboard(
     session: DBSession,
-    window_days: int = Query(90, ge=30, le=365),
-    rep_id: UUID | None = Query(default=None),
-    geography: str | None = Query(default=None),
+    window_days: Annotated[int, Query(ge=30, le=365)] = 90,
+    rep_id: Annotated[UUID | None, Query()] = None,
+    geography: Annotated[str | None, Query()] = None,
 ):
     filter_rep_id = rep_id
     filter_geography = _normalize_geography_key(geography)

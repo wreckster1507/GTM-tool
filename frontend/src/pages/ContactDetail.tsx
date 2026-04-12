@@ -91,12 +91,15 @@ export default function ContactDetail() {
   const trackingTone = getProspectTrackingTone(contact);
 
   const isSourcedContact = Boolean(
-    company?.sourcing_batch_id
+    contact.company_id
+    || company?.sourcing_batch_id
     || (contact.enrichment_data && typeof contact.enrichment_data === "object" && (
       (contact.enrichment_data as Record<string, unknown>).raw_row
       || (contact.enrichment_data as Record<string, unknown>).sequence_plan
     ))
     || contact.outreach_lane
+    || contact.sequence_status
+    || contact.instantly_status
     || contact.warm_intro_path
   );
 
