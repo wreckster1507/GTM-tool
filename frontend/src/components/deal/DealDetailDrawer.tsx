@@ -87,8 +87,8 @@ type EngagementSignal = NonNullable<Deal["seller_engagement_signal"]>;
 function engagementSummary(signal: EngagementSignal | undefined, side: "rep" | "client") {
   if (!signal) {
     return {
-      title: side === "rep" ? "No rep touch logged" : "No client touch logged",
-      detail: side === "rep" ? "Waiting for email, call, meeting, or note activity." : "Waiting for client reply, meeting, or call activity.",
+      title: side === "rep" ? "No rep touch yet" : "No client touch yet",
+      detail: side === "rep" ? "Waiting for outreach activity" : "Waiting for buyer activity",
       Icon: Clock3,
     };
   }
@@ -96,37 +96,37 @@ function engagementSummary(signal: EngagementSignal | undefined, side: "rep" | "
   switch (signal.type) {
     case "email":
       return {
-        title: side === "rep" ? "Rep reached out by email" : "Client replied by email",
+        title: side === "rep" ? "Rep email sent" : "Client email",
         detail: signal.label,
         Icon: Mail,
       };
     case "call":
       return {
-        title: side === "rep" ? "Rep logged a call" : "Client was active on a call",
+        title: side === "rep" ? "Call logged" : "Client on call",
         detail: signal.label,
         Icon: Phone,
       };
     case "meeting":
       return {
-        title: side === "rep" ? "Rep touched this in a meeting" : "Client joined a meeting",
+        title: side === "rep" ? "Meeting touch" : "Client meeting",
         detail: signal.label,
         Icon: CalendarDays,
       };
     case "transcript":
       return {
-        title: side === "rep" ? "Rep has fresh meeting intel" : "Client conversation was captured",
+        title: side === "rep" ? "Meeting intel" : "Conversation captured",
         detail: signal.label,
         Icon: FileText,
       };
     case "note":
       return {
-        title: "Fresh rep note logged",
+        title: "Rep note added",
         detail: signal.label,
         Icon: FileText,
       };
     default:
       return {
-        title: side === "rep" ? "Rep activity updated" : "Client activity updated",
+        title: side === "rep" ? "Rep activity" : "Client activity",
         detail: signal.label,
         Icon: ActivityIcon,
       };
@@ -151,25 +151,24 @@ function EngagementPanel({
       style={{
         flex: 1,
         minWidth: 180,
-        borderRadius: 14,
+        borderRadius: 10,
         border: `1px solid ${tone.border}`,
-        background: `linear-gradient(180deg, ${tone.background} 0%, #ffffff 100%)`,
-        padding: "10px 12px",
+        background: "#fbfdff",
+        padding: "7px 9px",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.7)",
+        gap: 4,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <span
             style={{
-              width: 22,
-              height: 22,
+              width: 16,
+              height: 16,
               borderRadius: 999,
               border: `1px solid ${tone.border}`,
-              background: "#ffffffd1",
+              background: tone.background,
               color: tone.color,
               display: "inline-flex",
               alignItems: "center",
@@ -177,20 +176,19 @@ function EngagementPanel({
               flexShrink: 0,
             }}
           >
-            <Icon size={12} />
+            <Icon size={10} />
           </span>
-          <span style={{ fontSize: 10, fontWeight: 800, color: "#5f6f84", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            {side === "rep" ? "Rep engagement" : "Client engagement"}
+          <span style={{ fontSize: 9, fontWeight: 800, color: "#5f6f84", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            {side === "rep" ? "Rep" : "Client"}
           </span>
         </div>
         <span
           style={{
-            fontSize: 10,
-            fontWeight: 800,
+            fontSize: 9,
+            fontWeight: 700,
             color: tone.color,
-            background: "#ffffffbf",
-            border: `1px solid ${tone.border}`,
-            padding: "3px 8px",
+            background: tone.background,
+            padding: "1px 6px",
             borderRadius: 999,
             flexShrink: 0,
           }}
@@ -198,18 +196,14 @@ function EngagementPanel({
           {tone.label}
         </span>
       </div>
-      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.35 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {summary.title}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         <span style={{ width: 7, height: 7, borderRadius: 999, background: tone.accent, flexShrink: 0 }} />
-        <span style={{ fontSize: 12, color: "#62748a", lineHeight: 1.35 }}>
-          {summary.detail}
+        <span style={{ fontSize: 11, color: "#62748a", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {summary.detail} {timestamp ? `· ${relativeTime(timestamp)}` : ""}
         </span>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11, color: "#7d8da4" }}>
-        <span>{timestamp ? `Updated ${relativeTime(timestamp)}` : "No recent signal yet"}</span>
-        {timestamp && <span style={{ whiteSpace: "nowrap" }}>{formatDate(timestamp)}</span>}
       </div>
     </div>
   );
