@@ -30,6 +30,31 @@ logger = logging.getLogger(__name__)
 PERSONAL_SYNC_INTERVAL_SECONDS = 600  # 10 minutes
 
 
+def _run_async_task(coro):
+    """
+    Run a coroutine inside a fresh event loop and clean up any pending async
+    generators/tasks before closing the loop.
+
+    Some SDKs schedule async cleanup work late in the task lifecycle; if we
+    close the loop immediately after the main coroutine returns, workers can log
+    noisy "Event loop is closed" errors even though the task logic succeeded.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(coro)
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if pending:
+            for task in pending:
+                task.cancel()
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        return result
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
 @celery_app.task(
     name="app.tasks.personal_email_sync.sync_personal_inbox",
     bind=True,
@@ -41,13 +66,7 @@ PERSONAL_SYNC_INTERVAL_SECONDS = 600  # 10 minutes
 def sync_personal_inbox(self, connection_id: str) -> dict:
     """Sync one user's personal Gmail inbox. Called per-user."""
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(_async_sync_inbox(connection_id))
-        finally:
-            loop.close()
-        return result
+        return _run_async_task(_async_sync_inbox(connection_id))
     except Exception as exc:
         logger.error("Personal email sync failed for connection %s: %s", connection_id, exc)
         raise self.retry(exc=exc)
@@ -63,13 +82,7 @@ def sync_all_personal_inboxes(self) -> dict:
     enqueues one sync_personal_inbox task per user.
     """
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(_enqueue_all_inboxes())
-        finally:
-            loop.close()
-        return result
+        return _run_async_task(_enqueue_all_inboxes())
     except Exception as exc:
         logger.error("Failed to enqueue personal inbox syncs: %s", exc)
         return {"queued": 0, "error": str(exc)}
