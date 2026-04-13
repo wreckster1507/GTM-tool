@@ -587,6 +587,9 @@ export default function AccountSourcingCompanyDetail() {
   const [showTasksModal, setShowTasksModal] = useState(false);
   const [noteInput, setNoteInput] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
+  const [editingDomain, setEditingDomain] = useState(false);
+  const [domainInput, setDomainInput] = useState("");
+  const [domainSaving, setDomainSaving] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
   const [dealForm, setDealForm] = useState({
@@ -856,6 +859,20 @@ export default function AccountSourcingCompanyDetail() {
     document.getElementById("stakeholders-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  const handleSaveDomain = async () => {
+    if (!company) return;
+    const trimmed = domainInput.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (!trimmed) return;
+    setDomainSaving(true);
+    try {
+      await accountSourcingApi.updateCompany(company.id, { domain: trimmed });
+      await load();
+      setEditingDomain(false);
+    } finally {
+      setDomainSaving(false);
+    }
+  };
+
   const tier = company.icp_tier || "cold";
 
   return (
@@ -928,6 +945,95 @@ export default function AccountSourcingCompanyDetail() {
                     {item}
                   </span>
                 ))}
+                {editingDomain ? (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "4px 6px",
+                      borderRadius: 999,
+                      border: `1px solid ${colors.border}`,
+                      background: "#fff",
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={domainInput}
+                      onChange={(e) => setDomainInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSaveDomain();
+                        if (e.key === "Escape") setEditingDomain(false);
+                      }}
+                      placeholder="e.g. gainsight.com"
+                      style={{
+                        height: 30,
+                        minWidth: 220,
+                        borderRadius: 8,
+                        border: `1px solid ${colors.primary}`,
+                        padding: "0 10px",
+                        fontSize: 13,
+                        color: colors.text,
+                        outline: "none",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={domainSaving}
+                      onClick={handleSaveDomain}
+                      style={{
+                        height: 30,
+                        padding: "0 10px",
+                        borderRadius: 8,
+                        border: `1px solid ${colors.primary}`,
+                        background: colors.primary,
+                        color: "#fff",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: domainSaving ? "wait" : "pointer",
+                      }}
+                    >
+                      {domainSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingDomain(false)}
+                      style={{
+                        height: 30,
+                        padding: "0 10px",
+                        borderRadius: 8,
+                        border: `1px solid ${colors.border}`,
+                        background: "#fff",
+                        color: colors.faint,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDomainInput(company.domain || "");
+                      setEditingDomain(true);
+                    }}
+                    style={{
+                      borderRadius: 999,
+                      border: `1px solid ${company.domain.endsWith(".unknown") ? "#ffd7a0" : colors.border}`,
+                      background: company.domain.endsWith(".unknown") ? "#fff7eb" : "#f7f9fc",
+                      color: company.domain.endsWith(".unknown") ? colors.amber : colors.primary,
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Edit domain
+                  </button>
+                )}
                 {!company.domain.endsWith(".unknown") ? (
                   <a href={`https://${company.domain}`} target="_blank" rel="noreferrer" style={{ color: colors.primary, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 2px" }}>
                     <Globe size={13} /> Visit site <ExternalLink size={11} />
@@ -940,10 +1046,34 @@ export default function AccountSourcingCompanyDetail() {
               </p>
 
               {(company.domain.endsWith(".unknown") || !company.enriched_at) ? (
-                <div style={{ marginTop: 14, border: `1px solid #ffe0b2`, background: "#fff9f0", borderRadius: 12, padding: "10px 12px", color: colors.amber, fontSize: 13, lineHeight: 1.55 }}>
-                  {company.domain.endsWith(".unknown")
-                    ? "This account still has an unresolved domain placeholder, so some web and paid enrichment may be incomplete."
-                    : "This account has not completed enrichment yet."}
+                <div style={{ marginTop: 14, border: `1px solid #ffe0b2`, background: "#fff9f0", borderRadius: 12, padding: "10px 12px", color: colors.amber, fontSize: 13, lineHeight: 1.55, display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+                  <span>
+                    {company.domain.endsWith(".unknown")
+                      ? "This account still has an unresolved domain placeholder, so some web and paid enrichment may be incomplete."
+                      : "This account has not completed enrichment yet."}
+                  </span>
+                  {company.domain.endsWith(".unknown") ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDomainInput(company.domain || "");
+                        setEditingDomain(true);
+                      }}
+                      style={{
+                        borderRadius: 999,
+                        border: "1px solid #ffd7a0",
+                        background: "#fff",
+                        color: colors.amber,
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Fix domain
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
