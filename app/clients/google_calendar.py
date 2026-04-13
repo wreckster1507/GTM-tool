@@ -159,16 +159,19 @@ async def fetch_upcoming_events(
     Only returns events with at least one external attendee (i.e. customer meetings,
     not internal-only calls).
     """
-    # Check if calendar scope is available
+    # Do not rely exclusively on the stored scopes metadata. Some connections
+    # may have stale or incomplete scope lists even when the live token can
+    # access Calendar. We still attempt the API call and only stop on a real
+    # Google 403.
     granted_scopes = token_data.get("scopes", [])
     if isinstance(granted_scopes, list):
         has_calendar = any(CALENDAR_SCOPE in s for s in granted_scopes)
     else:
         has_calendar = CALENDAR_SCOPE in str(granted_scopes)
-
     if not has_calendar:
-        logger.info("google_calendar: calendar scope not granted — skipping calendar sync")
-        return [], token_data
+        logger.info(
+            "google_calendar: calendar scope missing from stored metadata; attempting calendar sync anyway"
+        )
 
     updated_token = await _refresh_token_if_needed(token_data, client_id, client_secret)
     access_token = updated_token["token"]
