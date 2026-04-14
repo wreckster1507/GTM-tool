@@ -590,7 +590,7 @@ export default function MeetingDetail() {
             <p className="text-[14px] text-[#647a91] mt-2 flex items-center gap-2 flex-wrap">
               {company ? (
                 <>
-                  <Link to={`/companies/${company.id}`} className="font-semibold text-[#24364b] hover:text-[#ff6b35]">
+                  <Link to={`/account-sourcing/${company.id}`} className="font-semibold text-[#24364b] hover:text-[#ff6b35]">
                     {company.name}
                   </Link>
                   ·
@@ -1454,7 +1454,7 @@ export default function MeetingDetail() {
             <p className="text-[13px] text-[#6f8399]">No contacts found for this company.</p>
             {company && (
               <p className="text-[12px] text-[#8fa5bc]">
-                Go to <Link to={`/companies/${company.id}`} className="font-semibold text-[#4a7fa5] hover:underline">{company.name}</Link> and click "Find Contacts" to discover stakeholders.
+                Go to <Link to={`/account-sourcing/${company.id}`} className="font-semibold text-[#4a7fa5] hover:underline">{company.name}</Link> and click "Find Contacts" to discover stakeholders.
               </p>
             )}
           </div>
