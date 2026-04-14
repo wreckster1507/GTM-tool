@@ -746,134 +746,226 @@ export default function MeetingDetail() {
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          SECTION 0a — ICP Research Prep (from enrichment_cache, always shown)
+          SECTION 0a — Pre-meeting prep (company facts + ICP research, always shown)
       ══════════════════════════════════════════════════════════════════════ */}
-      {hasIcpData && (
-        <Section title="Sales Prep — From ICP Research" icon={<Target size={15} className="text-[#1f6feb]" />} badge="Ready now">
-          <div style={{ display: "grid", gap: 14 }}>
+      {company && (
+        <Section title="Meeting Prep" icon={<Briefcase size={15} className="text-[#1f6feb]" />} defaultOpen={true}>
+          <div style={{ display: "grid", gap: 20 }}>
 
-            {/* Conversation starter + Beacon angle side by side */}
-            {(icpConversationStarter || icpBeaconAngle) && (
-              <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
-                {icpConversationStarter && (
-                  <div className="rounded-xl border border-[#d5e5ff] bg-[#f3f8ff] p-4">
-                    <p className="text-[11px] uppercase tracking-wide text-[#24567e] font-semibold mb-2">Open With This</p>
-                    <p className="text-[13px] text-[#1e3a5f] leading-relaxed italic">"{icpConversationStarter}"</p>
+            {/* ── Company snapshot ── */}
+            <div style={{ display: "grid", gap: 12 }}>
+              <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3" }}>Company</p>
+
+              {/* Facts row */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {[
+                  { label: "HQ", value: company.headquarters },
+                  { label: "Region", value: company.region },
+                  { label: "Industry", value: company.industry },
+                  { label: "Vertical", value: company.vertical },
+                  { label: "Employees", value: company.employee_count?.toLocaleString() },
+                  { label: "Funding", value: company.funding_stage },
+                  { label: "ARR", value: company.arr_estimate ? `$${(company.arr_estimate / 1_000_000).toFixed(1)}M` : null },
+                  { label: "ICP", value: company.icp_score != null ? `${company.icp_score} · ${company.icp_tier ?? ""}` : null },
+                  { label: "Ownership", value: company.ownership_stage },
+                ].filter(f => f.value).map(f => (
+                  <div key={f.label} style={{ padding: "6px 12px", borderRadius: 10, background: "#f4f7fb", border: "1px solid #e3eaf3" }}>
+                    <span style={{ fontSize: 10, color: "#8fa3ba", fontWeight: 700, textTransform: "uppercase", marginRight: 5 }}>{f.label}</span>
+                    <span style={{ fontSize: 12, color: "#2b3f55", fontWeight: 600 }}>{f.value}</span>
                   </div>
-                )}
-                {icpBeaconAngle && (
-                  <div className="rounded-xl border border-[#ffe0cf] bg-[#fff8f4] p-4">
-                    <p className="text-[11px] uppercase tracking-wide text-[#b05a2a] font-semibold mb-2">Beacon Angle</p>
-                    <p className="text-[13px] text-[#3d2510] leading-relaxed">{icpBeaconAngle}</p>
-                  </div>
-                )}
+                ))}
               </div>
-            )}
 
-            {/* Pain points */}
-            {icpPainPoints.length > 0 && (
-              <div className="rounded-xl border border-[#fecaca] bg-[#fff5f5] p-4">
-                <p className="text-[11px] uppercase tracking-wide text-[#b91c1c] font-semibold mb-2">Pain Points to Address</p>
-                <div style={{ display: "grid", gap: 5 }}>
-                  {icpPainPoints.map((p, i) => (
-                    <p key={i} className="text-[13px] text-[#7f1d1d] leading-relaxed">• {p}</p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Talking points */}
-            {icpTalkingPoints.length > 0 && (
-              <div className="rounded-xl border border-[#bbf7d0] bg-[#f0fdf4] p-4">
-                <p className="text-[11px] uppercase tracking-wide text-[#15803d] font-semibold mb-2">Talking Points</p>
-                <div style={{ display: "grid", gap: 5 }}>
-                  {icpTalkingPoints.map((t, i) => (
-                    <p key={i} className="text-[13px] text-[#1e4032] leading-relaxed">• {t}</p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Why now + recommended approach */}
-            {(icpWhyNow || icpRecommendedApproach) && (
-              <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
-                {icpWhyNow && (
-                  <div className="rounded-xl border border-[#fde68a] bg-[#fffbeb] p-4">
-                    <p className="text-[11px] uppercase tracking-wide text-[#92400e] font-semibold mb-2">Why Now</p>
-                    <p className="text-[13px] text-[#78350f] leading-relaxed">{icpWhyNow}</p>
-                  </div>
-                )}
-                {icpRecommendedApproach && (
-                  <div className="rounded-xl border border-[#e9d5ff] bg-[#faf5ff] p-4">
-                    <p className="text-[11px] uppercase tracking-wide text-[#7e22ce] font-semibold mb-2">Recommended Approach</p>
-                    <p className="text-[13px] text-[#4c1d95] leading-relaxed">{icpRecommendedApproach}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Hiring signals */}
-            {icpHiringSignals.length > 0 && (
-              <div className="rounded-xl border border-[#fde68a] bg-[#fffbeb] p-4">
-                <p className="text-[11px] uppercase tracking-wide text-[#92400e] font-semibold mb-2">
-                  Active Hiring ({icpHiringSignals.length} roles) — they're feeling the pain Beacon solves
+              {/* Description */}
+              {company.description && (
+                <p style={{ fontSize: 13, color: "#3d5268", lineHeight: 1.7, padding: "12px 16px", background: "#f8fafc", borderRadius: 12, border: "1px solid #e8edf5", margin: 0 }}>
+                  {company.description}
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  {icpHiringSignals.map((r, i) => (
-                    <span key={i} className="inline-flex items-center px-3 py-1 rounded-full border border-[#fde68a] bg-white text-[11px] font-semibold text-[#92400e]">{r}</span>
+              )}
+
+              {/* Tech stack */}
+              {techStack && Object.keys(techStack).length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {Object.entries(techStack).map(([cat, tool]) => (
+                    <span key={cat} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 999, background: "#eef2ff", border: "1px solid #c7d2fe", color: "#3730a3", fontWeight: 600 }}>
+                      {cat}: {String(tool)}
+                    </span>
                   ))}
                 </div>
-                {icpFunding && <p className="text-[12px] text-[#78350f] mt-3"><span className="font-bold">Funding signal:</span> {icpFunding}</p>}
-              </div>
-            )}
+              )}
 
-            {/* Competitors from ICP */}
-            {icpCompetitors.length > 0 && (
-              <div className="rounded-xl border border-[#fecaca] bg-[#fff5f5] p-4">
-                <p className="text-[11px] uppercase tracking-wide text-[#b91c1c] font-semibold mb-2">Competitive Landscape</p>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {icpCompetitors.slice(0, 5).map((c, i) => (
-                    <div key={i} style={{ paddingLeft: 10, borderLeft: "3px solid #fca5a5" }}>
-                      <p className="text-[12px] font-bold text-[#b91c1c]">{c.name}</p>
-                      {c.summary && <p className="text-[12px] text-[#7f1d1d] leading-relaxed mt-0.5">{c.summary}</p>}
-                    </div>
-                  ))}
+              {/* Investors */}
+              {(company.pe_investors || company.vc_investors || company.strategic_investors) && (
+                <div style={{ fontSize: 12, color: "#546679", padding: "10px 14px", background: "#f8fafc", borderRadius: 10, border: "1px solid #e3eaf3" }}>
+                  {company.pe_investors && <p style={{ margin: "0 0 2px" }}><span style={{ fontWeight: 700, color: "#2b3f55" }}>PE:</span> {company.pe_investors}</p>}
+                  {company.vc_investors && <p style={{ margin: "0 0 2px" }}><span style={{ fontWeight: 700, color: "#2b3f55" }}>VC:</span> {company.vc_investors}</p>}
+                  {company.strategic_investors && <p style={{ margin: 0 }}><span style={{ fontWeight: 700, color: "#2b3f55" }}>Strategic:</span> {company.strategic_investors}</p>}
                 </div>
-              </div>
-            )}
-
-            {/* Hunter contacts from ICP */}
-            {icpHunterContacts.length > 0 && (
-              <div className="rounded-xl border border-[#dbeafe] bg-[#eff6ff] p-4">
-                <p className="text-[11px] uppercase tracking-wide text-[#1d4ed8] font-semibold mb-2">Contacts Found ({icpHunterContacts.length})</p>
-                <div style={{ display: "grid", gap: 6 }}>
-                  {icpHunterContacts.slice(0, 5).map((c, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <div>
-                        <span className="text-[13px] font-semibold text-[#1e3a5f]">{c.first_name} {c.last_name}</span>
-                        {c.title && <span className="text-[12px] text-[#4a7fa5] ml-2">{c.title}</span>}
-                        {c.email && <span className="text-[11px] text-[#6b9ab8] ml-2">{c.email}</span>}
-                      </div>
-                      {c.linkedin_url && (
-                        <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-[#0077b5] font-semibold hover:underline ml-auto shrink-0">
-                          LinkedIn <ExternalLink size={10} />
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="rounded-xl border border-dashed border-[#c9daf0] bg-[#f5f9ff] px-4 py-3 flex items-center justify-between gap-3">
-              <p className="text-[12px] text-[#5a7a99]">
-                This prep is from your ICP research. Run <strong>Re-run Web Intel</strong> to add a fresh executive briefing, live news, stakeholder talk tracks, and discovery questions.
-              </p>
-              <button className="crm-button soft shrink-0" onClick={handleRunIntelligence} disabled={running}>
-                {running ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                {running ? "Running…" : "Run Web Intel"}
-              </button>
+              )}
             </div>
+
+            {/* ── Divider ── */}
+            {(company.beacon_angle || company.why_now || company.account_thesis || hasIcpData) && (
+              <div style={{ borderTop: "1px solid #e8edf5" }} />
+            )}
+
+            {/* ── Sales prep from ICP research (direct company fields first) ── */}
+            {(company.beacon_angle || company.why_now || company.account_thesis || icpConversationStarter) && (
+              <div style={{ display: "grid", gap: 12 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Sales Prep</p>
+
+                {/* Open with + Beacon angle */}
+                <div style={{ display: "grid", gridTemplateColumns: icpConversationStarter && (company.beacon_angle || company.why_now) ? "1fr 1fr" : "1fr", gap: 12 }}>
+                  {icpConversationStarter && (
+                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #f0f7ff, #e8f2ff)", border: "1px solid #c7dcf8" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#1d4ed8", marginBottom: 6 }}>Open With This</p>
+                      <p style={{ fontSize: 13, color: "#1e3a5f", lineHeight: 1.65, fontStyle: "italic", margin: 0 }}>"{icpConversationStarter}"</p>
+                    </div>
+                  )}
+                  {(company.beacon_angle || company.why_now) && (
+                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #fff8f4, #fff3ec)", border: "1px solid #ffd5be" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#c2410c", marginBottom: 6 }}>Beacon Angle</p>
+                      <p style={{ fontSize: 13, color: "#431407", lineHeight: 1.65, margin: 0 }}>{company.beacon_angle || icpBeaconAngle}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Why now + Account thesis */}
+                {(company.why_now || company.account_thesis) && (
+                  <div style={{ display: "grid", gridTemplateColumns: company.why_now && company.account_thesis ? "1fr 1fr" : "1fr", gap: 12 }}>
+                    {company.why_now && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #fffbeb, #fef9e7)", border: "1px solid #fde68a" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#92400e", marginBottom: 6 }}>Why Now</p>
+                        <p style={{ fontSize: 13, color: "#78350f", lineHeight: 1.65, margin: 0 }}>{company.why_now}</p>
+                      </div>
+                    )}
+                    {company.account_thesis && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #f5f3ff, #ede9fe)", border: "1px solid #ddd6fe" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#6d28d9", marginBottom: 6 }}>Account Thesis</p>
+                        <p style={{ fontSize: 13, color: "#4c1d95", lineHeight: 1.65, margin: 0 }}>{company.account_thesis}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Pain points */}
+                {icpPainPoints.length > 0 && (
+                  <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fafafa", border: "1px solid #e8edf5" }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#b91c1c", marginBottom: 8 }}>Pain Points to Address</p>
+                    <div style={{ display: "grid", gap: 5 }}>
+                      {icpPainPoints.map((p, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <span style={{ color: "#ef4444", fontWeight: 700, flexShrink: 0, marginTop: 1 }}>·</span>
+                          <p style={{ fontSize: 13, color: "#374151", lineHeight: 1.6, margin: 0 }}>{p}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Talking points */}
+                {icpTalkingPoints.length > 0 && (
+                  <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fafafa", border: "1px solid #e8edf5" }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#15803d", marginBottom: 8 }}>Talking Points</p>
+                    <div style={{ display: "grid", gap: 5 }}>
+                      {icpTalkingPoints.map((t, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <span style={{ color: "#22c55e", fontWeight: 700, flexShrink: 0, marginTop: 1 }}>✓</span>
+                          <p style={{ fontSize: 13, color: "#374151", lineHeight: 1.6, margin: 0 }}>{t}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Intent signals row ── */}
+            {(icpHiringSignals.length > 0 || icpFunding || icpCompetitors.length > 0) && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 12 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Signals</p>
+
+                  <div style={{ display: "grid", gridTemplateColumns: icpCompetitors.length > 0 && icpHiringSignals.length > 0 ? "1fr 1fr" : "1fr", gap: 12 }}>
+                    {/* Hiring */}
+                    {icpHiringSignals.length > 0 && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fffbeb", border: "1px solid #fde68a" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#92400e", marginBottom: 8 }}>
+                          Hiring {icpHiringSignals.length} roles — buying signal
+                        </p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {icpHiringSignals.map((r, i) => (
+                            <span key={i} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 999, background: "#fff", border: "1px solid #fde68a", color: "#92400e", fontWeight: 600 }}>{r}</span>
+                          ))}
+                        </div>
+                        {icpFunding && <p style={{ fontSize: 12, color: "#78350f", marginTop: 8, marginBottom: 0 }}><span style={{ fontWeight: 700 }}>Funding:</span> {icpFunding}</p>}
+                      </div>
+                    )}
+
+                    {/* Competitors */}
+                    {icpCompetitors.length > 0 && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff5f5", border: "1px solid #fecaca" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#b91c1c", marginBottom: 8 }}>In Evaluation</p>
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {icpCompetitors.slice(0, 4).map((c, i) => (
+                            <div key={i} style={{ paddingLeft: 8, borderLeft: "2px solid #fca5a5" }}>
+                              <p style={{ fontSize: 12, fontWeight: 700, color: "#991b1b", margin: 0 }}>{c.name}</p>
+                              {c.summary && <p style={{ fontSize: 11, color: "#7f1d1d", lineHeight: 1.4, margin: "2px 0 0" }}>{c.summary.slice(0, 100)}{c.summary.length > 100 ? "…" : ""}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── Hunter contacts ── */}
+            {icpHunterContacts.length > 0 && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 10 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Contacts Found ({icpHunterContacts.length})</p>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {icpHunterContacts.slice(0, 6).map((c, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5" }}>
+                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "#3730a3", flexShrink: 0 }}>
+                          {(c.first_name?.[0] ?? "") + (c.last_name?.[0] ?? "")}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ fontSize: 13, fontWeight: 700, color: "#1e3a5f", margin: 0 }}>{c.first_name} {c.last_name}</p>
+                          {c.title && <p style={{ fontSize: 11, color: "#64748b", margin: 0 }}>{c.title}</p>}
+                          {c.email && <p style={{ fontSize: 11, color: "#94a3b8", margin: 0 }}>{c.email}</p>}
+                        </div>
+                        {c.linkedin_url && (
+                          <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#0077b5", fontWeight: 600, textDecoration: "none", flexShrink: 0, display: "flex", alignItems: "center", gap: 3 }}>
+                            LinkedIn <ExternalLink size={10} />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── Run intel CTA ── */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderRadius: 12, background: "#f4f7fb", border: "1px dashed #c9daf0" }}>
+              <p style={{ fontSize: 12, color: "#5a7a99", margin: 0, lineHeight: 1.5 }}>
+                {intelWasRun
+                  ? "Web intel was run — scroll down for the executive briefing, live news, and stakeholder talk tracks."
+                  : "Run Web Intel to add a fresh AI executive briefing, live news, stakeholder talk tracks, and discovery questions."}
+              </p>
+              {!intelWasRun && (
+                <button className="crm-button soft shrink-0" onClick={handleRunIntelligence} disabled={running}>
+                  {running ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  {running ? "Running…" : "Run Web Intel"}
+                </button>
+              )}
+            </div>
+
           </div>
         </Section>
       )}
