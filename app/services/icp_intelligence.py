@@ -95,6 +95,44 @@ async def _resolve_domain(ws, company_name: str) -> str:
     return resolved or f"{company_name.lower().replace(' ', '')}.unknown"
 
 
+async def _safe_apply_resolved_domain(session, company, resolved_domain: str) -> dict[str, Any]:
+    """Apply a newly resolved domain unless it collides with another company."""
+    from sqlmodel import select
+    from app.models.company import Company
+
+    normalized = (resolved_domain or "").strip().lower()
+    current = (company.domain or "").strip().lower()
+    if not normalized or normalized.endswith(".unknown"):
+        return {"status": "unresolved"}
+    if normalized == current:
+        return {"status": "unchanged", "domain": normalized}
+
+    existing = (
+        await session.execute(
+            select(Company).where(Company.domain == normalized, Company.id != company.id)
+        )
+    ).scalar_one_or_none()
+    if existing:
+        logger.warning(
+            "ICP research: resolved domain '%s' for '%s' already belongs to company %s (%s); keeping existing domain '%s'",
+            normalized,
+            company.name,
+            existing.id,
+            existing.name,
+            company.domain,
+        )
+        return {
+            "status": "conflict",
+            "domain": normalized,
+            "conflict_company_id": str(existing.id),
+            "conflict_company_name": existing.name,
+            "kept_domain": company.domain,
+        }
+
+    company.domain = normalized
+    return {"status": "updated", "domain": normalized}
+
+
 async def _collect_all_data(
     ws, apollo, company_name: str, domain: str, has_domain: bool,
     hunter_key: str = "",
@@ -1299,12 +1337,7 @@ async def research_company_and_update(
     # ── Update company fields from ICP analysis ──────────────────────────
     # Update domain if we resolved a better one
     resolved_domain = result.get("domain", "")
-    if (
-        resolved_domain
-        and not resolved_domain.endswith(".unknown")
-        and (company.domain.endswith(".unknown") or company.domain != resolved_domain)
-    ):
-        company.domain = resolved_domain
+    domain_resolution = await _safe_apply_resolved_domain(session, company, resolved_domain)
 
     # Core fields
     if icp.get("company_overview"):
@@ -1409,6 +1442,10 @@ async def research_company_and_update(
         "fetched_at": analyzed_at,
     }
     cache["competitive_landscape_v2"] = _build_competitive_landscape_cards(company.name, icp)
+    cache["domain_resolution"] = {
+        **domain_resolution,
+        "attempted_at": analyzed_at,
+    }
     company.enrichment_cache = cache
 
     # Store structured analyst data in enrichment_sources.import without losing
@@ -1801,12 +1838,7 @@ async def research_company_and_update_free(
 
     # Update domain if resolved
     resolved_domain = result.get("domain", "")
-    if (
-        resolved_domain
-        and not resolved_domain.endswith(".unknown")
-        and (company.domain.endswith(".unknown") or company.domain != resolved_domain)
-    ):
-        company.domain = resolved_domain
+    domain_resolution = await _safe_apply_resolved_domain(session, company, resolved_domain)
 
     if icp.get("company_overview"):
         company.description = str(icp["company_overview"])[:2000]
@@ -1874,6 +1906,10 @@ async def research_company_and_update_free(
         "fetched_at": analyzed_at,
     }
     cache["competitive_landscape_v2"] = _build_competitive_landscape_cards(company.name, icp)
+    cache["domain_resolution"] = {
+        **domain_resolution,
+        "attempted_at": analyzed_at,
+    }
     company.enrichment_cache = cache
 
     enrichment_sources = copy.deepcopy(company.enrichment_sources or {})
