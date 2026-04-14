@@ -519,11 +519,12 @@ export default function MeetingDetail() {
     if (entry && typeof entry === "object" && "data" in entry) return entry.data;
     return entry ?? null;
   };
-  const cachedIcp = _unwrapEc("icp_analysis");
-  const icpData = cachedIcp && typeof cachedIcp === "object" && "data" in cachedIcp ? cachedIcp.data : cachedIcp;
+  // icp_analysis cache shape: { data: { conversation_starter, beacon_angle, ... }, analyzed_at, ... }
+  // _unwrapEc already pulls .data out, so cachedIcp IS the ICP fields object directly.
+  const icpData = _unwrapEc("icp_analysis") as Record<string, any> | null;
   const cachedAiSummary = _unwrapEc("ai_summary") as Record<string, any> | null;
   const cachedIntent = _unwrapEc("intent_signals") as Record<string, any> | null;
-  const cachedHunterContacts = _unwrapEc("hunter_contacts") as any[] | null;
+  const cachedHunterContacts = _unwrapEc("hunter_contacts") as any;
   const cachedCompetitive = ec["competitive_landscape_v2"] as any[] | null;
   const cachedHunterCompany = _unwrapEc("hunter_company") as Record<string, any> | null;
   const cachedGoogleNews = _unwrapEc("google_news") as Array<{ title: string; url: string; published?: string; source?: string }> | null;
@@ -542,9 +543,10 @@ export default function MeetingDetail() {
   const icpCompetitors: Array<{ name: string; summary?: string }> = (cachedCompetitive ?? [])
     .filter((c: any) => typeof c === "object")
     .map((c: any) => ({ name: c.name ?? c.competitor ?? "", summary: c.summary ?? "" }));
+  // hunter_contacts.data may be a flat array OR {contacts:[]} shape — handle both
   const icpHunterContacts: Array<{ first_name?: string; last_name?: string; title?: string; email?: string; linkedin_url?: string; seniority?: string; department?: string; phone_number?: string }> =
     Array.isArray(cachedHunterContacts) ? cachedHunterContacts.filter((c: any) => typeof c === "object") :
-    (Array.isArray((cachedHunterContacts as any)?.contacts) ? (cachedHunterContacts as any).contacts.filter((c: any) => typeof c === "object") : []);
+    (Array.isArray(cachedHunterContacts?.contacts) ? cachedHunterContacts.contacts.filter((c: any) => typeof c === "object") : []);
 
   const hasIcpData = !!(icpBeaconAngle || icpConversationStarter || icpPainPoints.length || icpTalkingPoints.length);
 

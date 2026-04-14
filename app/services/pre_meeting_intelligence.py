@@ -1226,7 +1226,10 @@ async def run_research_more(
 
     ec: dict = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
     domain = company.domain or ""
-    name = company.name or ""
+    raw_name = company.name or ""
+    # Strip CRM suffixes like " - Impl", " - Skilljar" to get the real company name
+    import re as _re
+    name = _re.sub(r'\s*-\s*(Impl|Skilljar|CS|Pilot|Trial|POC|Demo|Test)\s*$', '', raw_name, flags=_re.IGNORECASE).strip() or raw_name
     now = datetime.utcnow()
     filled: list[str] = []
     gaps: list[str] = []
@@ -1250,6 +1253,15 @@ async def run_research_more(
         except Exception:
             return 9999
 
+    def _has_contacts(key) -> bool:
+        """Check if hunter_contacts has real contacts — handles both flat array and {contacts:[]} shapes."""
+        data = _unwrap(key)
+        if isinstance(data, list):
+            return len(data) > 0
+        if isinstance(data, dict):
+            return len(data.get("contacts", [])) > 0
+        return False
+
     hunter = HunterClient()
     web = WebSearchClient()
     ai = AzureOpenAIClient()
@@ -1264,9 +1276,7 @@ async def run_research_more(
     # ── Gap: hunter_contacts (empty or paused) ──
     hc_entry = ec.get("hunter_contacts")
     hc_paused = isinstance(hc_entry, dict) and hc_entry.get("paused")
-    hc_data = _unwrap("hunter_contacts")
-    hc_contacts = hc_data.get("contacts", []) if isinstance(hc_data, dict) else (hc_data if isinstance(hc_data, list) else [])
-    if (not hc_contacts or hc_paused) and domain and not domain.endswith(".unknown"):
+    if (not _has_contacts("hunter_contacts") or hc_paused) and domain and not domain.endswith(".unknown"):
         gaps.append("hunter_contacts")
         tasks_to_run.append(("hunter_contacts", hunter.domain_search_rich(domain)))
 

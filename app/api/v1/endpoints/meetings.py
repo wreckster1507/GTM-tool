@@ -193,9 +193,14 @@ async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: 
     if not company:
         return {"gaps": [], "count": 0}
 
+    import re as _re
     ec = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
     now = datetime.utcnow()
     gaps = []
+
+    # Strip CRM suffixes to get real company name for news/search queries
+    raw_name = company.name or ""
+    clean_name = _re.sub(r'\s*-\s*(Impl|Skilljar|CS|Pilot|Trial|POC|Demo|Test)\s*$', '', raw_name, flags=_re.IGNORECASE).strip() or raw_name
 
     def _unwrap(key):
         entry = ec.get(key)
@@ -209,11 +214,18 @@ async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: 
         if not fetched_at:
             return 9999
         try:
-            from datetime import datetime as dt
-            d = dt.fromisoformat(fetched_at)
+            d = datetime.fromisoformat(fetched_at)
             return (now - d).total_seconds() / 86400
         except Exception:
             return 9999
+
+    def _has_contacts() -> bool:
+        data = _unwrap("hunter_contacts")
+        if isinstance(data, list):
+            return len(data) > 0
+        if isinstance(data, dict):
+            return len(data.get("contacts", [])) > 0
+        return False
 
     domain = company.domain or ""
 
@@ -222,19 +234,17 @@ async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: 
 
     hc_entry = ec.get("hunter_contacts")
     hc_paused = isinstance(hc_entry, dict) and hc_entry.get("paused")
-    hc_data = _unwrap("hunter_contacts")
-    hc_contacts = hc_data.get("contacts", []) if isinstance(hc_data, dict) else (hc_data if isinstance(hc_data, list) else [])
-    if (not hc_contacts or hc_paused) and domain and not domain.endswith(".unknown"):
+    if (not _has_contacts() or hc_paused) and domain and not domain.endswith(".unknown"):
         gaps.append({"key": "hunter_contacts", "label": "Verified contacts with seniority & department"})
 
     if not _unwrap("google_news") or _age_days("google_news") > 7:
-        if company.name:
-            gaps.append({"key": "google_news", "label": f"Latest news about {company.name}"})
+        if clean_name:
+            gaps.append({"key": "google_news", "label": f"Latest news about {clean_name}"})
 
     if not _unwrap("web_scrape") and domain and not domain.endswith(".unknown"):
         gaps.append({"key": "web_scrape", "label": "Website content (pricing, product, careers)"})
 
-    if not ec.get("competitive_landscape_v2") and company.name:
+    if not ec.get("competitive_landscape_v2") and clean_name:
         gaps.append({"key": "competitive_landscape", "label": "Competitive landscape"})
 
     icp_raw = _unwrap("icp_analysis")
