@@ -84,6 +84,10 @@ def _domain_from_email(addr: str) -> str:
     return _normalize_domain(addr.split("@", 1)[1])
 
 
+def _is_internal_address(addr: str, internal_domain: str) -> bool:
+    return bool(addr and internal_domain and _domain_from_email(addr) == internal_domain)
+
+
 def _infer_name_from_email(addr: str) -> tuple[str, str]:
     local = (addr.split("@", 1)[0] if "@" in addr else addr).strip()
     parts = [p for p in local.replace("_", ".").replace("-", ".").split(".") if p]
@@ -577,13 +581,26 @@ async def process_personal_emails(
     for msg in messages:
         stats["emails_processed"] += 1
 
+        user_domain = _domain_from_email(connection.email_address)
+
         # Collect all addresses in this message, excluding the user's own address
         all_addrs: set[str] = set()
         all_addrs.add(msg.from_addr)
         all_addrs.update(msg.to_addrs)
         all_addrs.update(msg.cc_addrs)
-        all_addrs.discard("")
+        all_addrs = {
+            addr.strip().lower()
+            for addr in all_addrs
+            if addr and addr.strip()
+        }
         all_addrs.discard(connection.email_address.lower())
+        # Never use internal rep addresses for CRM entity matching. Internal
+        # contacts may be linked on deals for collaboration, but they should
+        # not cause personal inbox sync to attach external threads to those deals.
+        all_addrs = {
+            addr for addr in all_addrs
+            if not _is_internal_address(addr, user_domain)
+        }
 
         if not all_addrs:
             continue
@@ -628,7 +645,6 @@ async def process_personal_emails(
                 if _domain_from_email(addr)
             }
             # Remove the user's own company domain (don't match internal mail)
-            user_domain = _domain_from_email(connection.email_address)
             external_domains.discard(user_domain)
 
             for domain in external_domains:
@@ -728,7 +744,11 @@ async def process_personal_emails(
                 await _ensure_deal_contact(session, deal_id, contact_id)
 
         # ── Activity logging ──────────────────────────────────────────────────
-        sender_contact_id: UUID | None = contact_email_map.get(msg.from_addr)
+        sender_contact_id: UUID | None = None
+        if not _is_internal_address(msg.from_addr, user_domain):
+            sender_contact_id = contact_email_map.get(msg.from_addr)
+        elif matched_contact_ids:
+            sender_contact_id = matched_contact_ids[0]
         ai_summary = await _generate_email_summary(msg.subject, msg.body_text)
 
         for deal_id in deal_ids:
