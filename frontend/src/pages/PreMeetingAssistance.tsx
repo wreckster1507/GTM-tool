@@ -5,11 +5,14 @@ import {
   BrainCircuit,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock3,
   ExternalLink,
   Filter,
   Loader2,
   MailCheck,
+  MessageSquare,
   RefreshCw,
   Sparkles,
   Target,
@@ -17,10 +20,16 @@ import {
   User,
   Users,
   Zap,
+  Building2,
+  Activity as ActivityIcon,
+  ListChecks,
+  Swords,
+  Briefcase,
+  AlertCircle,
 } from "lucide-react";
-import { authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
+import { activitiesApi, authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import type { Company, Deal, Meeting, User as UserType } from "../types";
+import type { Activity, Company, Deal, Meeting, User as UserType } from "../types/index";
 import { formatDate } from "../lib/utils";
 
 const colors = {
@@ -38,6 +47,8 @@ const colors = {
   amberSoft: "#fff4df",
   orange: "#b94a20",
   orangeSoft: "#fff2ec",
+  red: "#c0392b",
+  redSoft: "#fff5f5",
 };
 
 function hoursUntil(dateStr?: string): number | null {
@@ -46,30 +57,61 @@ function hoursUntil(dateStr?: string): number | null {
   return Math.round(diff / (1000 * 60 * 60));
 }
 
+function timeAgo(dateStr?: string): string {
+  if (!dateStr) return "—";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
+function SectionHeader({ icon: Icon, label, color }: { icon: any; label: string; color: string }) {
+  return (
+    <div style={{ fontSize: 10, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+      <Icon size={10} />
+      {label}
+    </div>
+  );
+}
+
+function Pill({ label, color, bg, border }: { label: string; color: string; bg: string; border: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, background: bg, color, border: `1px solid ${border}`, fontSize: 11, fontWeight: 700 }}>
+      {label}
+    </span>
+  );
+}
+
 function MeetingIntelCard({
   meeting,
-  companyName,
+  company,
+  deal,
+  lastActivity,
   assigneeName,
   onRunIntel,
   runningIntel,
 }: {
   meeting: Meeting;
-  companyName?: string;
+  company?: Company;
+  deal?: Deal;
+  lastActivity?: Activity;
   assigneeName?: string;
   onRunIntel: (id: string) => void;
   runningIntel: string | null;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const hours = hoursUntil(meeting.scheduled_at);
   const hasResearch = !!meeting.research_data;
   const hasIntelSent = !!(meeting as any).intel_email_sent_at;
   const isRunning = runningIntel === meeting.id;
 
   const urgency =
-    hours !== null && hours <= 2
-      ? "imminent"
-      : hours !== null && hours <= 12
-      ? "soon"
-      : "upcoming";
+    hours !== null && hours <= 2 ? "imminent"
+    : hours !== null && hours <= 12 ? "soon"
+    : "upcoming";
 
   const urgencyStyle = {
     imminent: { bg: "#fff2ec", color: colors.orange, border: "#ffd3be", label: "< 2 hrs" },
@@ -77,23 +119,48 @@ function MeetingIntelCard({
     upcoming: { bg: "#f4f7ff", color: "#4b60cf", border: "#d7dffb", label: hours !== null ? `${hours}h away` : "Upcoming" },
   }[urgency];
 
-  // ── Extract intel snippets from research_data ────────────────────────────
+  // ── Parse research_data ──────────────────────────────────────────────────
   const rd = (meeting.research_data ?? {}) as Record<string, any>;
-  const execBriefing: string | null = rd.executive_briefing ?? null;
+  const execBriefing: string = rd.executive_briefing ?? "";
   const whyNow: Array<{ title: string; detail: string }> = rd.why_now_signals ?? [];
   const recommendations: string[] = rd.meeting_recommendations ?? [];
   const attendeeIntel = rd.attendee_intelligence ?? {};
-  const stakeholders: Array<{ name: string; title?: string; persona?: string }> =
-    attendeeIntel.stakeholder_cards ?? [];
+  const stakeholders: Array<{
+    name: string; title?: string; persona?: string; committee_role?: string;
+    talk_track?: string; discovery_questions?: string[]; linkedin_url?: string;
+  }> = attendeeIntel.stakeholder_cards ?? [];
   const coverage: number | null = attendeeIntel.committee_coverage?.coverage_score ?? null;
+  const competitive: Array<{ name?: string; competitor?: string; summary?: string }> = rd.competitive_landscape ?? [];
+  const intentSignals = rd.intent_signals ?? {};
+  const hiringRoles: string[] = intentSignals.hiring ?? [];
+  const websiteAnalysis = rd.website_analysis ?? {};
+  const techStack: string[] = websiteAnalysis.tech_stack ?? rd.company_snapshot?.tech_stack ?? [];
+  const pricingModel: string = websiteAnalysis.pricing_model ?? "";
+  const hunterCo = rd.hunter_company ?? {};
+  const companySnapshot = rd.company_snapshot ?? {};
+  const newsItems: Array<{ title?: string; url?: string; published?: string }> = rd.recent_news ?? rd.news ?? [];
+  const battlecards: Array<{ competitor?: string; win_reasons?: string[]; objection_handling?: string }> = rd.battlecards ?? [];
+
+  // Risks
   const risks: string[] = [];
-  if (rd.intent_signals?.hiring?.length) risks.push("Active hiring signals");
-  if (rd.competitive_landscape?.length) risks.push("Competitive activity detected");
-  const topAction = recommendations[0] ?? null;
-  // First ~180 chars of executive briefing as teaser
+  if (hiringRoles.length) risks.push(`Hiring ${hiringRoles.length} role${hiringRoles.length > 1 ? "s" : ""}`);
+  if (competitive.length) risks.push("Competitor activity");
+
+  // Brief teaser (first non-empty line)
   const briefTeaser = execBriefing
-    ? execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").split("\n").filter(Boolean)[0]?.slice(0, 200)
+    ? execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").split("\n").filter(Boolean)[0]?.slice(0, 220)
     : null;
+
+  // Sections that only show when expanded
+  const hasFullBriefing = execBriefing.length > (briefTeaser?.length ?? 0) + 5;
+
+  const roleColors: Record<string, { bg: string; color: string; border: string }> = {
+    economic_buyer: { bg: "#fff4e6", color: "#b45309", border: "#fde68a" },
+    champion: { bg: "#f0fdf4", color: "#15803d", border: "#bbf7d0" },
+    technical_evaluator: { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
+    implementation_owner: { bg: "#faf5ff", color: "#7e22ce", border: "#e9d5ff" },
+    unknown: { bg: "#f8fafc", color: "#64748b", border: "#e2e8f0" },
+  };
 
   return (
     <div
@@ -101,198 +168,418 @@ function MeetingIntelCard({
         background: "#fff",
         border: `1px solid ${urgency === "imminent" ? "#ffd3be" : colors.border}`,
         borderRadius: 16,
-        padding: "18px 20px",
-        display: "grid",
-        gap: 14,
+        overflow: "hidden",
       }}
     >
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Link
-            to={`/meetings/${meeting.id}`}
-            style={{ fontSize: 15, fontWeight: 800, color: colors.text, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
-          >
-            {meeting.title}
-            <ExternalLink size={13} style={{ color: colors.faint, flexShrink: 0 }} />
-          </Link>
-          <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {companyName && (
-              <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>{companyName}</span>
-            )}
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: "capitalize",
-                padding: "2px 8px",
-                borderRadius: 999,
-                background: "#f0f4fb",
-                color: colors.sub,
-                border: `1px solid ${colors.border}`,
-              }}
+      {/* ── Top section (always visible) ─────────────────────────── */}
+      <div style={{ padding: "18px 20px", display: "grid", gap: 12 }}>
+
+        {/* Header row */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Link
+              to={`/meetings/${meeting.id}`}
+              style={{ fontSize: 15, fontWeight: 800, color: colors.text, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
             >
-              {meeting.meeting_type.replace(/_/g, " ")}
-            </span>
-            {assigneeName && (
-              <span style={{ fontSize: 12, color: colors.faint, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <User size={11} />
-                {assigneeName}
+              {meeting.title}
+              <ExternalLink size={13} style={{ color: colors.faint, flexShrink: 0 }} />
+            </Link>
+            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              {company && (
+                <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>{company.name}</span>
+              )}
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "capitalize", padding: "2px 8px", borderRadius: 999, background: "#f0f4fb", color: colors.sub, border: `1px solid ${colors.border}` }}>
+                {meeting.meeting_type.replace(/_/g, " ")}
               </span>
-            )}
+              {assigneeName && (
+                <span style={{ fontSize: 12, color: colors.faint, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <User size={11} />
+                  {assigneeName}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div style={{ flexShrink: 0, padding: "5px 10px", borderRadius: 999, background: urgencyStyle.bg, color: urgencyStyle.color, border: `1px solid ${urgencyStyle.border}`, fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Clock3 size={11} />
+            {urgencyStyle.label}
           </div>
         </div>
 
-        {/* Timing badge */}
-        <div
-          style={{
-            flexShrink: 0,
-            padding: "5px 10px",
-            borderRadius: 999,
-            background: urgencyStyle.bg,
-            color: urgencyStyle.color,
-            border: `1px solid ${urgencyStyle.border}`,
-            fontSize: 11,
-            fontWeight: 800,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-          }}
-        >
-          <Clock3 size={11} />
-          {urgencyStyle.label}
+        {/* Scheduled time */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.faint, fontSize: 12 }}>
+          <CalendarDays size={13} />
+          <span>{formatDate(meeting.scheduled_at)}</span>
         </div>
-      </div>
 
-      {/* Scheduled time */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.faint, fontSize: 12 }}>
-        <CalendarDays size={13} />
-        <span>{formatDate(meeting.scheduled_at)}</span>
-      </div>
+        {/* Status badges */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {hasResearch ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.greenSoft, color: colors.green, border: "1px solid #cfe8d7", fontSize: 12, fontWeight: 700 }}>
+              <CheckCircle2 size={13} /> Intel ready
+            </span>
+          ) : (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.amberSoft, color: colors.amber, border: `1px solid #ffe3b3`, fontSize: 12, fontWeight: 700 }}>
+              <BrainCircuit size={13} /> No intel yet
+            </span>
+          )}
+          {hasIntelSent && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.primarySoft, color: colors.primary, border: "1px solid #d5e5ff", fontSize: 12, fontWeight: 700 }}>
+              <MailCheck size={13} /> Brief sent
+            </span>
+          )}
+          {meeting.meeting_score != null && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: colors.violetSoft, color: colors.violet, border: "1px solid #eadbff", fontSize: 12, fontWeight: 700 }}>
+              Score {meeting.meeting_score}/100
+            </span>
+          )}
+          {coverage !== null && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: coverage >= 75 ? colors.greenSoft : colors.amberSoft, color: coverage >= 75 ? colors.green : colors.amber, border: `1px solid ${coverage >= 75 ? "#cfe8d7" : "#ffe3b3"}`, fontSize: 12, fontWeight: 700 }}>
+              <Target size={11} /> {coverage}% coverage
+            </span>
+          )}
+          {risks.map((r, i) => (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: "#fff5f0", color: colors.orange, border: "1px solid #ffd3be", fontSize: 12, fontWeight: 700 }}>
+              <AlertTriangle size={11} /> {r}
+            </span>
+          ))}
+        </div>
 
-      {/* Intel status row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {hasResearch ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.greenSoft, color: colors.green, border: "1px solid #cfe8d7", fontSize: 12, fontWeight: 700 }}>
-            <CheckCircle2 size={13} />
-            Intel ready
-          </span>
-        ) : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.amberSoft, color: colors.amber, border: `1px solid #ffe3b3`, fontSize: 12, fontWeight: 700 }}>
-            <BrainCircuit size={13} />
-            No intel yet
-          </span>
+        {/* ── Deal context strip ─────────────────────────────────── */}
+        {deal && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "10px 14px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e8edf5" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+              <Briefcase size={12} style={{ color: colors.faint }} />
+              <span style={{ color: colors.sub, fontWeight: 600 }}>{deal.stage.replace(/_/g, " ")}</span>
+            </div>
+            {deal.value != null && (
+              <>
+                <span style={{ color: colors.border }}>·</span>
+                <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>
+                  ${deal.value.toLocaleString()}
+                </span>
+              </>
+            )}
+            <span style={{ color: colors.border }}>·</span>
+            <span style={{ fontSize: 12, color: deal.days_in_stage > 30 ? colors.amber : colors.faint }}>
+              {deal.days_in_stage}d in stage
+            </span>
+            {deal.health && (
+              <>
+                <span style={{ color: colors.border }}>·</span>
+                <span style={{ fontSize: 12, color: deal.health === "at_risk" ? colors.red : deal.health === "needs_attention" ? colors.amber : colors.green, fontWeight: 700, textTransform: "capitalize" }}>
+                  {deal.health.replace(/_/g, " ")}
+                </span>
+              </>
+            )}
+            {lastActivity && (
+              <>
+                <span style={{ color: colors.border }}>·</span>
+                <span style={{ fontSize: 12, color: colors.faint, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <ActivityIcon size={11} />
+                  Last touch: {timeAgo(lastActivity.created_at)}
+                  {lastActivity.ai_summary ? ` — ${lastActivity.ai_summary.slice(0, 60)}${lastActivity.ai_summary.length > 60 ? "…" : ""}` : lastActivity.email_subject ? ` — ${lastActivity.email_subject.slice(0, 50)}` : ""}
+                </span>
+              </>
+            )}
+          </div>
         )}
-        {hasIntelSent && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.primarySoft, color: colors.primary, border: "1px solid #d5e5ff", fontSize: 12, fontWeight: 700 }}>
-            <MailCheck size={13} />
-            Brief sent
-          </span>
-        )}
-        {meeting.meeting_score != null && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: colors.violetSoft, color: colors.violet, border: "1px solid #eadbff", fontSize: 12, fontWeight: 700 }}>
-            Score {meeting.meeting_score}/100
-          </span>
-        )}
-        {coverage !== null && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: coverage >= 75 ? colors.greenSoft : colors.amberSoft, color: coverage >= 75 ? colors.green : colors.amber, border: `1px solid ${coverage >= 75 ? "#cfe8d7" : "#ffe3b3"}`, fontSize: 12, fontWeight: 700 }}>
-            <Target size={11} />
-            {coverage}% coverage
-          </span>
-        )}
-        {risks.length > 0 && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: "#fff5f0", color: colors.orange, border: "1px solid #ffd3be", fontSize: 12, fontWeight: 700 }}>
-            <AlertTriangle size={11} />
-            {risks[0]}
-          </span>
-        )}
-      </div>
 
-      {/* ── Intel preview panel (only when research_data exists) ── */}
-      {hasResearch && (
-        <div style={{ display: "grid", gap: 10 }}>
+        {/* Deal next step */}
+        {deal?.next_step && (
+          <div style={{ padding: "8px 14px", borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "flex-start", gap: 8 }}>
+            <CheckCircle2 size={13} style={{ color: "#15803d", marginTop: 2, flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Agreed Next Step</div>
+              <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>{deal.next_step}</div>
+            </div>
+          </div>
+        )}
 
-          {/* Executive briefing teaser */}
-          {briefTeaser && (
-            <div style={{ padding: "10px 14px", borderRadius: 12, background: "#fff8f5", border: "1px solid #ffd5be" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#b05a2a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
-                <Sparkles size={10} /> Executive Briefing
+        {/* ── Intel preview (briefing teaser + top action) ────────── */}
+        {hasResearch && (
+          <div style={{ display: "grid", gap: 8 }}>
+            {briefTeaser && (
+              <div style={{ padding: "10px 14px", borderRadius: 12, background: "#fff8f5", border: "1px solid #ffd5be" }}>
+                <SectionHeader icon={Sparkles} label="Executive Briefing" color="#b05a2a" />
+                <p style={{ fontSize: 12.5, color: "#3d5268", lineHeight: 1.55, margin: 0 }}>
+                  {briefTeaser}{hasFullBriefing && !expanded ? "…" : ""}
+                </p>
               </div>
-              <p style={{ fontSize: 12.5, color: "#3d5268", lineHeight: 1.55, margin: 0 }}>
-                {briefTeaser}{execBriefing && execBriefing.length > 200 ? "…" : ""}
-              </p>
+            )}
+
+            {/* Top recommendation */}
+            {recommendations[0] && (
+              <div style={{ padding: "9px 14px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <TrendingUp size={13} style={{ color: "#15803d", marginTop: 2, flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Top Recommendation</div>
+                  <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>{recommendations[0]}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Stakeholder preview (collapsed — names only) */}
+            {!expanded && stakeholders.length > 0 && (
+              <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f5f0ff", border: "1px solid #e0d3ff" }}>
+                <SectionHeader icon={Users} label={`Stakeholders (${stakeholders.length})`} color="#5a1fa5" />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {stakeholders.map((s, i) => {
+                    const role = s.committee_role ?? "unknown";
+                    const rc = roleColors[role] ?? roleColors.unknown;
+                    return (
+                      <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 999, background: rc.bg, color: rc.color, border: `1px solid ${rc.border}`, fontSize: 11, fontWeight: 700 }}>
+                        {s.name}{s.title ? ` · ${s.title}` : ""}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Expand / Collapse button ─────────────────────────────── */}
+        {hasResearch && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: colors.primary, background: "none", border: "none", cursor: "pointer", padding: 0, alignSelf: "flex-start" }}
+          >
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {expanded ? "Collapse brief" : "Show full prep brief"}
+          </button>
+        )}
+      </div>
+
+      {/* ── Expanded full prep brief ──────────────────────────────────────── */}
+      {expanded && hasResearch && (
+        <div style={{ borderTop: `1px solid ${colors.border}`, padding: "18px 20px", display: "grid", gap: 16, background: "#fafbfd" }}>
+
+          {/* Full executive briefing */}
+          {execBriefing && (
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff8f5", border: "1px solid #ffd5be" }}>
+              <SectionHeader icon={Sparkles} label="Full Executive Briefing" color="#b05a2a" />
+              <div style={{ fontSize: 13, color: "#3d5268", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                {execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").replace(/^#+\s*/gm, "")}
+              </div>
             </div>
           )}
 
-          {/* Why-now signals + stakeholders side by side */}
-          {(whyNow.length > 0 || stakeholders.length > 0) && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {whyNow.length > 0 && (
-                <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f3f8ff", border: "1px solid #d5e5ff" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#24567e", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
-                    <Zap size={10} /> Why Now ({whyNow.length})
+          {/* Why-now signals — all of them */}
+          {whyNow.length > 0 && (
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f3f8ff", border: "1px solid #d5e5ff" }}>
+              <SectionHeader icon={Zap} label={`Why Now — ${whyNow.length} Signal${whyNow.length > 1 ? "s" : ""}`} color="#24567e" />
+              <div style={{ display: "grid", gap: 10 }}>
+                {whyNow.map((s, i) => (
+                  <div key={i} style={{ paddingLeft: 10, borderLeft: "3px solid #93c5fd" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#1e3a5f", marginBottom: 2 }}>{s.title}</div>
+                    <div style={{ fontSize: 12, color: "#4a6580", lineHeight: 1.5 }}>{s.detail}</div>
                   </div>
-                  <div style={{ display: "grid", gap: 5 }}>
-                    {whyNow.slice(0, 2).map((s, i) => (
-                      <div key={i}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#24364b" }}>{s.title}</div>
-                        <div style={{ fontSize: 11, color: "#546679", lineHeight: 1.4 }}>{s.detail?.slice(0, 80)}{(s.detail?.length ?? 0) > 80 ? "…" : ""}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Stakeholder cards — full detail */}
+          {stakeholders.length > 0 && (
+            <div>
+              <SectionHeader icon={Users} label={`Stakeholder Prep (${stakeholders.length})`} color="#5a1fa5" />
+              <div style={{ display: "grid", gap: 10 }}>
+                {stakeholders.map((s, i) => {
+                  const role = s.committee_role ?? "unknown";
+                  const rc = roleColors[role] ?? roleColors.unknown;
+                  return (
+                    <div key={i} style={{ padding: "12px 14px", borderRadius: 12, background: "#fff", border: `1px solid ${rc.border}` }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: colors.text }}>{s.name}</span>
+                        {s.title && <span style={{ fontSize: 12, color: colors.sub }}>{s.title}</span>}
+                        <span style={{ padding: "2px 8px", borderRadius: 999, background: rc.bg, color: rc.color, border: `1px solid ${rc.border}`, fontSize: 10, fontWeight: 700, textTransform: "capitalize" }}>
+                          {role.replace(/_/g, " ")}
+                        </span>
+                        {s.linkedin_url && (
+                          <a href={s.linkedin_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: colors.primary, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                            LinkedIn <ExternalLink size={10} />
+                          </a>
+                        )}
                       </div>
+                      {s.talk_track && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Talk Track</div>
+                          <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5, padding: "8px 10px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e8edf5" }}>{s.talk_track}</div>
+                        </div>
+                      )}
+                      {s.discovery_questions && s.discovery_questions.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Discovery Questions</div>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            {s.discovery_questions.map((q, qi) => (
+                              <div key={qi} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, color: "#3d5268", lineHeight: 1.45 }}>
+                                <span style={{ fontWeight: 800, color: colors.primary, flexShrink: 0 }}>{qi + 1}.</span>
+                                <span>{q}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* All recommendations as checklist */}
+          {recommendations.length > 0 && (
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+              <SectionHeader icon={ListChecks} label="Meeting Checklist" color="#15803d" />
+              <div style={{ display: "grid", gap: 6 }}>
+                {recommendations.map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>
+                    <span style={{ fontWeight: 800, color: "#15803d", flexShrink: 0 }}>✓</span>
+                    <span>{r}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Competitive landscape */}
+          {competitive.length > 0 && (
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff5f5", border: "1px solid #fecaca" }}>
+              <SectionHeader icon={Swords} label="Competitive Landscape" color={colors.red} />
+              <div style={{ display: "grid", gap: 8 }}>
+                {competitive.map((c, i) => {
+                  const name = c.name ?? c.competitor ?? "Unknown";
+                  const bc = battlecards.find((b) => b.competitor?.toLowerCase() === name.toLowerCase());
+                  return (
+                    <div key={i} style={{ paddingLeft: 10, borderLeft: "3px solid #fca5a5" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: colors.red, marginBottom: 2 }}>{name}</div>
+                      {c.summary && <div style={{ fontSize: 12, color: "#7f1d1d", lineHeight: 1.45, marginBottom: bc?.win_reasons?.length ? 4 : 0 }}>{c.summary}</div>}
+                      {bc?.win_reasons && bc.win_reasons.length > 0 && (
+                        <div style={{ fontSize: 11, color: colors.green, fontWeight: 600 }}>
+                          Win reason: {bc.win_reasons[0]}
+                        </div>
+                      )}
+                      {bc?.objection_handling && (
+                        <div style={{ fontSize: 11, color: colors.sub, marginTop: 2 }}>
+                          Handle: {bc.objection_handling}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Intent signals */}
+          {(hiringRoles.length > 0 || intentSignals.funding || intentSignals.growth) && (
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: colors.amberSoft, border: "1px solid #ffe3b3" }}>
+              <SectionHeader icon={AlertCircle} label="Intent Signals" color={colors.amber} />
+              <div style={{ display: "grid", gap: 8 }}>
+                {hiringRoles.length > 0 && (
+                  <div style={{ paddingLeft: 10, borderLeft: "3px solid #fcd34d" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 3 }}>Active Hiring ({hiringRoles.length} roles)</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {hiringRoles.slice(0, 6).map((r: string, i: number) => (
+                        <span key={i} style={{ padding: "2px 8px", borderRadius: 999, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", fontSize: 11 }}>{r}</span>
+                      ))}
+                      {hiringRoles.length > 6 && <span style={{ fontSize: 11, color: colors.amber }}>+{hiringRoles.length - 6} more</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#7c6a3a", marginTop: 4 }}>They're feeling the pain Beacon solves — use this as a buying signal opener.</div>
+                  </div>
+                )}
+                {intentSignals.funding && (
+                  <div style={{ paddingLeft: 10, borderLeft: "3px solid #fcd34d", fontSize: 12, color: "#78350f" }}>
+                    <span style={{ fontWeight: 700 }}>Funding: </span>{intentSignals.funding}
+                  </div>
+                )}
+                {intentSignals.growth && (
+                  <div style={{ paddingLeft: 10, borderLeft: "3px solid #fcd34d", fontSize: 12, color: "#78350f" }}>
+                    <span style={{ fontWeight: 700 }}>Growth signal: </span>{intentSignals.growth}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Recent news */}
+          {newsItems.length > 0 && (
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f3f8ff", border: "1px solid #d5e5ff" }}>
+              <SectionHeader icon={MessageSquare} label="Recent News — Open With This" color="#24567e" />
+              <div style={{ display: "grid", gap: 6 }}>
+                {newsItems.slice(0, 4).map((n, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <span style={{ color: "#93c5fd", fontWeight: 800, flexShrink: 0, fontSize: 12 }}>→</span>
+                    <div>
+                      {n.url ? (
+                        <a href={n.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: colors.primary, fontWeight: 600, textDecoration: "none" }}>
+                          {n.title ?? n.url}
+                        </a>
+                      ) : (
+                        <span style={{ fontSize: 12, color: "#1e3a5f", fontWeight: 600 }}>{n.title}</span>
+                      )}
+                      {n.published && <span style={{ fontSize: 11, color: colors.faint, marginLeft: 6 }}>{n.published}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Company snapshot + tech stack */}
+          {(techStack.length > 0 || pricingModel || hunterCo.employees || companySnapshot.icp_score != null) && (
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e8edf5" }}>
+              <SectionHeader icon={Building2} label="Company Profile" color={colors.sub} />
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                {companySnapshot.icp_score != null && (
+                  <div>
+                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>ICP Score</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: companySnapshot.icp_score >= 70 ? colors.green : colors.amber }}>{companySnapshot.icp_score}</div>
+                  </div>
+                )}
+                {(hunterCo.employees || companySnapshot.employee_count) && (
+                  <div>
+                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Employees</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>{hunterCo.employees ?? companySnapshot.employee_count}</div>
+                  </div>
+                )}
+                {(hunterCo.industry || companySnapshot.industry) && (
+                  <div>
+                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Industry</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>{hunterCo.industry ?? companySnapshot.industry}</div>
+                  </div>
+                )}
+                {pricingModel && (
+                  <div>
+                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Pricing Model</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>{pricingModel}</div>
+                  </div>
+                )}
+              </div>
+              {techStack.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Tech Stack</div>
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    {techStack.map((t: string, i: number) => (
+                      <span key={i} style={{ padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", border: "1px solid #c7d2fe", fontSize: 11, fontWeight: 600 }}>{t}</span>
                     ))}
                   </div>
                 </div>
               )}
-              {stakeholders.length > 0 && (
-                <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f5f0ff", border: "1px solid #e0d3ff" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#5a1fa5", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
-                    <Users size={10} /> Stakeholders ({stakeholders.length})
-                  </div>
-                  <div style={{ display: "grid", gap: 5 }}>
-                    {stakeholders.slice(0, 3).map((s, i) => (
-                      <div key={i} style={{ fontSize: 11, color: "#3d2d5e" }}>
-                        <span style={{ fontWeight: 700 }}>{s.name}</span>
-                        {s.title && <span style={{ color: "#7a6fa5" }}> · {s.title}</span>}
-                      </div>
-                    ))}
-                    {stakeholders.length > 3 && <div style={{ fontSize: 11, color: "#7a6fa5" }}>+{stakeholders.length - 3} more</div>}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Top recommended action */}
-          {topAction && (
-            <div style={{ padding: "9px 14px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <TrendingUp size={13} style={{ color: "#15803d", marginTop: 2, flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Top Recommendation</div>
-                <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>{topAction}</div>
-              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Action buttons */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {/* ── Action buttons ───────────────────────────────────────────────── */}
+      <div style={{ padding: "12px 20px", borderTop: `1px solid ${colors.border}`, display: "flex", gap: 8, flexWrap: "wrap", background: expanded ? "#fafbfd" : "#fff" }}>
         <button
           type="button"
           disabled={isRunning}
           onClick={() => onRunIntel(meeting.id)}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "7px 12px",
-            borderRadius: 10,
-            border: `1px solid ${colors.border}`,
-            background: isRunning ? "#f5f8fe" : "#fff",
-            color: isRunning ? colors.faint : colors.primary,
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: isRunning ? "wait" : "pointer",
-          }}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: isRunning ? "#f5f8fe" : "#fff", color: isRunning ? colors.faint : colors.primary, fontSize: 12, fontWeight: 700, cursor: isRunning ? "wait" : "pointer" }}
         >
           {isRunning ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
           {isRunning ? "Generating..." : hasResearch ? "Regenerate intel" : "Run intel now"}
@@ -300,19 +587,7 @@ function MeetingIntelCard({
 
         <Link
           to={`/meetings/${meeting.id}`}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "7px 12px",
-            borderRadius: 10,
-            border: `1px solid ${colors.border}`,
-            background: "#fff",
-            color: colors.sub,
-            fontSize: 12,
-            fontWeight: 700,
-            textDecoration: "none",
-          }}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, fontSize: 12, fontWeight: 700, textDecoration: "none" }}
         >
           <ExternalLink size={13} />
           Open meeting
@@ -326,11 +601,12 @@ type StatusFilter = "all" | "scheduled" | "completed";
 type IntelFilter = "all" | "has_intel" | "no_intel";
 
 export default function PreMeetingAssistance() {
-  const { user, isAdmin } = useAuth();
+  const { isAdmin } = useAuth();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningIntel, setRunningIntel] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("scheduled");
@@ -351,6 +627,15 @@ export default function PreMeetingAssistance() {
       setCompanies(cs);
       setDeals(ds);
       setUsers(us);
+
+      // Fetch recent activities for all deals linked to meetings — one batch call
+      const dealIds = Array.from(new Set(ms.map((m) => m.deal_id).filter(Boolean))) as string[];
+      if (dealIds.length > 0) {
+        // Fetch activities for the first deal to get recent ones; for full coverage
+        // we fetch without deal filter and let the client group them
+        const acts = await activitiesApi.list().catch(() => [] as Activity[]);
+        setActivities(acts);
+      }
     } finally {
       setLoading(false);
     }
@@ -361,20 +646,34 @@ export default function PreMeetingAssistance() {
   }, []);
 
   const companyMap = useMemo(
-    () => new Map(companies.map((c) => [c.id, c.name])),
+    () => new Map(companies.map((c) => [c.id, c])),
     [companies]
   );
 
-  // Map deal_id → assigned_to_id + assigned user name
+  const dealMap = useMemo(
+    () => new Map(deals.map((d) => [d.id, d])),
+    [deals]
+  );
+
+  // Latest activity per deal_id
+  const latestActivityByDeal = useMemo(() => {
+    const map = new Map<string, Activity>();
+    for (const a of activities) {
+      if (!a.deal_id) continue;
+      const existing = map.get(a.deal_id);
+      if (!existing || new Date(a.created_at) > new Date(existing.created_at)) {
+        map.set(a.deal_id, a);
+      }
+    }
+    return map;
+  }, [activities]);
+
   const dealAssigneeMap = useMemo(() => {
     const userMap = new Map(users.map((u) => [u.id, u.name]));
     const map = new Map<string, { id: string; name: string }>();
     for (const d of deals) {
       if (d.assigned_to_id) {
-        map.set(d.id, {
-          id: d.assigned_to_id,
-          name: userMap.get(d.assigned_to_id) ?? "Unknown",
-        });
+        map.set(d.id, { id: d.assigned_to_id, name: userMap.get(d.assigned_to_id) ?? "Unknown" });
       }
     }
     return map;
@@ -408,7 +707,6 @@ export default function PreMeetingAssistance() {
     });
   }, [meetings, statusFilter, intelFilter, typeFilter, assigneeFilter, dealAssigneeMap]);
 
-  // Upcoming = sorted by scheduled_at ascending, past = descending
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
       const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
@@ -432,10 +730,7 @@ export default function PreMeetingAssistance() {
   return (
     <div className="crm-page" style={{ display: "grid", gap: 18 }}>
       {/* Header */}
-      <section
-        className="crm-panel"
-        style={{ padding: 24, display: "grid", gap: 16 }}
-      >
+      <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
             <h2 style={{ fontSize: 26, fontWeight: 800, color: colors.text, marginBottom: 6 }}>
@@ -444,60 +739,21 @@ export default function PreMeetingAssistance() {
             <p className="crm-muted" style={{ maxWidth: 640, lineHeight: 1.7 }}>
               {isAdmin
                 ? "Review upcoming meetings across the team, check intel status, and trigger research before calls. Beacon auto-sends a brief to each assigned rep 12 hours before the meeting."
-                : `Your upcoming meetings in one place. Run pre-meeting intel before any call to get account context, stakeholder profiles, and recommended talking points. Beacon sends the brief to you automatically 12 hours before scheduled meetings.`}
+                : "Your upcoming meetings in one place. Run pre-meeting intel before any call — get account context, stakeholder talk tracks, discovery questions, competitive intel, and recommended actions. Beacon sends the brief to you automatically 12 hours before."}
             </p>
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "7px 12px",
-                borderRadius: 999,
-                background: "#f4f7ff",
-                color: "#4b60cf",
-                border: "1px solid #d7dffb",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "#f4f7ff", color: "#4b60cf", border: "1px solid #d7dffb", fontSize: 12, fontWeight: 700 }}>
               <CalendarDays size={13} />
               {summary.upcoming} upcoming
             </span>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "7px 12px",
-                borderRadius: 999,
-                background: colors.greenSoft,
-                color: colors.green,
-                border: "1px solid #cfe8d7",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: colors.greenSoft, color: colors.green, border: "1px solid #cfe8d7", fontSize: 12, fontWeight: 700 }}>
               <CheckCircle2 size={13} />
               {summary.hasIntel} intel ready
             </span>
             {summary.noIntel > 0 && (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "7px 12px",
-                  borderRadius: 999,
-                  background: colors.amberSoft,
-                  color: colors.amber,
-                  border: "1px solid #ffe3b3",
-                  fontSize: 12,
-                  fontWeight: 700,
-                }}
-              >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: colors.amberSoft, color: colors.amber, border: "1px solid #ffe3b3", fontSize: 12, fontWeight: 700 }}>
                 <BrainCircuit size={13} />
                 {summary.noIntel} need intel
               </span>
@@ -513,54 +769,30 @@ export default function PreMeetingAssistance() {
           Filters
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {/* Status */}
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-            style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}
-          >
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
             <option value="all">All statuses</option>
             <option value="scheduled">Upcoming (scheduled)</option>
             <option value="completed">Completed</option>
           </select>
 
-          {/* Intel status */}
-          <select
-            value={intelFilter}
-            onChange={(e) => setIntelFilter(e.target.value as IntelFilter)}
-            style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}
-          >
+          <select value={intelFilter} onChange={(e) => setIntelFilter(e.target.value as IntelFilter)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
             <option value="all">All intel status</option>
             <option value="has_intel">Intel ready</option>
             <option value="no_intel">No intel yet</option>
           </select>
 
-          {/* Meeting type */}
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}
-          >
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
             <option value="all">All types</option>
             {meetingTypes.map((t) => (
-              <option key={t} value={t}>
-                {t.replace(/_/g, " ")}
-              </option>
+              <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
             ))}
           </select>
 
-          {/* Assignee (admin only) */}
           {isAdmin && users.length > 0 && (
-            <select
-              value={assigneeFilter}
-              onChange={(e) => setAssigneeFilter(e.target.value)}
-              style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}
-            >
+            <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
               <option value="all">All reps</option>
               {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
+                <option key={u.id} value={u.id}>{u.name}</option>
               ))}
             </select>
           )}
@@ -568,12 +800,7 @@ export default function PreMeetingAssistance() {
           {(statusFilter !== "scheduled" || intelFilter !== "all" || typeFilter !== "all" || assigneeFilter !== "all") && (
             <button
               type="button"
-              onClick={() => {
-                setStatusFilter("scheduled");
-                setIntelFilter("all");
-                setTypeFilter("all");
-                setAssigneeFilter("all");
-              }}
+              onClick={() => { setStatusFilter("scheduled"); setIntelFilter("all"); setTypeFilter("all"); setAssigneeFilter("all"); }}
               style={{ height: 38, padding: "0 12px", borderRadius: 10, border: `1px solid #ffd0d8`, background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
             >
               <RefreshCw size={11} />
@@ -602,15 +829,19 @@ export default function PreMeetingAssistance() {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 12, color: colors.faint, fontWeight: 600 }}>
-            {sorted.length} meeting{sorted.length !== 1 ? "s" : ""} · {statusFilter === "scheduled" ? "sorted by soonest first" : "sorted by most recent"}
+            {sorted.length} meeting{sorted.length !== 1 ? "s" : ""} · {statusFilter === "completed" ? "sorted by most recent" : "sorted by soonest first"}
           </div>
           {sorted.map((m) => {
             const assignee = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
+            const deal = m.deal_id ? dealMap.get(m.deal_id) : undefined;
+            const lastActivity = m.deal_id ? latestActivityByDeal.get(m.deal_id) : undefined;
             return (
               <MeetingIntelCard
                 key={m.id}
                 meeting={m}
-                companyName={m.company_id ? companyMap.get(m.company_id) : undefined}
+                company={m.company_id ? companyMap.get(m.company_id) : undefined}
+                deal={deal}
+                lastActivity={lastActivity}
                 assigneeName={isAdmin && assignee ? assignee.name : undefined}
                 onRunIntel={handleRunIntel}
                 runningIntel={runningIntel}

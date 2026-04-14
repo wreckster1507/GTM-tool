@@ -35,7 +35,26 @@
       "WebFetch(domain:uxplanet.org)",
       "Bash(chcp 65001)",
       "Bash(python -u -c \":*)",
-      "Bash(grep -l \"enrich\\\\|score\\\\|icp\\\\|ai\" /c/gtm-prototype/app/services/*.py)"
+      "Bash(grep -l \"enrich\\\\|score\\\\|icp\\\\|ai\" /c/gtm-prototype/app/services/*.py)",
+      "Bash(python -c ':*)",
+      "Bash(python -m py_compile app/models/user_email_connection.py app/services/personal_email_sync.py app/tasks/personal_email_sync.py app/api/v1/endpoints/personal_email_sync.py app/services/data_reset.py)",
+      "Bash(node -e ':*)",
+      "Bash(python -m py_compile app/services/pre_meeting_intelligence.py app/services/meeting_automation.py)",
+      "Bash(kubectl --kubeconfig C:\\\\gtm-prototype\\\\tmp\\\\beacon-test-kubeconfig.yaml -n gtm-prod logs deploy/gtm-backend-deployment --tail=100)",
+      "Bash(kubectl --kubeconfig C:\\\\gtm-prototype\\\\tmp\\\\beacon-test-kubeconfig.yaml -n gtm-prod logs deploy/gtm-worker-deployment --tail=100)",
+      "Bash(KUBECONFIG=/c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml kubectl -n gtm-prod logs deploy/gtm-backend-deployment --tail=150)",
+      "Bash(KUBECONFIG=/c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml kubectl -n gtm-prod logs deploy/gtm-worker-deployment --tail=150)",
+      "Bash(KUBECONFIG=/c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml kubectl -n gtm-prod logs deploy/gtm-backend-deployment --tail=200)",
+      "Bash(KUBECONFIG=/c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml kubectl -n gtm-prod logs deploy/gtm-worker-deployment --tail=200)",
+      "Bash(KUBECONFIG=/c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml kubectl -n gtm-prod logs deploy/gtm-worker-deployment --tail=300)",
+      "Bash(KUBECONFIG=/c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml kubectl -n gtm-prod exec -it gtm-postgresql-0 -- psql -U beacon -d beacon -c \"SELECT sync_schedule_settings FROM workspace_settings WHERE id=1;\")",
+      "Bash(KUBECONFIG=/c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml kubectl -n gtm-prod exec gtm-postgresql-0 -- env PGPASSWORD=25a43f7c993d3beb3d3a507bd44adb4a psql -U beacon -d beacon -c \"SELECT sync_schedule_settings FROM workspace_settings WHERE id=1;\")",
+      "Bash(xargs grep:*)",
+      "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(New-Item -ItemType Directory -Force -Path graphify-out)",
+      "Bash(Out-Null)",
+      "Bash(mkdir -p graphify-out)"
     ]
   },
   "outputStyle": "Explanatory"
