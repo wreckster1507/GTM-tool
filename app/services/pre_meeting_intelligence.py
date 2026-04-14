@@ -712,24 +712,70 @@ async def run_pre_meeting_intelligence(
             "tech_stack": company.tech_stack or {},
         }
 
-    # ── 2-7. Parallel web research (all independent, non-blocking) ───────────
-    #     Each task is wrapped so a failure returns a safe default.
+    # ── 2-7. Parallel web research — seed from enrichment_cache first ───────────
+    # If ICP research was already run for this company, reuse the cached data
+    # instead of re-scraping everything. Only fetch what's missing.
+    ec = (company.enrichment_cache or {}) if (company and isinstance(company.enrichment_cache, dict)) else {}
+
+    def _unwrap(key):
+        """Return the .data value from a cache entry, or None."""
+        entry = ec.get(key)
+        if isinstance(entry, dict):
+            return entry.get("data")
+        return None
+
+    # Seed from cache — these are skipped in the parallel fetch below if populated
+    _cached_web_scrape = _unwrap("web_scrape")
+    _cached_intent = _unwrap("intent_signals")
+    _cached_hunter_contacts_raw = _unwrap("hunter_contacts")
+    _cached_ai_summary = _unwrap("ai_summary")
+    _cached_icp = _unwrap("icp_analysis")
+    _cached_competitive = ec.get("competitive_landscape_v2")
+
     company_background: dict | None = None
     website_pages: dict | None = None
     recent_news: list[dict] = []
     milestones: list[dict] = []
-    intent_signals: dict = {}
     google_news: list[dict] = []
-    hunter_contacts: dict | None = None
     hunter_company: dict | None = None
     competitive_landscape: list[dict] = []
 
+    # Pre-populate from cache where available
+    intent_signals: dict = {}
+    if isinstance(_cached_intent, dict):
+        # enrichment_cache intent has keys: ps_hiring, funding, news, etc.
+        # Map to the shape pre-meeting intel expects: {hiring: [...], funding: ..., growth: ...}
+        hiring_signals = _cached_intent.get("ps_hiring") or []
+        funding_signals = _cached_intent.get("funding") or []
+        intent_signals = {
+            "hiring": [s.get("title", "") for s in hiring_signals if s.get("title")][:10],
+            "funding": funding_signals[0].get("snippet") if funding_signals else None,
+            "growth": None,
+        }
+
+    hunter_contacts: dict | None = None
+    if isinstance(_cached_hunter_contacts_raw, list) and _cached_hunter_contacts_raw:
+        hunter_contacts = {"contacts": _cached_hunter_contacts_raw}
+
+    if isinstance(_cached_competitive, list) and _cached_competitive:
+        competitive_landscape = [
+            {"name": c.get("name") or c.get("competitor", ""), "summary": c.get("summary", "")}
+            for c in _cached_competitive
+        ]
+
     async def _website_summary():
+        if _cached_web_scrape:
+            # Build a background dict from the cached scrape
+            text = _cached_web_scrape.get("homepage_text") or _cached_web_scrape.get("text") or ""
+            if text:
+                return {"extract": text[:1500], "description": _cached_ai_summary.get("description") if _cached_ai_summary else None}
         if not domain or domain.endswith(".unknown"):
             return None
         return await web.company_website_summary(domain, name, ai)
 
     async def _website_pages():
+        if _cached_web_scrape:
+            return None  # Already have scraped content in cache
         if not domain or domain.endswith(".unknown"):
             return None
         return await web.scrape_company_pages(domain)
@@ -744,7 +790,9 @@ async def run_pre_meeting_intelligence(
             return []
         return await web.company_milestones(name, domain)
 
-    async def _intent_signals():
+    async def _intent_signals_fetch():
+        if intent_signals:
+            return intent_signals  # Already seeded from cache
         if not name:
             return {}
         return await web.search_intent_signals(name, domain)
@@ -755,6 +803,8 @@ async def run_pre_meeting_intelligence(
         return await _fetch_google_news_rss(name, domain)
 
     async def _hunter_search():
+        if hunter_contacts:
+            return hunter_contacts  # Already seeded from cache
         if not domain or domain.endswith(".unknown"):
             return None
         return await hunter.domain_search(domain)
@@ -765,6 +815,8 @@ async def run_pre_meeting_intelligence(
         return await hunter.company_enrichment(domain)
 
     async def _competitors():
+        if competitive_landscape:
+            return competitive_landscape  # Already seeded from cache
         if not name:
             return []
         return await web.search(
@@ -772,13 +824,13 @@ async def run_pre_meeting_intelligence(
             max_results=5,
         )
 
-    # Fire all web research in parallel
+    # Fire all web research in parallel (cached tasks return instantly)
     tasks = {
         "bg": _website_summary(),
         "pages": _website_pages(),
         "news": _recent_news(),
         "milestones": _milestones(),
-        "intent": _intent_signals(),
+        "intent": _intent_signals_fetch(),
         "gnews": _google_news(),
         "hunter": _hunter_search(),
         "hunter_co": _hunter_enrich(),
@@ -800,11 +852,11 @@ async def run_pre_meeting_intelligence(
     website_pages = _safe("pages")
     recent_news = _safe("news", [])
     milestones = _safe("milestones", [])
-    intent_signals = _safe("intent", {})
+    intent_signals = _safe("intent", intent_signals)  # fall back to cache-seeded value
     google_news = _safe("gnews", [])
-    hunter_contacts = _safe("hunter")
+    hunter_contacts = _safe("hunter", hunter_contacts)  # fall back to cache-seeded value
     hunter_company = _safe("hunter_co")
-    competitive_landscape = _safe("competitors", [])
+    competitive_landscape = _safe("competitors", competitive_landscape)  # fall back to cache-seeded value
 
     # ── 8. Deep website analysis (extract pricing/careers/customers insights) ─
     website_analysis: dict | None = None
@@ -906,9 +958,38 @@ async def run_pre_meeting_intelligence(
         competitive_landscape=competitive_landscape,
     )
 
+    # ── Enrich company_snapshot from ICP cache ────────────────────────────────
+    # Pull pain points, talking points, and Beacon angle from existing ICP
+    # analysis so the meeting brief shows this without re-running everything.
+    company_snapshot: dict = {}
+    if _cached_icp and isinstance(_cached_icp, dict):
+        icp_data = _cached_icp.get("data") or _cached_icp
+        company_snapshot = {
+            "icp_score": company.icp_score if company else None,
+            "icp_tier": company.icp_tier if company else None,
+            "industry": company.industry if company else None,
+            "employee_count": company.employee_count if company else None,
+            "funding_stage": company.funding_stage if company else None,
+            "pain_points": icp_data.get("pain_points") or (_cached_ai_summary.get("pain_points") if _cached_ai_summary else []),
+            "talking_points": (_cached_ai_summary.get("talking_points") if _cached_ai_summary else []),
+            "beacon_angle": icp_data.get("beacon_angle"),
+            "conversation_starter": icp_data.get("conversation_starter"),
+            "why_now_summary": icp_data.get("why_now"),
+            "recommended_approach": icp_data.get("recommended_outreach_strategy"),
+        }
+    elif company:
+        company_snapshot = {
+            "icp_score": company.icp_score,
+            "icp_tier": company.icp_tier,
+            "industry": company.industry,
+            "employee_count": company.employee_count,
+            "funding_stage": company.funding_stage,
+        }
+
     # ── Assemble & persist ────────────────────────────────────────────────────
     research_data = {
         "company_profile": company_profile,
+        "company_snapshot": company_snapshot,
         "company_background": company_background,
         "website_analysis": website_analysis,
         "recent_news": recent_news[:8],

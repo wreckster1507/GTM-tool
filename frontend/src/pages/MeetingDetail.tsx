@@ -116,7 +116,22 @@ interface AttendeeIntelligence {
   committee_coverage?: CommitteeCoverage;
 }
 
+interface CompanySnapshot {
+  icp_score?: number | null;
+  icp_tier?: string | null;
+  industry?: string | null;
+  employee_count?: number | null;
+  funding_stage?: string | null;
+  pain_points?: string[];
+  talking_points?: string[];
+  beacon_angle?: string | null;
+  conversation_starter?: string | null;
+  why_now_summary?: string | null;
+  recommended_approach?: string | null;
+}
+
 interface WebResearch {
+  company_snapshot?: CompanySnapshot | null;
   company_background?: CompanyBackground | null;
   website_analysis?: Record<string, string> | null;
   recent_news?: Array<{ title: string; url: string; snippet: string }>;
@@ -887,6 +902,51 @@ export default function MeetingDetail() {
                 </div>
               ))}
             </div>
+
+            {/* ICP Research snapshot — pain points, talking points, beacon angle from enrichment_cache */}
+            {webResearch.company_snapshot && (webResearch.company_snapshot.pain_points?.length || webResearch.company_snapshot.beacon_angle || webResearch.company_snapshot.conversation_starter || webResearch.company_snapshot.talking_points?.length) && (
+              <div className="rounded-xl border border-[#e0edff] bg-[#f5f9ff] p-4" style={{ display: "grid", gap: 12 }}>
+                <p className="text-[11px] uppercase tracking-wide text-[#24567e] font-semibold">From ICP Research</p>
+                {webResearch.company_snapshot.conversation_starter && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Conversation Starter</p>
+                    <p className="text-[13px] text-[#2d4258] leading-relaxed italic">"{webResearch.company_snapshot.conversation_starter}"</p>
+                  </div>
+                )}
+                {webResearch.company_snapshot.beacon_angle && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Beacon Angle</p>
+                    <p className="text-[13px] text-[#2d4258] leading-relaxed">{webResearch.company_snapshot.beacon_angle}</p>
+                  </div>
+                )}
+                {webResearch.company_snapshot.pain_points && webResearch.company_snapshot.pain_points.length > 0 && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Pain Points</p>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {webResearch.company_snapshot.pain_points.map((p, i) => (
+                        <p key={i} className="text-[13px] text-[#3d5268] leading-relaxed">• {p}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {webResearch.company_snapshot.talking_points && webResearch.company_snapshot.talking_points.length > 0 && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Talking Points</p>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {webResearch.company_snapshot.talking_points.map((t, i) => (
+                        <p key={i} className="text-[13px] text-[#3d5268] leading-relaxed">• {t}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {webResearch.company_snapshot.why_now_summary && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Why Now</p>
+                    <p className="text-[13px] text-[#2d4258] leading-relaxed">{webResearch.company_snapshot.why_now_summary}</p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Tech stack — from DB */}
             {techStack && Object.keys(techStack).length > 0 && (
