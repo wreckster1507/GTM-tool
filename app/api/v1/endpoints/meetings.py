@@ -151,6 +151,106 @@ async def generate_demo_strategy(meeting_id: UUID, session: DBSession, current_u
         raise HTTPException(status_code=500, detail=f"Demo strategy failed: {str(e)}")
 
 
+@router.post("/{meeting_id}/research-more")
+async def research_more(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
+    """
+    Gap-filling enrichment: detects what's missing in the company's enrichment_cache
+    and only fetches those pieces (Hunter firmographics, contacts, Google News, etc.).
+    Much faster than running full web intel — only fills actual gaps.
+    """
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
+    import logging
+    logger = logging.getLogger(__name__)
+    from app.services.pre_meeting_intelligence import run_research_more
+    try:
+        result = await run_research_more(meeting_id, session)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Research more failed for {meeting_id}")
+        raise HTTPException(status_code=500, detail=f"Research more failed: {str(e)}")
+
+
+@router.get("/{meeting_id}/research-gaps")
+async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
+    """
+    Returns a list of data gaps for the meeting's company — what's missing
+    so the frontend can show 'Research More (N gaps)' without running anything.
+    """
+    from app.models.meeting import Meeting
+    from app.models.company import Company
+    from datetime import datetime
+
+    meeting = await session.get(Meeting, meeting_id)
+    if not meeting or not meeting.company_id:
+        return {"gaps": [], "count": 0}
+
+    company = await session.get(Company, meeting.company_id)
+    if not company:
+        return {"gaps": [], "count": 0}
+
+    ec = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+    now = datetime.utcnow()
+    gaps = []
+
+    def _unwrap(key):
+        entry = ec.get(key)
+        return entry.get("data") if isinstance(entry, dict) else None
+
+    def _age_days(key) -> float:
+        entry = ec.get(key)
+        if not isinstance(entry, dict):
+            return 9999
+        fetched_at = entry.get("fetched_at")
+        if not fetched_at:
+            return 9999
+        try:
+            from datetime import datetime as dt
+            d = dt.fromisoformat(fetched_at)
+            return (now - d).total_seconds() / 86400
+        except Exception:
+            return 9999
+
+    domain = company.domain or ""
+
+    if not _unwrap("hunter_company") and domain and not domain.endswith(".unknown"):
+        gaps.append({"key": "hunter_company", "label": "Company firmographics (revenue, tech stack, size)"})
+
+    hc_entry = ec.get("hunter_contacts")
+    hc_paused = isinstance(hc_entry, dict) and hc_entry.get("paused")
+    hc_data = _unwrap("hunter_contacts")
+    hc_contacts = hc_data.get("contacts", []) if isinstance(hc_data, dict) else (hc_data if isinstance(hc_data, list) else [])
+    if (not hc_contacts or hc_paused) and domain and not domain.endswith(".unknown"):
+        gaps.append({"key": "hunter_contacts", "label": "Verified contacts with seniority & department"})
+
+    if not _unwrap("google_news") or _age_days("google_news") > 7:
+        if company.name:
+            gaps.append({"key": "google_news", "label": f"Latest news about {company.name}"})
+
+    if not _unwrap("web_scrape") and domain and not domain.endswith(".unknown"):
+        gaps.append({"key": "web_scrape", "label": "Website content (pricing, product, careers)"})
+
+    if not ec.get("competitive_landscape_v2") and company.name:
+        gaps.append({"key": "competitive_landscape", "label": "Competitive landscape"})
+
+    icp_raw = _unwrap("icp_analysis")
+    icp_data = icp_raw.get("data") if isinstance(icp_raw, dict) and "data" in icp_raw else icp_raw
+    if isinstance(icp_data, dict):
+        missing_icp = []
+        if not icp_data.get("conversation_starter"):
+            missing_icp.append("conversation starter")
+        if not icp_data.get("why_now"):
+            missing_icp.append("why now")
+        if missing_icp:
+            gaps.append({"key": "icp_fields", "label": f"AI-generated {', '.join(missing_icp)}"})
+
+    return {"gaps": gaps, "count": len(gaps)}
+
+
 @router.post("/{meeting_id}/post-score")
 async def generate_post_score(meeting_id: UUID, payload: dict, session: DBSession):
     """Score a meeting from raw notes and generate MoM draft."""

@@ -1190,6 +1190,236 @@ Generate a Demo Strategy with:
     return result
 
 
+# ── Research More: gap-filling enrichment ────────────────────────────────────
+
+async def run_research_more(
+    meeting_id: UUID, session: AsyncSession
+) -> dict[str, Any]:
+    """
+    Targeted gap-filling for a meeting's company enrichment_cache.
+    Detects what's missing or stale and only fetches those pieces:
+      - hunter_company (firmographics) if missing
+      - hunter_contacts with seniority+department if empty/paused
+      - google_news if missing or older than 7 days
+      - web_scrape if missing
+      - competitive_landscape_v2 if missing
+      - conversation_starter + why_now if missing from icp_analysis
+    Returns a summary of what was filled.
+    """
+    from datetime import timedelta
+    from app.models.meeting import Meeting
+    from app.models.company import Company
+    from app.clients.hunter import HunterClient
+    from app.clients.web_search import WebSearchClient
+    from app.clients.azure_openai import AzureOpenAIClient
+
+    meeting = await session.get(Meeting, meeting_id)
+    if not meeting:
+        return {"error": "Meeting not found"}
+
+    if not meeting.company_id:
+        return {"error": "Meeting has no linked company"}
+
+    company: Company | None = await session.get(Company, meeting.company_id)
+    if not company:
+        return {"error": "Company not found"}
+
+    ec: dict = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+    domain = company.domain or ""
+    name = company.name or ""
+    now = datetime.utcnow()
+    filled: list[str] = []
+    gaps: list[str] = []
+
+    def _unwrap(key):
+        entry = ec.get(key)
+        if isinstance(entry, dict):
+            return entry.get("data")
+        return None
+
+    def _age_days(key) -> float:
+        entry = ec.get(key)
+        if not isinstance(entry, dict):
+            return 9999
+        fetched_at = entry.get("fetched_at")
+        if not fetched_at:
+            return 9999
+        try:
+            dt = datetime.fromisoformat(fetched_at)
+            return (now - dt).total_seconds() / 86400
+        except Exception:
+            return 9999
+
+    hunter = HunterClient()
+    web = WebSearchClient()
+    ai = AzureOpenAIClient()
+
+    tasks_to_run: list[tuple[str, Any]] = []
+
+    # ── Gap: hunter_company firmographics ──
+    if not _unwrap("hunter_company") and domain and not domain.endswith(".unknown"):
+        gaps.append("hunter_company")
+        tasks_to_run.append(("hunter_company", hunter.company_enrichment(domain)))
+
+    # ── Gap: hunter_contacts (empty or paused) ──
+    hc_entry = ec.get("hunter_contacts")
+    hc_paused = isinstance(hc_entry, dict) and hc_entry.get("paused")
+    hc_data = _unwrap("hunter_contacts")
+    hc_contacts = hc_data.get("contacts", []) if isinstance(hc_data, dict) else (hc_data if isinstance(hc_data, list) else [])
+    if (not hc_contacts or hc_paused) and domain and not domain.endswith(".unknown"):
+        gaps.append("hunter_contacts")
+        tasks_to_run.append(("hunter_contacts", hunter.domain_search_rich(domain)))
+
+    # ── Gap: google_news missing or >7 days old ──
+    if not _unwrap("google_news") or _age_days("google_news") > 7:
+        if name:
+            gaps.append("google_news")
+            tasks_to_run.append(("google_news", _fetch_google_news_rss(name, domain)))
+
+    # ── Gap: web_scrape missing ──
+    if not _unwrap("web_scrape") and domain and not domain.endswith(".unknown"):
+        gaps.append("web_scrape")
+        tasks_to_run.append(("web_scrape", web.company_website_summary(domain, name, ai)))
+
+    # ── Gap: competitive_landscape missing ──
+    if not ec.get("competitive_landscape_v2") and name:
+        gaps.append("competitive_landscape")
+        tasks_to_run.append(("competitive_landscape_v2", web.search(
+            f'"{name}" competitors OR alternatives OR "vs" {now.year}', max_results=5
+        )))
+
+    # ── Gap: conversation_starter / why_now missing from icp_analysis ──
+    icp_raw = _unwrap("icp_analysis")
+    icp_data = icp_raw.get("data") if isinstance(icp_raw, dict) and "data" in icp_raw else icp_raw
+    missing_icp_fields = []
+    if isinstance(icp_data, dict):
+        if not icp_data.get("conversation_starter"):
+            missing_icp_fields.append("conversation_starter")
+        if not icp_data.get("why_now"):
+            missing_icp_fields.append("why_now")
+
+    if missing_icp_fields and name:
+        gaps.append(f"icp_fields ({', '.join(missing_icp_fields)})")
+        ai_summary = _unwrap("ai_summary") or {}
+        pain_points = (icp_data or {}).get("pain_points") or (ai_summary.get("pain_points") if isinstance(ai_summary, dict) else []) or []
+        beacon_angle = (icp_data or {}).get("beacon_angle") or company.beacon_angle or ""
+        why_now = company.why_now or ""
+        tasks_to_run.append(("icp_fields", _generate_missing_icp_fields(
+            ai=ai,
+            company_name=name,
+            industry=company.industry or "",
+            pain_points=pain_points,
+            beacon_angle=beacon_angle,
+            why_now=why_now,
+            missing=missing_icp_fields,
+        )))
+
+    if not tasks_to_run:
+        return {"filled": [], "gaps_detected": [], "message": "All data already up to date"}
+
+    # Run all gap-filling tasks in parallel
+    results = await asyncio.gather(*[t[1] for t in tasks_to_run], return_exceptions=True)
+    task_results = {tasks_to_run[i][0]: results[i] for i in range(len(tasks_to_run))}
+
+    for key, result in task_results.items():
+        if isinstance(result, Exception):
+            logger.warning(f"Research-more task '{key}' failed: {result}")
+            continue
+        if result is None:
+            continue
+
+        if key == "hunter_company" and isinstance(result, dict):
+            ec["hunter_company"] = {"data": result, "fetched_at": now.isoformat()}
+            filled.append("hunter_company")
+
+        elif key == "hunter_contacts" and isinstance(result, dict):
+            ec["hunter_contacts"] = {"data": result, "fetched_at": now.isoformat()}
+            filled.append("hunter_contacts")
+
+        elif key == "google_news" and isinstance(result, list):
+            ec["google_news"] = {"data": result, "fetched_at": now.isoformat()}
+            filled.append("google_news")
+
+        elif key == "web_scrape":
+            ec["web_scrape"] = {"data": result, "fetched_at": now.isoformat()}
+            filled.append("web_scrape")
+
+        elif key == "competitive_landscape_v2" and isinstance(result, list):
+            structured = [
+                {"name": r.get("title", ""), "summary": r.get("snippet", "")}
+                for r in result if isinstance(r, dict)
+            ]
+            ec["competitive_landscape_v2"] = structured
+            filled.append("competitive_landscape")
+
+        elif key == "icp_fields" and isinstance(result, dict):
+            if not isinstance(icp_data, dict):
+                icp_data = {}
+            for field in missing_icp_fields:
+                if result.get(field):
+                    icp_data[field] = result[field]
+            # Write back into the cache entry
+            if isinstance(icp_raw, dict) and "data" in icp_raw:
+                icp_raw["data"] = icp_data
+                ec["icp_analysis"] = {"data": icp_raw, "fetched_at": now.isoformat()}
+            else:
+                ec["icp_analysis"] = {"data": icp_data, "fetched_at": now.isoformat()}
+            filled.append(f"icp_fields ({', '.join(missing_icp_fields)})")
+
+    # Persist updated cache
+    from sqlalchemy import text as sa_text
+    from sqlalchemy import update
+    from app.models.company import Company as CompanyModel
+    import json as _json
+
+    stmt = (
+        update(CompanyModel)
+        .where(CompanyModel.id == company.id)
+        .values(enrichment_cache=ec)
+    )
+    await session.execute(stmt)
+    await session.commit()
+
+    return {
+        "filled": filled,
+        "gaps_detected": gaps,
+        "message": f"Filled {len(filled)} of {len(gaps)} gaps",
+    }
+
+
+async def _generate_missing_icp_fields(
+    ai,
+    company_name: str,
+    industry: str,
+    pain_points: list,
+    beacon_angle: str,
+    why_now: str,
+    missing: list[str],
+) -> dict:
+    """Use GPT-4o to generate missing ICP fields (conversation_starter, why_now)."""
+    system = (
+        "You are a B2B sales coach. Given company context, generate the requested fields. "
+        "Return ONLY valid JSON with the requested keys. Be specific and actionable, not generic."
+    )
+    pain_str = "; ".join(pain_points[:3]) if pain_points else "not specified"
+    user = (
+        f"Company: {company_name}\nIndustry: {industry}\n"
+        f"Pain points: {pain_str}\nBeacon angle: {beacon_angle}\nWhy now hint: {why_now}\n\n"
+        f"Generate ONLY these fields as JSON: {missing}\n"
+        "conversation_starter: A single punchy opening sentence the rep can say verbatim (max 30 words).\n"
+        "why_now: 1-2 sentences on why this company needs this NOW based on context."
+    )
+    try:
+        result = await ai.complete(system, user, max_tokens=300)
+        import json as _json
+        if result:
+            cleaned = result.strip().strip("```json").strip("```").strip()
+            return _json.loads(cleaned)
+    except Exception as e:
+        logger.warning(f"Missing ICP fields generation failed: {e}")
+    return {}
+
+
 # ── Helper: Google News RSS ──────────────────────────────────────────────────
 
 async def _fetch_google_news_rss(company_name: str, domain: str = "") -> list[dict]:

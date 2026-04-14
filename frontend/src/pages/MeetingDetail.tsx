@@ -253,11 +253,13 @@ export default function MeetingDetail() {
 
   const [loading, setLoading]         = useState(true);
   const [running, setRunning]         = useState(false);
+  const [researchingMore, setResearchingMore] = useState(false);
   const [generatingStory, setGeneratingStory] = useState(false);
   const [scoring, setScoring]         = useState(false);
   const [rawNotes, setRawNotes]       = useState("");
   const [error, setError]             = useState("");
   const [statusMsg, setStatusMsg]     = useState("");
+  const [researchGaps, setResearchGaps] = useState<Array<{ key: string; label: string }>>([]);
 
   // ── Manual linking state ────────────────────────────────────────────────────
   const [showLinkPanel, setShowLinkPanel]   = useState(false);
@@ -291,6 +293,8 @@ export default function MeetingDetail() {
         setContacts(cts);
         setSignals(sig.slice(0, 8));
       }
+      // Load research gaps in background — doesn't block page render
+      meetingsApi.getResearchGaps(m.id).then(g => setResearchGaps(g.gaps)).catch(() => {});
     } finally {
       setLoading(false);
     }
@@ -377,6 +381,26 @@ export default function MeetingDetail() {
       setStatusMsg("");
     } finally {
       setRunning(false);
+    }
+  };
+
+  // ── Research More: fill gaps in enrichment_cache ────────────────────────────
+  const handleResearchMore = async () => {
+    if (!id) return;
+    setResearchingMore(true);
+    setError("");
+    setStatusMsg(`Researching ${researchGaps.length} gaps…`);
+    try {
+      const result = await meetingsApi.researchMore(id);
+      await loadAll();
+      const filledCount = result.filled?.length ?? 0;
+      setStatusMsg(filledCount > 0 ? `Filled ${filledCount} gap${filledCount !== 1 ? "s" : ""} ✓` : "Nothing new found");
+      setTimeout(() => setStatusMsg(""), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Research more failed");
+      setStatusMsg("");
+    } finally {
+      setResearchingMore(false);
     }
   };
 
@@ -501,6 +525,8 @@ export default function MeetingDetail() {
   const cachedIntent = _unwrapEc("intent_signals") as Record<string, any> | null;
   const cachedHunterContacts = _unwrapEc("hunter_contacts") as any[] | null;
   const cachedCompetitive = ec["competitive_landscape_v2"] as any[] | null;
+  const cachedHunterCompany = _unwrapEc("hunter_company") as Record<string, any> | null;
+  const cachedGoogleNews = _unwrapEc("google_news") as Array<{ title: string; url: string; published?: string; source?: string }> | null;
 
   const icpPainPoints: string[] = icpData?.pain_points ?? cachedAiSummary?.pain_points ?? [];
   const icpTalkingPoints: string[] = cachedAiSummary?.talking_points ?? [];
@@ -516,8 +542,9 @@ export default function MeetingDetail() {
   const icpCompetitors: Array<{ name: string; summary?: string }> = (cachedCompetitive ?? [])
     .filter((c: any) => typeof c === "object")
     .map((c: any) => ({ name: c.name ?? c.competitor ?? "", summary: c.summary ?? "" }));
-  const icpHunterContacts: Array<{ first_name?: string; last_name?: string; title?: string; email?: string; linkedin_url?: string }> =
-    Array.isArray(cachedHunterContacts) ? cachedHunterContacts.filter((c: any) => typeof c === "object") : [];
+  const icpHunterContacts: Array<{ first_name?: string; last_name?: string; title?: string; email?: string; linkedin_url?: string; seniority?: string; department?: string; phone_number?: string }> =
+    Array.isArray(cachedHunterContacts) ? cachedHunterContacts.filter((c: any) => typeof c === "object") :
+    (Array.isArray((cachedHunterContacts as any)?.contacts) ? (cachedHunterContacts as any).contacts.filter((c: any) => typeof c === "object") : []);
 
   const hasIcpData = !!(icpBeaconAngle || icpConversationStarter || icpPainPoints.length || icpTalkingPoints.length);
 
@@ -930,20 +957,33 @@ export default function MeetingDetail() {
                   <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Contacts Found ({icpHunterContacts.length})</p>
                   <div style={{ display: "grid", gap: 6 }}>
                     {icpHunterContacts.slice(0, 6).map((c, i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5" }}>
-                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "#3730a3", flexShrink: 0 }}>
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5" }}>
+                        <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "#3730a3", flexShrink: 0 }}>
                           {(c.first_name?.[0] ?? "") + (c.last_name?.[0] ?? "")}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{ fontSize: 13, fontWeight: 700, color: "#1e3a5f", margin: 0 }}>{c.first_name} {c.last_name}</p>
-                          {c.title && <p style={{ fontSize: 11, color: "#64748b", margin: 0 }}>{c.title}</p>}
-                          {c.email && <p style={{ fontSize: 11, color: "#94a3b8", margin: 0 }}>{c.email}</p>}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <p style={{ fontSize: 13, fontWeight: 700, color: "#1e3a5f", margin: 0 }}>{c.first_name} {c.last_name}</p>
+                            {c.seniority && (
+                              <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: "#ede9fe", border: "1px solid #ddd6fe", color: "#5b21b6", fontWeight: 700, textTransform: "capitalize" }}>{c.seniority}</span>
+                            )}
+                            {c.department && (
+                              <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", fontWeight: 700, textTransform: "capitalize" }}>{c.department}</span>
+                            )}
+                          </div>
+                          {c.title && <p style={{ fontSize: 11, color: "#64748b", margin: "2px 0 0" }}>{c.title}</p>}
+                          {c.email && <p style={{ fontSize: 11, color: "#94a3b8", margin: "1px 0 0" }}>{c.email}</p>}
                         </div>
-                        {c.linkedin_url && (
-                          <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#0077b5", fontWeight: 600, textDecoration: "none", flexShrink: 0, display: "flex", alignItems: "center", gap: 3 }}>
-                            LinkedIn <ExternalLink size={10} />
-                          </a>
-                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0, alignItems: "flex-end" }}>
+                          {c.linkedin_url && (
+                            <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#0077b5", fontWeight: 600, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}>
+                              LinkedIn <ExternalLink size={10} />
+                            </a>
+                          )}
+                          {c.phone_number && (
+                            <span style={{ fontSize: 11, color: "#64748b" }}>{String(c.phone_number)}</span>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -951,19 +991,108 @@ export default function MeetingDetail() {
               </>
             )}
 
-            {/* ── Run intel CTA ── */}
+            {/* ── Hunter company firmographics from cache ── */}
+            {cachedHunterCompany && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 10 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Firmographics</p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {[
+                      { label: "Size", value: cachedHunterCompany.size },
+                      { label: "Revenue", value: cachedHunterCompany.annual_revenue ? `$${(Number(cachedHunterCompany.annual_revenue) / 1_000_000).toFixed(1)}M` : null },
+                      { label: "Country", value: cachedHunterCompany.country },
+                      { label: "Founded", value: cachedHunterCompany.founded_year },
+                      { label: "Type", value: cachedHunterCompany.type },
+                    ].filter(f => f.value).map(f => (
+                      <div key={f.label} style={{ padding: "5px 11px", borderRadius: 10, background: "#f0f7ff", border: "1px solid #c7dcf8" }}>
+                        <span style={{ fontSize: 10, color: "#5a7a99", fontWeight: 700, textTransform: "uppercase", marginRight: 5 }}>{f.label}</span>
+                        <span style={{ fontSize: 12, color: "#1e3a5f", fontWeight: 600 }}>{String(f.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Technologies from Hunter */}
+                  {Array.isArray(cachedHunterCompany.technologies) && cachedHunterCompany.technologies.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {(cachedHunterCompany.technologies as string[]).slice(0, 10).map((t, i) => (
+                        <span key={i} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 999, background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#5b21b6", fontWeight: 600 }}>{t}</span>
+                      ))}
+                    </div>
+                  )}
+                  {/* Social links */}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {cachedHunterCompany.linkedin_url && (
+                      <a href={String(cachedHunterCompany.linkedin_url)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#0077b5", fontWeight: 600, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}>
+                        LinkedIn <ExternalLink size={10} />
+                      </a>
+                    )}
+                    {cachedHunterCompany.twitter && (
+                      <a href={`https://twitter.com/${cachedHunterCompany.twitter}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#1d9bf0", fontWeight: 600, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}>
+                        Twitter <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── Cached Google News ── */}
+            {cachedGoogleNews && cachedGoogleNews.length > 0 && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 8 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Recent News</p>
+                  {cachedGoogleNews.slice(0, 4).map((item, i) => (
+                    <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
+                      style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5", textDecoration: "none" }}>
+                      <Newspaper size={13} style={{ color: "#7d8fa3", marginTop: 2, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: "#1e3a5f", margin: 0, lineHeight: 1.4 }}>{item.title}</p>
+                        {(item.source || item.published) && (
+                          <p style={{ fontSize: 11, color: "#94a3b8", margin: "2px 0 0" }}>
+                            {item.source}{item.source && item.published ? " · " : ""}{item.published ? new Date(item.published).toLocaleDateString() : ""}
+                          </p>
+                        )}
+                      </div>
+                      <ExternalLink size={10} style={{ color: "#94a3b8", flexShrink: 0, marginTop: 3 }} />
+                    </a>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* ── Research More CTA ── */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderRadius: 12, background: "#f4f7fb", border: "1px dashed #c9daf0" }}>
-              <p style={{ fontSize: 12, color: "#5a7a99", margin: 0, lineHeight: 1.5 }}>
-                {intelWasRun
-                  ? "Web intel was run — scroll down for the executive briefing, live news, and stakeholder talk tracks."
-                  : "Run Web Intel to add a fresh AI executive briefing, live news, stakeholder talk tracks, and discovery questions."}
-              </p>
-              {!intelWasRun && (
-                <button className="crm-button soft shrink-0" onClick={handleRunIntelligence} disabled={running}>
-                  {running ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  {running ? "Running…" : "Run Web Intel"}
-                </button>
-              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 12, color: "#5a7a99", margin: 0, lineHeight: 1.5 }}>
+                  {intelWasRun
+                    ? "Full intel was run — scroll down for the AI executive briefing, live news, and stakeholder talk tracks."
+                    : researchGaps.length > 0
+                      ? `${researchGaps.length} data gap${researchGaps.length !== 1 ? "s" : ""} found — fetch missing firmographics, contacts, news, and more.`
+                      : "All available data has been fetched. Run full Web Intel for an AI executive briefing."}
+                </p>
+                {researchGaps.length > 0 && !researchingMore && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                    {researchGaps.map(g => (
+                      <span key={g.key} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: "#fff3cd", border: "1px solid #fde68a", color: "#92400e", fontWeight: 600 }}>{g.label}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                {researchGaps.length > 0 && (
+                  <button className="crm-button" onClick={handleResearchMore} disabled={researchingMore || running}>
+                    {researchingMore ? <RefreshCw size={13} className="animate-spin" /> : <Search size={13} />}
+                    {researchingMore ? "Researching…" : `Research More (${researchGaps.length})`}
+                  </button>
+                )}
+                {!intelWasRun && (
+                  <button className="crm-button soft" onClick={handleRunIntelligence} disabled={running || researchingMore}>
+                    {running ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                    {running ? "Running…" : "Full Web Intel"}
+                  </button>
+                )}
+              </div>
             </div>
 
           </div>

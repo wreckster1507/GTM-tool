@@ -528,6 +528,15 @@ export const meetingsApi = {
       method: "POST",
       body: JSON.stringify({ raw_notes: rawNotes }),
     }),
+  getResearchGaps: (id: string) =>
+    request<{ gaps: Array<{ key: string; label: string }>; count: number }>(
+      `/api/v1/meetings/${id}/research-gaps`
+    ),
+  researchMore: (id: string) =>
+    request<{ filled: string[]; gaps_detected: string[]; message: string }>(
+      `/api/v1/meetings/${id}/research-more`,
+      { method: "POST" }
+    ),
 };
 
 export const battlecardsApi = {
