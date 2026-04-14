@@ -488,6 +488,39 @@ export default function MeetingDetail() {
 
   const techStack = company?.tech_stack as Record<string, string> | null;
 
+  // ── Parse enrichment_cache directly — shown immediately, no intel run needed ──
+  const ec = (company?.enrichment_cache ?? {}) as Record<string, any>;
+  const _unwrapEc = (key: string) => {
+    const entry = ec[key];
+    if (entry && typeof entry === "object" && "data" in entry) return entry.data;
+    return entry ?? null;
+  };
+  const cachedIcp = _unwrapEc("icp_analysis");
+  const icpData = cachedIcp && typeof cachedIcp === "object" && "data" in cachedIcp ? cachedIcp.data : cachedIcp;
+  const cachedAiSummary = _unwrapEc("ai_summary") as Record<string, any> | null;
+  const cachedIntent = _unwrapEc("intent_signals") as Record<string, any> | null;
+  const cachedHunterContacts = _unwrapEc("hunter_contacts") as any[] | null;
+  const cachedCompetitive = ec["competitive_landscape_v2"] as any[] | null;
+
+  const icpPainPoints: string[] = icpData?.pain_points ?? cachedAiSummary?.pain_points ?? [];
+  const icpTalkingPoints: string[] = cachedAiSummary?.talking_points ?? [];
+  const icpBeaconAngle: string | null = icpData?.beacon_angle ?? null;
+  const icpConversationStarter: string | null = icpData?.conversation_starter ?? null;
+  const icpWhyNow: string | null = icpData?.why_now ?? null;
+  const icpRecommendedApproach: string | null = icpData?.recommended_outreach_strategy ?? null;
+  const icpHiringSignals: string[] = (cachedIntent?.ps_hiring ?? [])
+    .filter((s: any) => typeof s === "object" && s?.title)
+    .map((s: any) => s.title as string)
+    .slice(0, 8);
+  const icpFunding: string | null = (cachedIntent?.funding ?? [])[0]?.snippet ?? null;
+  const icpCompetitors: Array<{ name: string; summary?: string }> = (cachedCompetitive ?? [])
+    .filter((c: any) => typeof c === "object")
+    .map((c: any) => ({ name: c.name ?? c.competitor ?? "", summary: c.summary ?? "" }));
+  const icpHunterContacts: Array<{ first_name?: string; last_name?: string; title?: string; email?: string; linkedin_url?: string }> =
+    Array.isArray(cachedHunterContacts) ? cachedHunterContacts.filter((c: any) => typeof c === "object") : [];
+
+  const hasIcpData = !!(icpBeaconAngle || icpConversationStarter || icpPainPoints.length || icpTalkingPoints.length);
+
   return (
     <div className="meeting-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
 
@@ -711,6 +744,139 @@ export default function MeetingDetail() {
           );
         })}
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 0a — ICP Research Prep (from enrichment_cache, always shown)
+      ══════════════════════════════════════════════════════════════════════ */}
+      {hasIcpData && (
+        <Section title="Sales Prep — From ICP Research" icon={<Target size={15} className="text-[#1f6feb]" />} badge="Ready now">
+          <div style={{ display: "grid", gap: 14 }}>
+
+            {/* Conversation starter + Beacon angle side by side */}
+            {(icpConversationStarter || icpBeaconAngle) && (
+              <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
+                {icpConversationStarter && (
+                  <div className="rounded-xl border border-[#d5e5ff] bg-[#f3f8ff] p-4">
+                    <p className="text-[11px] uppercase tracking-wide text-[#24567e] font-semibold mb-2">Open With This</p>
+                    <p className="text-[13px] text-[#1e3a5f] leading-relaxed italic">"{icpConversationStarter}"</p>
+                  </div>
+                )}
+                {icpBeaconAngle && (
+                  <div className="rounded-xl border border-[#ffe0cf] bg-[#fff8f4] p-4">
+                    <p className="text-[11px] uppercase tracking-wide text-[#b05a2a] font-semibold mb-2">Beacon Angle</p>
+                    <p className="text-[13px] text-[#3d2510] leading-relaxed">{icpBeaconAngle}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Pain points */}
+            {icpPainPoints.length > 0 && (
+              <div className="rounded-xl border border-[#fecaca] bg-[#fff5f5] p-4">
+                <p className="text-[11px] uppercase tracking-wide text-[#b91c1c] font-semibold mb-2">Pain Points to Address</p>
+                <div style={{ display: "grid", gap: 5 }}>
+                  {icpPainPoints.map((p, i) => (
+                    <p key={i} className="text-[13px] text-[#7f1d1d] leading-relaxed">• {p}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Talking points */}
+            {icpTalkingPoints.length > 0 && (
+              <div className="rounded-xl border border-[#bbf7d0] bg-[#f0fdf4] p-4">
+                <p className="text-[11px] uppercase tracking-wide text-[#15803d] font-semibold mb-2">Talking Points</p>
+                <div style={{ display: "grid", gap: 5 }}>
+                  {icpTalkingPoints.map((t, i) => (
+                    <p key={i} className="text-[13px] text-[#1e4032] leading-relaxed">• {t}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Why now + recommended approach */}
+            {(icpWhyNow || icpRecommendedApproach) && (
+              <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
+                {icpWhyNow && (
+                  <div className="rounded-xl border border-[#fde68a] bg-[#fffbeb] p-4">
+                    <p className="text-[11px] uppercase tracking-wide text-[#92400e] font-semibold mb-2">Why Now</p>
+                    <p className="text-[13px] text-[#78350f] leading-relaxed">{icpWhyNow}</p>
+                  </div>
+                )}
+                {icpRecommendedApproach && (
+                  <div className="rounded-xl border border-[#e9d5ff] bg-[#faf5ff] p-4">
+                    <p className="text-[11px] uppercase tracking-wide text-[#7e22ce] font-semibold mb-2">Recommended Approach</p>
+                    <p className="text-[13px] text-[#4c1d95] leading-relaxed">{icpRecommendedApproach}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Hiring signals */}
+            {icpHiringSignals.length > 0 && (
+              <div className="rounded-xl border border-[#fde68a] bg-[#fffbeb] p-4">
+                <p className="text-[11px] uppercase tracking-wide text-[#92400e] font-semibold mb-2">
+                  Active Hiring ({icpHiringSignals.length} roles) — they're feeling the pain Beacon solves
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {icpHiringSignals.map((r, i) => (
+                    <span key={i} className="inline-flex items-center px-3 py-1 rounded-full border border-[#fde68a] bg-white text-[11px] font-semibold text-[#92400e]">{r}</span>
+                  ))}
+                </div>
+                {icpFunding && <p className="text-[12px] text-[#78350f] mt-3"><span className="font-bold">Funding signal:</span> {icpFunding}</p>}
+              </div>
+            )}
+
+            {/* Competitors from ICP */}
+            {icpCompetitors.length > 0 && (
+              <div className="rounded-xl border border-[#fecaca] bg-[#fff5f5] p-4">
+                <p className="text-[11px] uppercase tracking-wide text-[#b91c1c] font-semibold mb-2">Competitive Landscape</p>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {icpCompetitors.slice(0, 5).map((c, i) => (
+                    <div key={i} style={{ paddingLeft: 10, borderLeft: "3px solid #fca5a5" }}>
+                      <p className="text-[12px] font-bold text-[#b91c1c]">{c.name}</p>
+                      {c.summary && <p className="text-[12px] text-[#7f1d1d] leading-relaxed mt-0.5">{c.summary}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Hunter contacts from ICP */}
+            {icpHunterContacts.length > 0 && (
+              <div className="rounded-xl border border-[#dbeafe] bg-[#eff6ff] p-4">
+                <p className="text-[11px] uppercase tracking-wide text-[#1d4ed8] font-semibold mb-2">Contacts Found ({icpHunterContacts.length})</p>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {icpHunterContacts.slice(0, 5).map((c, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div>
+                        <span className="text-[13px] font-semibold text-[#1e3a5f]">{c.first_name} {c.last_name}</span>
+                        {c.title && <span className="text-[12px] text-[#4a7fa5] ml-2">{c.title}</span>}
+                        {c.email && <span className="text-[11px] text-[#6b9ab8] ml-2">{c.email}</span>}
+                      </div>
+                      {c.linkedin_url && (
+                        <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-[#0077b5] font-semibold hover:underline ml-auto shrink-0">
+                          LinkedIn <ExternalLink size={10} />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-dashed border-[#c9daf0] bg-[#f5f9ff] px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-[12px] text-[#5a7a99]">
+                This prep is from your ICP research. Run <strong>Re-run Web Intel</strong> to add a fresh executive briefing, live news, stakeholder talk tracks, and discovery questions.
+              </p>
+              <button className="crm-button soft shrink-0" onClick={handleRunIntelligence} disabled={running}>
+                {running ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                {running ? "Running…" : "Run Web Intel"}
+              </button>
+            </div>
+          </div>
+        </Section>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 0 — Executive Briefing (GPT-4o synthesis of all intel)

@@ -725,12 +725,16 @@ async def run_pre_meeting_intelligence(
         return None
 
     # Seed from cache — these are skipped in the parallel fetch below if populated
-    _cached_web_scrape = _unwrap("web_scrape")
+    _cached_web_scrape = _unwrap("web_scrape")  # may be dict or str
     _cached_intent = _unwrap("intent_signals")
     _cached_hunter_contacts_raw = _unwrap("hunter_contacts")
-    _cached_ai_summary = _unwrap("ai_summary")
-    _cached_icp = _unwrap("icp_analysis")
-    _cached_competitive = ec.get("competitive_landscape_v2")
+    _cached_ai_summary = _unwrap("ai_summary") if isinstance(_unwrap("ai_summary"), dict) else {}
+    _cached_icp_entry = _unwrap("icp_analysis")
+    # icp_analysis.data may be nested one more level
+    _cached_icp = _cached_icp_entry.get("data") if isinstance(_cached_icp_entry, dict) else (
+        _cached_icp_entry if isinstance(_cached_icp_entry, dict) else None
+    )
+    _cached_competitive_raw = ec.get("competitive_landscape_v2")
 
     company_background: dict | None = None
     website_pages: dict | None = None
@@ -743,32 +747,35 @@ async def run_pre_meeting_intelligence(
     # Pre-populate from cache where available
     intent_signals: dict = {}
     if isinstance(_cached_intent, dict):
-        # enrichment_cache intent has keys: ps_hiring, funding, news, etc.
-        # Map to the shape pre-meeting intel expects: {hiring: [...], funding: ..., growth: ...}
         hiring_signals = _cached_intent.get("ps_hiring") or []
         funding_signals = _cached_intent.get("funding") or []
         intent_signals = {
-            "hiring": [s.get("title", "") for s in hiring_signals if s.get("title")][:10],
-            "funding": funding_signals[0].get("snippet") if funding_signals else None,
+            "hiring": [s.get("title", "") for s in hiring_signals if isinstance(s, dict) and s.get("title")][:10],
+            "funding": funding_signals[0].get("snippet") if funding_signals and isinstance(funding_signals[0], dict) else None,
             "growth": None,
         }
 
     hunter_contacts: dict | None = None
     if isinstance(_cached_hunter_contacts_raw, list) and _cached_hunter_contacts_raw:
-        hunter_contacts = {"contacts": _cached_hunter_contacts_raw}
+        hunter_contacts = {"contacts": [c for c in _cached_hunter_contacts_raw if isinstance(c, dict)]}
 
-    if isinstance(_cached_competitive, list) and _cached_competitive:
+    if isinstance(_cached_competitive_raw, list) and _cached_competitive_raw:
         competitive_landscape = [
             {"name": c.get("name") or c.get("competitor", ""), "summary": c.get("summary", "")}
-            for c in _cached_competitive
+            for c in _cached_competitive_raw
+            if isinstance(c, dict)
         ]
 
     async def _website_summary():
         if _cached_web_scrape:
-            # Build a background dict from the cached scrape
-            text = _cached_web_scrape.get("homepage_text") or _cached_web_scrape.get("text") or ""
+            # _cached_web_scrape may be a dict with page text or a raw string
+            if isinstance(_cached_web_scrape, dict):
+                text = _cached_web_scrape.get("homepage_text") or _cached_web_scrape.get("text") or ""
+            else:
+                text = str(_cached_web_scrape)
             if text:
-                return {"extract": text[:1500], "description": _cached_ai_summary.get("description") if _cached_ai_summary else None}
+                desc = _cached_ai_summary.get("description") if _cached_ai_summary else None
+                return {"extract": text[:1500], "description": desc}
         if not domain or domain.endswith(".unknown"):
             return None
         return await web.company_website_summary(domain, name, ai)
@@ -963,7 +970,7 @@ async def run_pre_meeting_intelligence(
     # analysis so the meeting brief shows this without re-running everything.
     company_snapshot: dict = {}
     if _cached_icp and isinstance(_cached_icp, dict):
-        icp_data = _cached_icp.get("data") or _cached_icp
+        icp_data = _cached_icp  # already unwrapped via _unwrap() above
         company_snapshot = {
             "icp_score": company.icp_score if company else None,
             "icp_tier": company.icp_tier if company else None,
