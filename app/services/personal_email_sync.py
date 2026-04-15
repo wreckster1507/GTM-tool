@@ -150,6 +150,20 @@ def _detect_latest_intent(segments: list[str]) -> str | None:
     return _detect_intent(combined)
 
 
+def _is_active_deal_stage(stage: str | None) -> bool:
+    normalized = (stage or "").strip().lower()
+    return normalized not in {
+        "closed_won",
+        "closed_lost",
+        "not_a_fit",
+        "cold",
+        "on_hold",
+        "nurture",
+        "churned",
+        "closed",
+    }
+
+
 async def _load_existing_thread_segments(
     session: AsyncSession,
     *,
@@ -574,6 +588,15 @@ async def process_personal_emails(
         contact_company_map[row.id] = row.company_id
         all_contact_names.append(f"{row.first_name} {row.last_name}")
 
+    all_deals_result = await session.execute(
+        select(Deal.id, Deal.company_id, Deal.stage)
+    )
+    deal_company_map: dict[UUID, UUID | None] = {}
+    deal_stage_map: dict[UUID, str] = {}
+    for row in all_deals_result.all():
+        deal_company_map[row.id] = row.company_id
+        deal_stage_map[row.id] = row.stage or ""
+
     touched_deal_ids: set[UUID] = set()
     open_task_counts_before: dict[UUID, int] = {}
     thread_context_cache: dict[tuple[UUID, str], list[str]] = {}
@@ -629,6 +652,7 @@ async def process_personal_emails(
                     matched_company_id = contact_company_map.get(cid)
 
         deal_ids: list[UUID] = []
+        meeting_candidate_deal_id: UUID | None = None
         if matched_contact_ids:
             dc_result = await session.execute(
                 select(DealContact.deal_id).where(
@@ -636,6 +660,9 @@ async def process_personal_emails(
                 ).distinct()
             )
             deal_ids = [row.deal_id for row in dc_result.all()]
+            unique_deal_ids = list(dict.fromkeys(deal_ids))
+            if len(unique_deal_ids) == 1:
+                meeting_candidate_deal_id = unique_deal_ids[0]
 
         # ── Pass 2: company domain match ─────────────────────────────────────
         if not deal_ids:
@@ -647,10 +674,12 @@ async def process_personal_emails(
             # Remove the user's own company domain (don't match internal mail)
             external_domains.discard(user_domain)
 
+            domain_matched_company_ids: set[UUID] = set()
             for domain in external_domains:
                 if domain in company_domain_map:
                     company_id, _ = company_domain_map[domain]
                     matched_company_id = company_id
+                    domain_matched_company_ids.add(company_id)
                     # Find deals linked to this company
                     deal_result = await session.execute(
                         select(Deal.id, Deal.assigned_to_id, Deal.stage).where(
@@ -660,6 +689,13 @@ async def process_personal_emails(
                     for row in deal_result.all():
                         if row.id not in deal_ids:
                             deal_ids.append(row.id)
+            if len(domain_matched_company_ids) == 1:
+                active_company_deal_ids = [
+                    deal_id for deal_id in dict.fromkeys(deal_ids)
+                    if _is_active_deal_stage(deal_stage_map.get(deal_id))
+                ]
+                if len(active_company_deal_ids) == 1:
+                    meeting_candidate_deal_id = active_company_deal_ids[0]
 
         if not deal_ids and (msg.subject or msg.body_text):
             company_match = _match_company_from_text(
@@ -812,7 +848,7 @@ async def process_personal_emails(
             touched_deal_ids.add(deal_id)
             thread_context_cache[thread_cache_key] = thread_segments
 
-            if thread_latest_intent == "book_workshop_session":
+            if thread_latest_intent == "book_workshop_session" and meeting_candidate_deal_id == deal_id:
                 all_contact_ids = list({cid for cid in matched_contact_ids if cid})
                 await _ensure_meeting_for_deal(session, deal, msg, all_contact_ids)
 
