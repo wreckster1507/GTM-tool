@@ -1079,10 +1079,12 @@ export type SalesDashboard = {
 };
 
 export const analyticsApi = {
-  salesDashboard: (windowDays = 90, repId?: string, geography?: string) =>
-    request<SalesDashboard>(
-      `/api/v1/analytics/sales-dashboard?window_days=${windowDays}${repId ? `&rep_id=${encodeURIComponent(repId)}` : ""}${geography ? `&geography=${encodeURIComponent(geography)}` : ""}`
-    ),
+  salesDashboard: (windowDays = 90, repIds: string[] = [], geographies: string[] = []) => {
+    const params = new URLSearchParams({ window_days: String(windowDays) });
+    for (const id of repIds) params.append("rep_id", id);
+    for (const g of geographies) params.append("geography", g);
+    return request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?${params.toString()}`);
+  },
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
 };

@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
   CalendarRange,
+  Check,
+  ChevronDown,
   LoaderCircle,
+  Search,
   Sigma,
   TrendingUp,
   Trophy,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -414,18 +418,197 @@ function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
   );
 }
 
+interface MultiSelectOption {
+  value: string;
+  label: string;
+}
+
+function MultiSelectDropdown({
+  label,
+  options,
+  selected,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  options: MultiSelectOption[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filtered = useMemo(
+    () =>
+      query.trim()
+        ? options.filter((opt) => opt.label.toLowerCase().includes(query.toLowerCase()))
+        : options,
+    [options, query],
+  );
+
+  function toggle(value: string) {
+    if (selected.includes(value)) {
+      onChange(selected.filter((v) => v !== value));
+    } else {
+      onChange([...selected, value]);
+    }
+  }
+
+  const displayText =
+    selected.length === 0
+      ? placeholder
+      : selected.length === 1
+        ? options.find((o) => o.value === selected[0])?.label ?? placeholder
+        : `${selected.length} selected`;
+
+  return (
+    <div style={{ display: "grid", gap: 8 }} ref={ref}>
+      <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
+        {label}
+      </label>
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => { setOpen((o) => !o); setQuery(""); }}
+          style={{
+            width: "100%",
+            height: 40,
+            borderRadius: 12,
+            border: selected.length > 0 ? "1px solid #b8cff7" : "1px solid #d9e3ef",
+            background: selected.length > 0 ? "#eef4ff" : "#fff",
+            color: selected.length > 0 ? "#2948b9" : "#203244",
+            fontSize: 13,
+            fontWeight: 700,
+            padding: "0 36px 0 12px",
+            textAlign: "left",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+            {displayText}
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            {selected.length > 0 && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); onChange([]); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange([]); } }}
+                style={{ display: "flex", alignItems: "center", color: "#5878be", cursor: "pointer" }}
+              >
+                <X size={13} />
+              </span>
+            )}
+            <ChevronDown size={14} style={{ color: "#7a8ca0", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+          </div>
+        </button>
+        {open && (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              right: 0,
+              zIndex: 50,
+              background: "#fff",
+              border: "1px solid #dde8f4",
+              borderRadius: 14,
+              boxShadow: "0 8px 28px rgba(20,50,80,0.12)",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ padding: "8px 10px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 8 }}>
+              <Search size={13} style={{ color: "#94a8be", flexShrink: 0 }} />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search..."
+                style={{
+                  flex: 1,
+                  border: "none",
+                  outline: "none",
+                  fontSize: 13,
+                  color: "#203244",
+                  background: "transparent",
+                }}
+              />
+            </div>
+            <div style={{ maxHeight: 220, overflowY: "auto" }}>
+              {filtered.length === 0 ? (
+                <p style={{ margin: 0, padding: "12px 14px", fontSize: 13, color: "#94a8be" }}>No results</p>
+              ) : (
+                filtered.map((opt) => {
+                  const isSelected = selected.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => toggle(opt.value)}
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        border: "none",
+                        background: isSelected ? "#f0f5ff" : "transparent",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        fontSize: 13,
+                        fontWeight: isSelected ? 700 : 500,
+                        color: isSelected ? "#2948b9" : "#2e4260",
+                      }}
+                    >
+                      <span style={{
+                        width: 18, height: 18, borderRadius: 6, border: isSelected ? "none" : "1.5px solid #c8d8ea",
+                        background: isSelected ? "#3f5fd4" : "#fff",
+                        display: "grid", placeItems: "center", flexShrink: 0,
+                      }}>
+                        {isSelected && <Check size={11} style={{ color: "#fff" }} />}
+                      </span>
+                      {opt.label}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SalesAnalytics() {
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [repFilter, setRepFilter] = useState<string>("all");
-  const [geographyFilter, setGeographyFilter] = useState<string>("all");
+  const [repFilter, setRepFilter] = useState<string[]>([]);
+  const [geographyFilter, setGeographyFilter] = useState<string[]>([]);
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedRep = useMemo(
-    () => (repFilter === "all" ? null : teamUsers.find((user) => user.id === repFilter) ?? null),
+  const selectedRepNames = useMemo(
+    () => repFilter.map((id) => teamUsers.find((u) => u.id === id)?.name ?? id),
     [repFilter, teamUsers],
   );
 
@@ -448,11 +631,7 @@ export default function SalesAnalytics() {
     setError(null);
 
     analyticsApi
-      .salesDashboard(
-        windowDays,
-        repFilter === "all" ? undefined : repFilter,
-        geographyFilter === "all" ? undefined : geographyFilter,
-      )
+      .salesDashboard(windowDays, repFilter, geographyFilter)
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -577,57 +756,20 @@ export default function SalesAnalytics() {
                 </button>
               ))}
             </div>
-            <div style={{ display: "grid", gap: 8 }}>
-              <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
-                Rep filter
-              </label>
-              <select
-                value={repFilter}
-                onChange={(event) => setRepFilter(event.target.value)}
-                style={{
-                  height: 40,
-                  borderRadius: 12,
-                  border: "1px solid #d9e3ef",
-                  background: "#fff",
-                  color: "#203244",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  padding: "0 12px",
-                }}
-              >
-                <option value="all">All reps</option>
-                {teamUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: "grid", gap: 8 }}>
-              <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
-                Geography
-              </label>
-              <select
-                value={geographyFilter}
-                onChange={(event) => setGeographyFilter(event.target.value)}
-                style={{
-                  height: 40,
-                  borderRadius: 12,
-                  border: "1px solid #d9e3ef",
-                  background: "#fff",
-                  color: "#203244",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  padding: "0 12px",
-                }}
-              >
-                {GEO_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option === "all" ? "All geographies" : option}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <MultiSelectDropdown
+              label="Rep filter"
+              options={teamUsers.map((u) => ({ value: u.id, label: u.name }))}
+              selected={repFilter}
+              onChange={setRepFilter}
+              placeholder="All reps"
+            />
+            <MultiSelectDropdown
+              label="Geography"
+              options={GEO_OPTIONS.filter((o) => o !== "all").map((o) => ({ value: o, label: o }))}
+              selected={geographyFilter}
+              onChange={setGeographyFilter}
+              placeholder="All geographies"
+            />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Window</p>
@@ -647,13 +789,13 @@ export default function SalesAnalytics() {
             <CalendarRange size={14} />
             Window: last {windowDays} days
           </div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: selectedRep ? "#eef4ff" : "#f7f9fc", border: selectedRep ? "1px solid #d7e2fb" : "1px solid #e3ebf4", color: selectedRep ? "#3555c4" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: repFilter.length > 0 ? "#eef4ff" : "#f7f9fc", border: repFilter.length > 0 ? "1px solid #d7e2fb" : "1px solid #e3ebf4", color: repFilter.length > 0 ? "#3555c4" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <BarChart3 size={14} />
-            Scope: {selectedRep?.name ?? "All reps"}
+            Scope: {selectedRepNames.length === 0 ? "All reps" : selectedRepNames.length === 1 ? selectedRepNames[0] : `${selectedRepNames.length} reps`}
           </div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: geographyFilter !== "all" ? "#eefbf6" : "#f7f9fc", border: geographyFilter !== "all" ? "1px solid #cdebdc" : "1px solid #e3ebf4", color: geographyFilter !== "all" ? "#157347" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: geographyFilter.length > 0 ? "#eefbf6" : "#f7f9fc", border: geographyFilter.length > 0 ? "1px solid #cdebdc" : "1px solid #e3ebf4", color: geographyFilter.length > 0 ? "#157347" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <CalendarRange size={14} />
-            Geography: {geographyFilter === "all" ? "All" : geographyFilter}
+            Geography: {geographyFilter.length === 0 ? "All" : geographyFilter.length === 1 ? geographyFilter[0] : `${geographyFilter.length} regions`}
           </div>
           <p style={{ margin: 0, fontSize: 12, color: "#74869c" }}>
             {loading ? "Refreshing dashboard..." : `Snapshot updated ${formatSnapshotTime(data?.generated_at)}`}

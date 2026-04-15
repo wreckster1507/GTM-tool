@@ -258,8 +258,8 @@ async def _load_monthly_unique_funnel(
     session: DBSession,
     *,
     months: int = 12,
-    rep_id: UUID | None = None,
-    geography: str | None = None,
+    rep_ids: list[UUID] | None = None,
+    geography: list[str] | None = None,
 ) -> list[MonthlyUniqueFunnelRow]:
     await backfill_company_stage_milestones(session)
     month_keys = _rolling_month_keys(months)
@@ -276,13 +276,14 @@ async def _load_monthly_unique_funnel(
             CompanyStageMilestone.milestone_key.in_(list(MILESTONE_LABELS.keys())),
         )
     )
-    if rep_id:
-        stmt = stmt.where(Deal.assigned_to_id == rep_id)
+    if rep_ids:
+        stmt = stmt.where(Deal.assigned_to_id.in_(rep_ids))
     milestone_rows = (
         await session.execute(stmt)
     ).all()
     if geography:
-        milestone_rows = [row for row in milestone_rows if _normalize_geography_key(row.deal_geography) == geography]
+        normalized_geos = {_normalize_geography_key(g) for g in geography}
+        milestone_rows = [row for row in milestone_rows if _normalize_geography_key(row.deal_geography) in normalized_geos]
     return _build_monthly_unique_funnel_rows(milestone_rows, months=months)
 
 
@@ -298,19 +299,19 @@ async def monthly_funnel_summary(
 async def sales_dashboard(
     session: DBSession,
     window_days: Annotated[int, Query(ge=30, le=365)] = 90,
-    rep_id: Annotated[UUID | None, Query()] = None,
-    geography: Annotated[str | None, Query()] = None,
+    rep_id: Annotated[list[UUID], Query()] = [],
+    geography: Annotated[list[str], Query()] = [],
 ):
-    filter_rep_id = rep_id
-    filter_geography = _normalize_geography_key(geography)
+    filter_rep_ids = rep_id or []
+    filter_geographies = {_normalize_geography_key(g) for g in geography if g}
     now = datetime.utcnow()
     today = date.today()
     window_start = now - timedelta(days=window_days)
     monthly_unique_funnel = await _load_monthly_unique_funnel(
         session,
         months=12,
-        rep_id=filter_rep_id,
-        geography=filter_geography or None,
+        rep_ids=filter_rep_ids or None,
+        geography=list(filter_geographies) if filter_geographies else None,
     )
 
     stage_settings = await get_configured_deal_stages(session)
@@ -330,11 +331,11 @@ async def sales_dashboard(
         Deal.updated_at,
         Deal.geography,
     )
-    if filter_rep_id:
-        deal_stmt = deal_stmt.where(Deal.assigned_to_id == filter_rep_id)
+    if filter_rep_ids:
+        deal_stmt = deal_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
     deal_rows = (await session.execute(deal_stmt)).all()
-    if filter_geography:
-        deal_rows = [row for row in deal_rows if _normalize_geography_key(row.geography) == filter_geography]
+    if filter_geographies:
+        deal_rows = [row for row in deal_rows if _normalize_geography_key(row.geography) in filter_geographies]
     allowed_deal_ids = {row.id for row in deal_rows}
 
     contact_stmt = select(
@@ -347,11 +348,11 @@ async def sales_dashboard(
         Company.region.label("company_region"),
     )
     contact_stmt = contact_stmt.outerjoin(Company, Contact.company_id == Company.id)
-    if filter_rep_id:
-        contact_stmt = contact_stmt.where(Contact.assigned_to_id == filter_rep_id)
+    if filter_rep_ids:
+        contact_stmt = contact_stmt.where(Contact.assigned_to_id.in_(filter_rep_ids))
     contact_rows = (await session.execute(contact_stmt)).all()
-    if filter_geography:
-        contact_rows = [row for row in contact_rows if _normalize_geography_key(row.company_region) == filter_geography]
+    if filter_geographies:
+        contact_rows = [row for row in contact_rows if _normalize_geography_key(row.company_region) in filter_geographies]
     allowed_contact_ids = {row.id for row in contact_rows}
 
     activity_rows = (
@@ -367,7 +368,7 @@ async def sales_dashboard(
             ).where(Activity.created_at >= window_start)
         )
     ).all()
-    if filter_geography:
+    if filter_geographies:
         activity_rows = [row for row in activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
 
     meetings_rows = (
@@ -385,7 +386,7 @@ async def sales_dashboard(
             )
         )
     ).all()
-    if filter_geography:
+    if filter_geographies:
         meetings_rows = [row for row in meetings_rows if row.deal_id in allowed_deal_ids]
 
     user_rows = (await session.execute(select(User.id, User.name))).all()
@@ -521,7 +522,7 @@ async def sales_dashboard(
 
     for row in activity_rows:
         row_rep_id = deal_owner.get(row.deal_id) or contact_owner.get(row.contact_id) or row.created_by_id
-        if filter_rep_id and row_rep_id != filter_rep_id:
+        if filter_rep_ids and row_rep_id not in filter_rep_ids:
             continue
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         activity_bucket = rep_activity.setdefault(
@@ -552,7 +553,7 @@ async def sales_dashboard(
         if row.status == "cancelled":
             continue
         row_rep_id = deal_owner.get(row.deal_id)
-        if filter_rep_id and row_rep_id != filter_rep_id:
+        if filter_rep_ids and row_rep_id not in filter_rep_ids:
             continue
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         meeting_bucket = rep_activity.setdefault(

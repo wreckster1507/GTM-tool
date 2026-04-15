@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
-import { CalendarDays, Filter, Plus, X } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, Filter, Plus, Search, X } from "lucide-react";
 import { authApi, companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Company, Contact, Deal, Meeting, User } from "../types";
@@ -135,6 +135,139 @@ const styles: Record<string, CSSProperties> = {
   },
 };
 
+function MultiSelectDropdown({
+  options,
+  selected,
+  onChange,
+  placeholder,
+}: {
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filtered = useMemo(
+    () => query.trim() ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase())) : options,
+    [options, query],
+  );
+
+  function toggle(value: string) {
+    onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
+  }
+
+  const displayText =
+    selected.length === 0 ? placeholder
+    : selected.length === 1 ? (options.find((o) => o.value === selected[0])?.label ?? placeholder)
+    : `${selected.length} selected`;
+
+  const isActive = selected.length > 0;
+
+  return (
+    <div style={{ position: "relative" }} ref={ref}>
+      <button
+        type="button"
+        onClick={() => { setOpen((o) => !o); setQuery(""); }}
+        style={{
+          height: 36,
+          borderRadius: 8,
+          border: isActive ? "1px solid #b8cff7" : "1px solid #d7e2ee",
+          background: isActive ? "#eef4ff" : "#fff",
+          color: isActive ? "#2948b9" : "#25384d",
+          fontSize: 13,
+          fontWeight: 600,
+          padding: "0 10px",
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>{displayText}</span>
+        {isActive && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onChange([]); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange([]); } }}
+            style={{ display: "flex", alignItems: "center", color: "#5878be" }}
+          >
+            <X size={12} />
+          </span>
+        )}
+        <ChevronDown size={12} style={{ color: "#7a8ca0", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute",
+          top: "calc(100% + 4px)",
+          left: 0,
+          zIndex: 50,
+          minWidth: 200,
+          background: "#fff",
+          border: "1px solid #dde8f4",
+          borderRadius: 12,
+          boxShadow: "0 8px 28px rgba(20,50,80,0.12)",
+          overflow: "hidden",
+        }}>
+          <div style={{ padding: "6px 8px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 6 }}>
+            <Search size={12} style={{ color: "#94a8be", flexShrink: 0 }} />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search..."
+              style={{ flex: 1, border: "none", outline: "none", fontSize: 13, color: "#203244", background: "transparent" }}
+            />
+          </div>
+          <div style={{ maxHeight: 200, overflowY: "auto" }}>
+            {filtered.length === 0 ? (
+              <p style={{ margin: 0, padding: "10px 12px", fontSize: 12, color: "#94a8be" }}>No results</p>
+            ) : filtered.map((opt) => {
+              const isSel = selected.includes(opt.value);
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => toggle(opt.value)}
+                  style={{
+                    width: "100%", padding: "9px 12px", display: "flex", alignItems: "center", gap: 8,
+                    border: "none", background: isSel ? "#f0f5ff" : "transparent", cursor: "pointer",
+                    textAlign: "left", fontSize: 13, fontWeight: isSel ? 700 : 500, color: isSel ? "#2948b9" : "#2e4260",
+                  }}
+                >
+                  <span style={{
+                    width: 16, height: 16, borderRadius: 5, border: isSel ? "none" : "1.5px solid #c8d8ea",
+                    background: isSel ? "#3f5fd4" : "#fff", display: "grid", placeItems: "center", flexShrink: 0,
+                  }}>
+                    {isSel && <Check size={10} style={{ color: "#fff" }} />}
+                  </span>
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Meetings() {
   const { isAdmin } = useAuth();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -146,9 +279,9 @@ export default function Meetings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
   const [form, setForm] = useState({
     title: "",
     company_id: "",
@@ -209,17 +342,17 @@ export default function Meetings() {
 
   const filtered = useMemo(() => {
     return meetings.filter((m) => {
-      if (statusFilter !== "all" && m.status !== statusFilter) return false;
-      if (typeFilter !== "all" && m.meeting_type !== typeFilter) return false;
-      if (assigneeFilter !== "all") {
+      if (statusFilter.length > 0 && !statusFilter.includes(m.status)) return false;
+      if (typeFilter.length > 0 && !typeFilter.includes(m.meeting_type)) return false;
+      if (assigneeFilter.length > 0) {
         const assigneeId = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
-        if (assigneeId !== assigneeFilter) return false;
+        if (!assigneeId || !assigneeFilter.includes(assigneeId)) return false;
       }
       return true;
     });
   }, [meetings, statusFilter, typeFilter, assigneeFilter, dealAssigneeMap]);
 
-  const hasFilters = statusFilter !== "all" || typeFilter !== "all" || assigneeFilter !== "all";
+  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0;
 
   const handleCreate = async () => {
     if (!form.title.trim()) {
@@ -285,42 +418,34 @@ export default function Meetings() {
           <Filter size={13} />
           Filter
         </span>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          style={{ height: 36, borderRadius: 8, border: "1px solid #d7e2ee", padding: "0 10px", fontSize: 13, background: "#fff", color: "#25384d" }}
-        >
-          <option value="all">All statuses</option>
-          <option value="scheduled">Scheduled</option>
-          <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          style={{ height: 36, borderRadius: 8, border: "1px solid #d7e2ee", padding: "0 10px", fontSize: 13, background: "#fff", color: "#25384d" }}
-        >
-          <option value="all">All types</option>
-          {meetingTypes.map((t) => (
-            <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
-          ))}
-        </select>
+        <MultiSelectDropdown
+          options={[
+            { value: "scheduled", label: "Scheduled" },
+            { value: "completed", label: "Completed" },
+            { value: "cancelled", label: "Cancelled" },
+          ]}
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          placeholder="All statuses"
+        />
+        <MultiSelectDropdown
+          options={meetingTypes.map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
+          selected={typeFilter}
+          onChange={setTypeFilter}
+          placeholder="All types"
+        />
         {isAdmin && users.length > 0 && (
-          <select
-            value={assigneeFilter}
-            onChange={(e) => setAssigneeFilter(e.target.value)}
-            style={{ height: 36, borderRadius: 8, border: "1px solid #d7e2ee", padding: "0 10px", fontSize: 13, background: "#fff", color: "#25384d" }}
-          >
-            <option value="all">All reps</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>{u.name}</option>
-            ))}
-          </select>
+          <MultiSelectDropdown
+            options={users.map((u) => ({ value: u.id, label: u.name }))}
+            selected={assigneeFilter}
+            onChange={setAssigneeFilter}
+            placeholder="All reps"
+          />
         )}
         {hasFilters && (
           <button
             type="button"
-            onClick={() => { setStatusFilter("all"); setTypeFilter("all"); setAssigneeFilter("all"); }}
+            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); }}
             style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
           >
             Reset
