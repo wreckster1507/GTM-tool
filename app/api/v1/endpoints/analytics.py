@@ -184,6 +184,31 @@ def _label_for_rep(rep_id: UUID | None, users: dict[UUID, str]) -> tuple[str, Op
     return "unassigned", None, "Unassigned"
 
 
+def _activity_rep_id(
+    row,
+    *,
+    deal_owner: dict[UUID, UUID | None],
+    contact_owner: dict[UUID, UUID | None],
+) -> UUID | None:
+    source = str(row.source or "").strip().lower()
+    metadata = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+
+    # Personal inbox sync represents the rep's own mailbox activity, so the
+    # syncing user should own the touch even when the deal/contact is assigned
+    # to someone else in CRM.
+    if source == "personal_email_sync":
+        if row.created_by_id:
+            return row.created_by_id
+        synced_by_user_id = metadata.get("synced_by_user_id")
+        if synced_by_user_id:
+            try:
+                return UUID(str(synced_by_user_id))
+            except (TypeError, ValueError):
+                pass
+
+    return deal_owner.get(row.deal_id) or contact_owner.get(row.contact_id) or row.created_by_id
+
+
 def _normalize_geography_key(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if not raw:
@@ -361,7 +386,9 @@ async def sales_dashboard(
                 Activity.deal_id,
                 Activity.contact_id,
                 Activity.type,
+                Activity.source,
                 Activity.medium,
+                Activity.event_metadata,
                 Activity.created_at,
                 Activity.created_by_id,
                 Activity.aircall_user_name,
@@ -521,7 +548,11 @@ async def sales_dashboard(
         }
 
     for row in activity_rows:
-        row_rep_id = deal_owner.get(row.deal_id) or contact_owner.get(row.contact_id) or row.created_by_id
+        row_rep_id = _activity_rep_id(
+            row,
+            deal_owner=deal_owner,
+            contact_owner=contact_owner,
+        )
         if filter_rep_ids and row_rep_id not in filter_rep_ids:
             continue
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
