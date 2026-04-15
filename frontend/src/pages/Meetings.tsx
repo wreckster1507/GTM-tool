@@ -7,6 +7,15 @@ import type { Company, Contact, Deal, Meeting, User } from "../types";
 import { formatDate } from "../lib/utils";
 
 const MEETING_TYPES = ["discovery", "demo", "poc", "qbr", "other"];
+const PAGE_SIZE = 25;
+const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
+
+function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {
+  if (!user) return false;
+  const email = (user.email || "").trim().toLowerCase();
+  const name = (user.name || "").trim().toLowerCase();
+  return DEVELOPER_EMAILS.has(email) || name === "sarthak aitha";
+}
 
 const styles: Record<string, CSSProperties> = {
   page: {
@@ -269,7 +278,7 @@ function MultiSelectDropdown({
 }
 
 export default function Meetings() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -282,6 +291,9 @@ export default function Meetings() {
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalMeetings, setTotalMeetings] = useState(0);
+  const [meetingPages, setMeetingPages] = useState(1);
   const [form, setForm] = useState({
     title: "",
     company_id: "",
@@ -294,15 +306,30 @@ export default function Meetings() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [ms, cs, ds, us] = await Promise.all([
-        meetingsApi.list(0, 300),
-        companiesApi.list(),
-        dealsApi.list(0, 500),
+      const pageResp = await meetingsApi.listPaginated({
+        skip: (page - 1) * PAGE_SIZE,
+        limit: PAGE_SIZE,
+        status: statusFilter,
+        meetingType: typeFilter,
+        assigneeId: assigneeFilter,
+      });
+
+      const ms = pageResp.items;
+      setMeetings(ms);
+      setTotalMeetings(pageResp.total);
+      setMeetingPages(pageResp.pages);
+
+      const companyIds = Array.from(new Set(ms.map((meeting) => meeting.company_id).filter(Boolean))) as string[];
+      const dealIds = Array.from(new Set(ms.map((meeting) => meeting.deal_id).filter(Boolean))) as string[];
+
+      const [companyResults, dealResults, us] = await Promise.all([
+        Promise.all(companyIds.map((id) => companiesApi.get(id).catch(() => null))),
+        Promise.all(dealIds.map((id) => dealsApi.get(id).catch(() => null))),
         isAdmin ? authApi.listAllUsers().catch(() => []) : Promise.resolve([]),
       ]);
-      setMeetings(ms);
-      setCompanies(cs);
-      setDeals(ds);
+
+      setCompanies(companyResults.filter((item): item is Company => Boolean(item)));
+      setDeals(dealResults.filter((item): item is Deal => Boolean(item)));
       setUsers(us);
     } finally {
       setLoading(false);
@@ -311,7 +338,11 @@ export default function Meetings() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [page, statusFilter, typeFilter, assigneeFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, typeFilter, assigneeFilter]);
 
   useEffect(() => {
     if (!showModal || !form.company_id) {
@@ -326,31 +357,11 @@ export default function Meetings() {
     return deals.filter((d) => !form.company_id || d.company_id === form.company_id);
   }, [deals, form.company_id]);
 
-  // deal_id → assigned_to_id lookup for assignee filter
-  const dealAssigneeMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const d of deals) {
-      if (d.assigned_to_id) map.set(d.id, d.assigned_to_id);
-    }
-    return map;
-  }, [deals]);
-
-  const meetingTypes = useMemo(
-    () => Array.from(new Set(meetings.map((m) => m.meeting_type))).sort(),
-    [meetings]
+  const hideDeveloper = isDeveloperUser(user);
+  const visibleUsers = useMemo(
+    () => (hideDeveloper ? users.filter((teamUser) => !isDeveloperUser(teamUser)) : users),
+    [hideDeveloper, users],
   );
-
-  const filtered = useMemo(() => {
-    return meetings.filter((m) => {
-      if (statusFilter.length > 0 && !statusFilter.includes(m.status)) return false;
-      if (typeFilter.length > 0 && !typeFilter.includes(m.meeting_type)) return false;
-      if (assigneeFilter.length > 0) {
-        const assigneeId = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
-        if (!assigneeId || !assigneeFilter.includes(assigneeId)) return false;
-      }
-      return true;
-    });
-  }, [meetings, statusFilter, typeFilter, assigneeFilter, dealAssigneeMap]);
 
   const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0;
 
@@ -393,12 +404,12 @@ export default function Meetings() {
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={styles.chip}>
-              <span style={{ fontWeight: 800 }}>{meetings.length}</span>
+              <span style={{ fontWeight: 800 }}>{totalMeetings}</span>
               Meetings
             </span>
             {hasFilters && (
               <span style={{ ...styles.chip, background: "#fff7ed", color: "#b94a20", borderColor: "#ffd3be" }}>
-                {filtered.length} shown
+                {totalMeetings} shown
               </span>
             )}
           </div>
@@ -429,14 +440,14 @@ export default function Meetings() {
           placeholder="All statuses"
         />
         <MultiSelectDropdown
-          options={meetingTypes.map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
+          options={MEETING_TYPES.map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
           selected={typeFilter}
           onChange={setTypeFilter}
           placeholder="All types"
         />
-        {isAdmin && users.length > 0 && (
+        {isAdmin && visibleUsers.length > 0 && (
           <MultiSelectDropdown
-            options={users.map((u) => ({ value: u.id, label: u.name }))}
+            options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
             selected={assigneeFilter}
             onChange={setAssigneeFilter}
             placeholder="All reps"
@@ -472,7 +483,7 @@ export default function Meetings() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((m) => (
+                {meetings.map((m) => (
                   <tr key={m.id}>
                     <td style={styles.td}>
                       <Link
@@ -491,14 +502,14 @@ export default function Meetings() {
                     <td style={styles.td}>{m.meeting_score ?? "-"}</td>
                   </tr>
                 ))}
-                {filtered.length === 0 && (
+                {meetings.length === 0 && (
                   <tr>
                     <td colSpan={6} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "48px 12px" }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#25384d", marginBottom: 6 }}>
-                        {meetings.length === 0 ? "No meetings scheduled" : "No meetings match these filters"}
+                        {totalMeetings === 0 ? "No meetings scheduled" : "No meetings match these filters"}
                       </div>
                       <div style={{ fontSize: 12, color: "#7a8ea4", maxWidth: 420, margin: "0 auto" }}>
-                        {meetings.length === 0
+                        {totalMeetings === 0
                           ? "Create a meeting and link it to a deal. Beacon will automatically generate a pre-meeting intel brief and send it to the assigned rep 12 hours before the call."
                           : "Try adjusting the filters above to see more results."}
                       </div>
@@ -507,6 +518,32 @@ export default function Meetings() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {meetingPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <p style={{ margin: 0, fontSize: 12, color: "#7a8ea4" }}>
+            Page {page} of {meetingPages}
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page <= 1 ? "#f7f9fc" : "#fff", color: page <= 1 ? "#94a8be" : "#25384d", cursor: page <= 1 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={page >= meetingPages}
+              onClick={() => setPage((current) => Math.min(meetingPages, current + 1))}
+              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page >= meetingPages ? "#f7f9fc" : "#fff", color: page >= meetingPages ? "#94a8be" : "#25384d", cursor: page >= meetingPages ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+            >
+              Next
+            </button>
           </div>
         </div>
       )}

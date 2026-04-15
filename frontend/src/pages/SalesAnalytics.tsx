@@ -27,9 +27,18 @@ import {
   type SalesVelocityRow,
 } from "../lib/api";
 import type { User } from "../types";
+import { useAuth } from "../lib/AuthContext";
 
 const WINDOW_OPTIONS = [30, 90, 180] as const;
 const GEO_OPTIONS = ["all", "Americas", "India", "APAC", "Rest of World"] as const;
+const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
+
+function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {
+  if (!user) return false;
+  const email = (user.email || "").trim().toLowerCase();
+  const name = (user.name || "").trim().toLowerCase();
+  return DEVELOPER_EMAILS.has(email) || name === "sarthak aitha";
+}
 
 function formatShortCurrency(value?: number | null) {
   const amount = Number(value ?? 0);
@@ -598,6 +607,7 @@ function MultiSelectDropdown({
 }
 
 export default function SalesAnalytics() {
+  const { user } = useAuth();
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
@@ -606,10 +616,16 @@ export default function SalesAnalytics() {
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hideDeveloper = isDeveloperUser(user);
+
+  const visibleTeamUsers = useMemo(
+    () => (hideDeveloper ? teamUsers.filter((teamUser) => !isDeveloperUser(teamUser)) : teamUsers),
+    [hideDeveloper, teamUsers],
+  );
 
   const selectedRepNames = useMemo(
-    () => repFilter.map((id) => teamUsers.find((u) => u.id === id)?.name ?? id),
-    [repFilter, teamUsers],
+    () => repFilter.map((id) => visibleTeamUsers.find((u) => u.id === id)?.name ?? id),
+    [repFilter, visibleTeamUsers],
   );
 
   useEffect(() => {
@@ -624,6 +640,11 @@ export default function SalesAnalytics() {
       })
       .catch(() => setTeamUsers([]));
   }, []);
+
+  useEffect(() => {
+    if (!hideDeveloper || !user?.id) return;
+    setRepFilter((current) => current.filter((id) => id !== user.id));
+  }, [hideDeveloper, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -698,6 +719,16 @@ export default function SalesAnalytics() {
     },
   ] : [];
 
+  const visibleRepActivity = useMemo(
+    () => (!hideDeveloper ? data?.rep_activity ?? [] : (data?.rep_activity ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
+    [data?.rep_activity, hideDeveloper, user?.id],
+  );
+
+  const visiblePipelineByOwner = useMemo(
+    () => (!hideDeveloper ? data?.pipeline_by_owner ?? [] : (data?.pipeline_by_owner ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
+    [data?.pipeline_by_owner, hideDeveloper, user?.id],
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "6px 2px 18px" }}>
       <section
@@ -758,7 +789,7 @@ export default function SalesAnalytics() {
             </div>
             <MultiSelectDropdown
               label="Rep filter"
-              options={teamUsers.map((u) => ({ value: u.id, label: u.name }))}
+              options={visibleTeamUsers.map((u) => ({ value: u.id, label: u.name }))}
               selected={repFilter}
               onChange={setRepFilter}
               placeholder="All reps"
@@ -829,7 +860,7 @@ export default function SalesAnalytics() {
               title="Rep Activity Leaderboard"
               subtitle="Calls, emails, and meetings aggregated by rep, alongside the amount of live pipeline they currently own."
             >
-              <RepActivityTable rows={data.rep_activity} />
+              <RepActivityTable rows={visibleRepActivity} />
             </SectionCard>
 
             <SectionCard
@@ -880,7 +911,7 @@ export default function SalesAnalytics() {
                 </div>
               }
             >
-              {pipelineView === "stage" ? <PipelineStageView rows={data.pipeline_by_stage} /> : <PipelineOwnerView rows={data.pipeline_by_owner} />}
+              {pipelineView === "stage" ? <PipelineStageView rows={data.pipeline_by_stage} /> : <PipelineOwnerView rows={visiblePipelineByOwner} />}
             </SectionCard>
 
             <SectionCard

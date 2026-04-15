@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
   BrainCircuit,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -14,6 +15,7 @@ import {
   MailCheck,
   MessageSquare,
   RefreshCw,
+  Search,
   Sparkles,
   Target,
   TrendingUp,
@@ -26,11 +28,13 @@ import {
   Swords,
   Briefcase,
   AlertCircle,
+  X,
 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Deal, Meeting, User as UserType } from "../types/index";
 import { formatDate } from "../lib/utils";
+const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 
 const colors = {
   border: "#d9e1ec",
@@ -50,6 +54,13 @@ const colors = {
   red: "#c0392b",
   redSoft: "#fff5f5",
 };
+
+function isDeveloperUser(user?: Pick<UserType, "email" | "name"> | null) {
+  if (!user) return false;
+  const email = (user.email || "").trim().toLowerCase();
+  const name = (user.name || "").trim().toLowerCase();
+  return DEVELOPER_EMAILS.has(email) || name === "sarthak aitha";
+}
 
 function hoursUntil(dateStr?: string): number | null {
   if (!dateStr) return null;
@@ -597,11 +608,184 @@ function MeetingIntelCard({
   );
 }
 
-type StatusFilter = "all" | "scheduled" | "completed";
-type IntelFilter = "all" | "has_intel" | "no_intel";
+type MultiSelectValue = string[];
+
+function MultiSelectDropdown({
+  label,
+  options,
+  selected,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filtered = useMemo(
+    () =>
+      query.trim()
+        ? options.filter((opt) => opt.label.toLowerCase().includes(query.toLowerCase()))
+        : options,
+    [options, query],
+  );
+
+  function toggle(value: string) {
+    if (selected.includes(value)) {
+      onChange(selected.filter((v) => v !== value));
+    } else {
+      onChange([...selected, value]);
+    }
+  }
+
+  const displayText =
+    selected.length === 0
+      ? placeholder
+      : selected.length === 1
+        ? options.find((o) => o.value === selected[0])?.label ?? placeholder
+        : `${selected.length} selected`;
+
+  return (
+    <div style={{ display: "grid", gap: 8 }} ref={ref}>
+      <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
+        {label}
+      </label>
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => { setOpen((o) => !o); setQuery(""); }}
+          style={{
+            width: "100%",
+            height: 40,
+            borderRadius: 12,
+            border: selected.length > 0 ? "1px solid #b8cff7" : `1px solid ${colors.border}`,
+            background: selected.length > 0 ? "#eef4ff" : "#fff",
+            color: selected.length > 0 ? "#2948b9" : colors.text,
+            fontSize: 13,
+            fontWeight: 700,
+            padding: "0 12px",
+            textAlign: "left",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+            {displayText}
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            {selected.length > 0 && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); onChange([]); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange([]); } }}
+                style={{ display: "flex", alignItems: "center", color: "#5878be", cursor: "pointer" }}
+              >
+                <X size={13} />
+              </span>
+            )}
+            <ChevronDown size={14} style={{ color: "#7a8ca0", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+          </div>
+        </button>
+        {open && (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              right: 0,
+              zIndex: 50,
+              background: "#fff",
+              border: "1px solid #dde8f4",
+              borderRadius: 14,
+              boxShadow: "0 8px 28px rgba(20,50,80,0.12)",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ padding: "8px 10px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 8 }}>
+              <Search size={13} style={{ color: "#94a8be", flexShrink: 0 }} />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search..."
+                style={{
+                  flex: 1,
+                  border: "none",
+                  outline: "none",
+                  fontSize: 13,
+                  color: colors.text,
+                  background: "transparent",
+                }}
+              />
+            </div>
+            <div style={{ maxHeight: 220, overflowY: "auto" }}>
+              {filtered.length === 0 ? (
+                <p style={{ margin: 0, padding: "12px 14px", fontSize: 13, color: "#94a8be" }}>No results</p>
+              ) : (
+                filtered.map((opt) => {
+                  const isSelected = selected.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => toggle(opt.value)}
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        border: "none",
+                        background: isSelected ? "#f0f5ff" : "transparent",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        fontSize: 13,
+                        fontWeight: isSelected ? 700 : 500,
+                        color: isSelected ? "#2948b9" : "#2e4260",
+                      }}
+                    >
+                      <span style={{
+                        width: 18, height: 18, borderRadius: 6, border: isSelected ? "none" : "1.5px solid #c8d8ea",
+                        background: isSelected ? "#3f5fd4" : "#fff",
+                        display: "grid", placeItems: "center", flexShrink: 0,
+                      }}>
+                        {isSelected && <Check size={11} style={{ color: "#fff" }} />}
+                      </span>
+                      {opt.label}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function PreMeetingAssistance() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -609,41 +793,82 @@ export default function PreMeetingAssistance() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningIntel, setRunningIntel] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("scheduled");
-  const [intelFilter, setIntelFilter] = useState<IntelFilter>("all");
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<MultiSelectValue>(["scheduled"]);
+  const [intelFilter, setIntelFilter] = useState<MultiSelectValue>([]);
+  const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>([]);
+  const [typeFilter, setTypeFilter] = useState<MultiSelectValue>([]);
+  const [page, setPage] = useState(1);
+  const [totalMeetings, setTotalMeetings] = useState(0);
+  const [meetingPages, setMeetingPages] = useState(1);
+  const [summary, setSummary] = useState({ total: 0, upcoming: 0, hasIntel: 0, noIntel: 0 });
+  const hideDeveloper = isDeveloperUser(user);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [ms, cs, ds, us] = await Promise.all([
-        meetingsApi.list(0, 300),
-        companiesApi.list(),
-        dealsApi.list(0, 500),
-        isAdmin ? authApi.listAllUsers().catch(() => []) : Promise.resolve([]),
-      ]);
-      setMeetings(ms);
-      setCompanies(cs);
-      setDeals(ds);
-      setUsers(us);
+      const hasIntelFilter =
+        intelFilter.length === 1
+          ? intelFilter[0] === "has_intel"
+          : undefined;
 
-      // Fetch recent activities for all deals linked to meetings — one batch call
+      const [pageResp, totalResp, upcomingResp, hasIntelResp, noIntelResp] = await Promise.all([
+        meetingsApi.listPaginated({
+          skip: (page - 1) * 25,
+          limit: 25,
+          status: statusFilter,
+          meetingType: typeFilter,
+          assigneeId: assigneeFilter,
+          hasIntel: hasIntelFilter,
+          order: statusFilter.length === 1 && statusFilter[0] === "completed" ? "desc" : "asc",
+        }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1 }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"] }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: false }),
+      ]);
+      const ms = pageResp.items;
+      setMeetings(ms);
+      setTotalMeetings(pageResp.total);
+      setMeetingPages(pageResp.pages);
+      setSummary({
+        total: totalResp.total,
+        upcoming: upcomingResp.total,
+        hasIntel: hasIntelResp.total,
+        noIntel: noIntelResp.total,
+      });
+
+      const companyIds = Array.from(new Set(ms.map((m) => m.company_id).filter(Boolean))) as string[];
       const dealIds = Array.from(new Set(ms.map((m) => m.deal_id).filter(Boolean))) as string[];
-      if (dealIds.length > 0) {
-        // Fetch activities for the first deal to get recent ones; for full coverage
-        // we fetch without deal filter and let the client group them
-        const acts = await activitiesApi.list().catch(() => [] as Activity[]);
-        setActivities(acts);
-      }
+
+      const [companyResults, dealResults, activityResults] = await Promise.all([
+        Promise.all(companyIds.map((id) => companiesApi.get(id).catch(() => null))),
+        Promise.all(dealIds.map((id) => dealsApi.get(id).catch(() => null))),
+        Promise.all(dealIds.map((id) => activitiesApi.list(id).catch(() => [] as Activity[]))),
+      ]);
+
+      setCompanies(companyResults.filter((item): item is Company => Boolean(item)));
+      setDeals(dealResults.filter((item): item is Deal => Boolean(item)));
+      setActivities(activityResults.flat());
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!isAdmin) {
+      setUsers([]);
+      return;
+    }
+    authApi.listAllUsers().then(setUsers).catch(() => setUsers([]));
+  }, [isAdmin]);
+
+  useEffect(() => {
     loadData();
-  }, []);
+  }, [page, statusFilter, intelFilter, assigneeFilter, typeFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, intelFilter, assigneeFilter, typeFilter]);
 
   const companyMap = useMemo(
     () => new Map(companies.map((c) => [c.id, c])),
@@ -679,6 +904,11 @@ export default function PreMeetingAssistance() {
     return map;
   }, [deals, users]);
 
+  const visibleUsers = useMemo(
+    () => (hideDeveloper ? users.filter((teamUser) => !isDeveloperUser(teamUser)) : users),
+    [hideDeveloper, users],
+  );
+
   const handleRunIntel = async (meetingId: string) => {
     setRunningIntel(meetingId);
     try {
@@ -693,14 +923,16 @@ export default function PreMeetingAssistance() {
 
   const filtered = useMemo(() => {
     return meetings.filter((m) => {
-      if (statusFilter !== "all" && m.status !== statusFilter) return false;
-      if (intelFilter === "has_intel" && !m.research_data) return false;
-      if (intelFilter === "no_intel" && m.research_data) return false;
-      if (typeFilter !== "all" && m.meeting_type !== typeFilter) return false;
-      if (assigneeFilter !== "all" && m.deal_id) {
+      if (statusFilter.length > 0 && !statusFilter.includes(m.status)) return false;
+      if (intelFilter.length > 0) {
+        const intelState = m.research_data ? "has_intel" : "no_intel";
+        if (!intelFilter.includes(intelState)) return false;
+      }
+      if (typeFilter.length > 0 && !typeFilter.includes(m.meeting_type)) return false;
+      if (assigneeFilter.length > 0 && m.deal_id) {
         const assignee = dealAssigneeMap.get(m.deal_id);
-        if (!assignee || assignee.id !== assigneeFilter) return false;
-      } else if (assigneeFilter !== "all" && !m.deal_id) {
+        if (!assignee || !assigneeFilter.includes(assignee.id)) return false;
+      } else if (assigneeFilter.length > 0 && !m.deal_id) {
         return false;
       }
       return true;
@@ -711,21 +943,9 @@ export default function PreMeetingAssistance() {
     return [...filtered].sort((a, b) => {
       const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
       const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
-      return statusFilter === "completed" ? tb - ta : ta - tb;
+      return statusFilter.length === 1 && statusFilter[0] === "completed" ? tb - ta : ta - tb;
     });
   }, [filtered, statusFilter]);
-
-  const summary = useMemo(() => ({
-    total: meetings.length,
-    upcoming: meetings.filter((m) => m.status === "scheduled").length,
-    hasIntel: meetings.filter((m) => m.status === "scheduled" && m.research_data).length,
-    noIntel: meetings.filter((m) => m.status === "scheduled" && !m.research_data).length,
-  }), [meetings]);
-
-  const meetingTypes = useMemo(
-    () => Array.from(new Set(meetings.map((m) => m.meeting_type))).sort(),
-    [meetings]
-  );
 
   return (
     <div className="crm-page" style={{ display: "grid", gap: 18 }}>
@@ -769,38 +989,50 @@ export default function PreMeetingAssistance() {
           Filters
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
-            <option value="all">All statuses</option>
-            <option value="scheduled">Upcoming (scheduled)</option>
-            <option value="completed">Completed</option>
-          </select>
+          <MultiSelectDropdown
+            label="Status"
+            options={[
+              { value: "scheduled", label: "Upcoming (scheduled)" },
+              { value: "completed", label: "Completed" },
+            ]}
+            selected={statusFilter}
+            onChange={setStatusFilter}
+            placeholder="All statuses"
+          />
 
-          <select value={intelFilter} onChange={(e) => setIntelFilter(e.target.value as IntelFilter)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
-            <option value="all">All intel status</option>
-            <option value="has_intel">Intel ready</option>
-            <option value="no_intel">No intel yet</option>
-          </select>
+          <MultiSelectDropdown
+            label="Intel"
+            options={[
+              { value: "has_intel", label: "Intel ready" },
+              { value: "no_intel", label: "No intel yet" },
+            ]}
+            selected={intelFilter}
+            onChange={setIntelFilter}
+            placeholder="All intel status"
+          />
 
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
-            <option value="all">All types</option>
-            {meetingTypes.map((t) => (
-              <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
-            ))}
-          </select>
+          <MultiSelectDropdown
+            label="Type"
+            options={["discovery", "demo", "poc", "qbr", "other"].map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
+            selected={typeFilter}
+            onChange={setTypeFilter}
+            placeholder="All types"
+          />
 
-          {isAdmin && users.length > 0 && (
-            <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)} style={{ height: 38, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, background: "#fff", color: colors.text }}>
-              <option value="all">All reps</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.name}</option>
-              ))}
-            </select>
+          {isAdmin && visibleUsers.length > 0 && (
+            <MultiSelectDropdown
+              label="Rep"
+              options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
+              selected={assigneeFilter}
+              onChange={setAssigneeFilter}
+              placeholder="All reps"
+            />
           )}
 
-          {(statusFilter !== "scheduled" || intelFilter !== "all" || typeFilter !== "all" || assigneeFilter !== "all") && (
+          {(statusFilter.length !== 1 || statusFilter[0] !== "scheduled" || intelFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0) && (
             <button
               type="button"
-              onClick={() => { setStatusFilter("scheduled"); setIntelFilter("all"); setTypeFilter("all"); setAssigneeFilter("all"); }}
+              onClick={() => { setStatusFilter(["scheduled"]); setIntelFilter([]); setTypeFilter([]); setAssigneeFilter([]); }}
               style={{ height: 38, padding: "0 12px", borderRadius: 10, border: `1px solid #ffd0d8`, background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
             >
               <RefreshCw size={11} />
@@ -829,7 +1061,7 @@ export default function PreMeetingAssistance() {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 12, color: colors.faint, fontWeight: 600 }}>
-            {sorted.length} meeting{sorted.length !== 1 ? "s" : ""} · {statusFilter === "completed" ? "sorted by most recent" : "sorted by soonest first"}
+            {totalMeetings} meeting{totalMeetings !== 1 ? "s" : ""} · {statusFilter.length === 1 && statusFilter[0] === "completed" ? "sorted by most recent" : "sorted by soonest first"}
           </div>
           {sorted.map((m) => {
             const assignee = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
@@ -848,6 +1080,32 @@ export default function PreMeetingAssistance() {
               />
             );
           })}
+        </div>
+      )}
+
+      {meetingPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <p style={{ margin: 0, fontSize: 12, color: colors.faint }}>
+            Page {page} of {meetingPages}
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: page <= 1 ? "#f7f9fc" : "#fff", color: page <= 1 ? colors.faint : colors.text, cursor: page <= 1 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={page >= meetingPages}
+              onClick={() => setPage((current) => Math.min(meetingPages, current + 1))}
+              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: page >= meetingPages ? "#f7f9fc" : "#fff", color: page >= meetingPages ? colors.faint : colors.text, cursor: page >= meetingPages ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
     </div>

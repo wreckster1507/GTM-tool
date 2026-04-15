@@ -3,9 +3,12 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy import func, select
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
+from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.repositories.meeting import MeetingRepository
 from app.services.permissions import require_workspace_permission
@@ -20,22 +23,52 @@ async def list_meetings(
     pagination: Pagination,
     company_id: Optional[UUID] = Query(default=None),
     deal_id: Optional[UUID] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    status: list[str] = Query(default=[]),
+    meeting_type: list[str] = Query(default=[]),
+    assignee_id: list[UUID] = Query(default=[]),
+    has_intel: Optional[bool] = Query(default=None),
+    order: str = Query(default="desc"),
 ):
-    repo = MeetingRepository(session)
-    filters = []
+    stmt = select(Meeting)
+    count_stmt = select(func.count()).select_from(Meeting)
+    joined_deal = False
+
+    def ensure_deal_join() -> None:
+        nonlocal stmt, count_stmt, joined_deal
+        if joined_deal:
+            return
+        stmt = stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
+        count_stmt = count_stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
+        joined_deal = True
+
     if company_id:
-        filters.append(Meeting.company_id == company_id)
+        stmt = stmt.where(Meeting.company_id == company_id)
+        count_stmt = count_stmt.where(Meeting.company_id == company_id)
     if deal_id:
-        filters.append(Meeting.deal_id == deal_id)
+        stmt = stmt.where(Meeting.deal_id == deal_id)
+        count_stmt = count_stmt.where(Meeting.deal_id == deal_id)
     if status:
-        filters.append(Meeting.status == status)
-    items, total = await repo.list_paginated(
-        *filters,
-        skip=pagination.skip,
-        limit=pagination.limit,
-        order_by=Meeting.scheduled_at.desc(),
-    )
+        stmt = stmt.where(Meeting.status.in_(status))
+        count_stmt = count_stmt.where(Meeting.status.in_(status))
+    if meeting_type:
+        stmt = stmt.where(Meeting.meeting_type.in_(meeting_type))
+        count_stmt = count_stmt.where(Meeting.meeting_type.in_(meeting_type))
+    if assignee_id:
+        ensure_deal_join()
+        stmt = stmt.where(Deal.assigned_to_id.in_(assignee_id))
+        count_stmt = count_stmt.where(Deal.assigned_to_id.in_(assignee_id))
+    if has_intel is True:
+        stmt = stmt.where(Meeting.research_data.is_not(None))
+        count_stmt = count_stmt.where(Meeting.research_data.is_not(None))
+    elif has_intel is False:
+        stmt = stmt.where(Meeting.research_data.is_(None))
+        count_stmt = count_stmt.where(Meeting.research_data.is_(None))
+
+    order_by = Meeting.scheduled_at.asc() if order == "asc" else Meeting.scheduled_at.desc()
+    stmt = stmt.order_by(order_by).offset(pagination.skip).limit(pagination.limit)
+
+    total = (await session.execute(count_stmt)).scalar_one()
+    items = list((await session.execute(stmt)).scalars().all())
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 
 

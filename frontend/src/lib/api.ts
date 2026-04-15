@@ -483,12 +483,40 @@ export const signalsApi = {
 };
 
 export const meetingsApi = {
-  list: (skip = 0, limit = 50, companyId?: string, dealId?: string, status?: string) => {
+  list: (skip = 0, limit = 50, companyId?: string, dealId?: string, status?: string | string[]) => {
     const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (companyId) params.set("company_id", companyId);
     if (dealId) params.set("deal_id", dealId);
-    if (status) params.set("status", status);
+    if (Array.isArray(status)) {
+      for (const value of status) params.append("status", value);
+    } else if (status) {
+      params.set("status", status);
+    }
     return requestList<Meeting>(`/api/v1/meetings/?${params}`);
+  },
+  listPaginated: (params: {
+    skip?: number;
+    limit?: number;
+    companyId?: string;
+    dealId?: string;
+    status?: string[];
+    meetingType?: string[];
+    assigneeId?: string[];
+    hasIntel?: boolean;
+    order?: "asc" | "desc";
+  }) => {
+    const search = new URLSearchParams({
+      skip: String(params.skip ?? 0),
+      limit: String(params.limit ?? 50),
+    });
+    if (params.companyId) search.set("company_id", params.companyId);
+    if (params.dealId) search.set("deal_id", params.dealId);
+    for (const value of params.status ?? []) search.append("status", value);
+    for (const value of params.meetingType ?? []) search.append("meeting_type", value);
+    for (const value of params.assigneeId ?? []) search.append("assignee_id", value);
+    if (params.hasIntel !== undefined) search.set("has_intel", params.hasIntel ? "true" : "false");
+    if (params.order) search.set("order", params.order);
+    return requestPaginated<Meeting>(`/api/v1/meetings/?${search.toString()}`);
   },
   get: (id: string) => request<Meeting>(`/api/v1/meetings/${id}`),
   create: (data: Partial<Meeting>) =>
