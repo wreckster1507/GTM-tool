@@ -81,7 +81,8 @@
       "Bash(kubectl --kubeconfig /c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml -n gtm-prod exec pod/gtm-postgresql-0 -- env PGPASSWORD=25a43f7c993d3beb3d3a507bd44adb4a psql -U beacon -d beacon -c \"SELECT jsonb_array_length\\(enrichment_cache->'competitive_landscape_v2'\\), enrichment_cache->'competitive_landscape_v2'->0 FROM companies WHERE name = 'Gainsight - Impl';\")",
       "Bash(kubectl --kubeconfig /c/gtm-prototype/tmp/beacon-test-kubeconfig.yaml -n gtm-prod exec pod/gtm-postgresql-0 -- env PGPASSWORD=25a43f7c993d3beb3d3a507bd44adb4a psql -U beacon -d beacon -c \"SELECT jsonb_typeof\\(enrichment_cache->'hunter_contacts'->'data'\\), enrichment_cache->'hunter_contacts'->'data'->0->>'first_name' FROM companies WHERE name = 'Gainsight - Impl';\")",
       "Bash(grep -E \"done$|View build\")",
-      "Bash(grep -E \"done$|View build|✓ built\")"
+      "Bash(grep -E \"done$|View build|✓ built\")",
+      "Bash(ls c:/gtm-prototype/.graphify*)"
     ]
   },
   "outputStyle": "Explanatory"
