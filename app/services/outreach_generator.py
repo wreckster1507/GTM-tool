@@ -75,6 +75,7 @@ _DEFAULT_OUTREACH_CONTENT = {
     "step_templates": [
         {
             "step_number": 1,
+            "channel": "email",
             "label": "Initial email",
             "goal": "Start a personalized conversation with a specific reason for reaching out.",
             "subject_hint": "Quick question about {{company_name}}",
@@ -88,29 +89,21 @@ _DEFAULT_OUTREACH_CONTENT = {
         },
         {
             "step_number": 2,
+            "channel": "linkedin",
             "label": "Follow-up",
-            "goal": "Add one fresh signal or proof point without repeating the first note.",
-            "subject_hint": "Re: {{company_name}} implementation motion",
-            "body_template": (
-                "Hi {{first_name}},\n\n"
-                "Following up with one more angle: teams like yours use Beacon to remove manual coordination "
-                "from implementation work and get faster rollout consistency.\n\n"
-                "Happy to share a quick example if useful."
-            ),
-            "prompt_hint": "Reference the first email lightly and contribute one new idea, signal, or stat.",
+            "goal": "Make a light LinkedIn touch so the rep can stay visible between emails.",
+            "subject_hint": None,
+            "body_template": "Reference the contact's role, the first email, and one concrete reason to connect on LinkedIn.",
+            "prompt_hint": "Keep it short and human. This is a LinkedIn touch, not a full email.",
         },
         {
             "step_number": 3,
+            "channel": "call",
             "label": "Final touch",
-            "goal": "Close the loop politely while keeping the door open.",
-            "subject_hint": "Re: {{company_name}}",
-            "body_template": (
-                "Hi {{first_name}},\n\n"
-                "Last nudge from me. If implementation orchestration is on your roadmap this quarter, "
-                "I can share what Beacon is doing for teams with similar rollout complexity.\n\n"
-                "If not relevant, no worries."
-            ),
-            "prompt_hint": "Be brief, respectful, and easy to ignore without sounding passive-aggressive.",
+            "goal": "Give the SDR a concise call step with context and a reason to reach out live.",
+            "subject_hint": None,
+            "body_template": "Call this contact and reference the latest company signal plus the most relevant implementation pain Beacon can solve.",
+            "prompt_hint": "Make this feel like a live talk track the SDR can use during the call, not an email.",
         },
     ],
 }
@@ -171,38 +164,55 @@ async def generate_sequence(
 
     generated_bodies: list[str] = []
     generated_subjects: list[str] = []
+    generated_steps: list[dict] = []
+    generated_linkedin_message: Optional[str] = None
 
-    for index, _delay in enumerate(step_delays, start=1):
+    for index, delay in enumerate(step_delays, start=1):
         step_template = _template_for_step(content_settings["step_templates"], index)
-        prompt = _build_step_prompt(
-            ctx=context,
-            step_number=index,
-            step_template=step_template,
-            prior_email=generated_bodies[-1] if generated_bodies else None,
-            prior_subject=generated_subjects[0] if generated_subjects else None,
-        )
-        result = await ai.complete(
-            system_prompt,
-            prompt,
-            max_tokens=250 if index == 1 else 190,
-        )
-        body = result or ""
-        subject = _extract_subject(result) or _fallback_subject(index, context, step_template, generated_subjects)
-        generated_bodies.append(body)
-        generated_subjects.append(subject)
+        channel = str(step_template.get("channel") or "email").strip().lower() or "email"
+        if channel == "linkedin":
+            li_prompt = _build_linkedin_prompt(context)
+            li_system = f"{_LINKEDIN_SYSTEM} {content_settings['linkedin_prompt']}".strip()
+            body = await ai.complete(li_system, li_prompt, max_tokens=80) or ""
+            subject = None
+            generated_linkedin_message = body
+        elif channel == "call":
+            prompt = _build_step_prompt(
+                ctx=context,
+                step_number=index,
+                step_template=step_template,
+                prior_email=generated_bodies[-1] if generated_bodies else None,
+                prior_subject=generated_subjects[0] if generated_subjects else None,
+            ) + "\n\nWrite a concise phone call task and talk track for the SDR. No email subject line."
+            body = await ai.complete(system_prompt, prompt, max_tokens=140) or ""
+            subject = None
+        else:
+            prompt = _build_step_prompt(
+                ctx=context,
+                step_number=index,
+                step_template=step_template,
+                prior_email=generated_bodies[-1] if generated_bodies else None,
+                prior_subject=generated_subjects[0] if generated_subjects else None,
+            )
+            result = await ai.complete(
+                system_prompt,
+                prompt,
+                max_tokens=250 if index == 1 else 190,
+            )
+            body = result or ""
+            subject = _extract_subject(result) or _fallback_subject(index, context, step_template, generated_subjects)
+            generated_bodies.append(body)
+            generated_subjects.append(subject)
+        generated_steps.append({"channel": channel, "subject": subject, "body": body, "delay": delay})
 
-    seq.email_1 = generated_bodies[0] if len(generated_bodies) > 0 else None
-    seq.email_2 = generated_bodies[1] if len(generated_bodies) > 1 else None
-    seq.email_3 = generated_bodies[2] if len(generated_bodies) > 2 else None
-    seq.subject_1 = generated_subjects[0] if len(generated_subjects) > 0 else f"Quick question for {context['company_name']}"
-    seq.subject_2 = generated_subjects[1] if len(generated_subjects) > 1 else f"Re: {seq.subject_1}"
-    seq.subject_3 = generated_subjects[2] if len(generated_subjects) > 2 else f"Re: {seq.subject_1}"
-
-    # ── LinkedIn message ──────────────────────────────────────────────────────
-    li_prompt = _build_linkedin_prompt(context)
-    li_system = f"{_LINKEDIN_SYSTEM} {content_settings['linkedin_prompt']}".strip()
-    li_result = await ai.complete(li_system, li_prompt, max_tokens=80)
-    seq.linkedin_message = li_result
+    email_steps = [step for step in generated_steps if step["channel"] == "email"]
+    seq.email_1 = email_steps[0]["body"] if len(email_steps) > 0 else None
+    seq.email_2 = email_steps[1]["body"] if len(email_steps) > 1 else None
+    seq.email_3 = email_steps[2]["body"] if len(email_steps) > 2 else None
+    seq.subject_1 = email_steps[0]["subject"] if len(email_steps) > 0 else f"Quick question for {context['company_name']}"
+    seq.subject_2 = email_steps[1]["subject"] if len(email_steps) > 1 else (f"Re: {seq.subject_1}" if seq.subject_1 else None)
+    seq.subject_3 = email_steps[2]["subject"] if len(email_steps) > 2 else (f"Re: {seq.subject_1}" if seq.subject_1 else None)
+    seq.linkedin_message = generated_linkedin_message
 
     seq.generation_context = context
     seq.generated_at = datetime.utcnow()
@@ -219,17 +229,16 @@ async def generate_sequence(
     for old_step in existing_steps.scalars().all():
         await session.delete(old_step)
 
-    for i, delay in enumerate(step_delays):
-        body = generated_bodies[i] if i < len(generated_bodies) else (generated_bodies[-1] if generated_bodies else "")
-        subject = generated_subjects[i] if i < len(generated_subjects) else (generated_subjects[-1] if generated_subjects else seq.subject_1)
+    for i, generated_step in enumerate(generated_steps, start=1):
         step = OutreachStep(
             sequence_id=seq.id,
-            step_number=i + 1,
-            subject=subject,
-            body=body,
-            delay_value=delay,
+            step_number=i,
+            subject=generated_step["subject"],
+            body=generated_step["body"],
+            delay_value=generated_step["delay"],
             delay_unit="days",
         )
+        step.channel = generated_step["channel"]
         session.add(step)
 
     await session.commit()
@@ -287,6 +296,7 @@ def _normalize_outreach_content_settings(value: Optional[dict], step_count: int)
         normalized_steps.append(
             {
                 "step_number": int(step.get("step_number") or idx),
+                "channel": str(step.get("channel") or "email").strip().lower() or "email",
                 "label": str(step.get("label") or f"Step {idx}"),
                 "goal": str(step.get("goal") or ""),
                 "subject_hint": str(step.get("subject_hint") or "") or None,

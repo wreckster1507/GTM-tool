@@ -57,6 +57,7 @@ function buildCcPattern(inbox?: string | null) {
 function createTemplate(stepNumber: number): OutreachTemplateStep {
   return {
     step_number: stepNumber,
+    channel: "email",
     label: `Step ${stepNumber}`,
     goal: "",
     subject_hint: "",
@@ -87,6 +88,7 @@ export default function SettingsPage() {
   const [triggeringTldv, setTriggeringTldv] = useState(false);
   const [stoppingTldv, setStoppingTldv] = useState(false);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
+  const [outreachTimingSteps, setOutreachTimingSteps] = useState<Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }>>([]);
   const [loading, setLoading] = useState(true);
   const [savingInbox, setSavingInbox] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -140,6 +142,7 @@ export default function SettingsPage() {
       if (personalEmailData) setPersonalEmail(personalEmailData);
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
+      setOutreachTimingSteps(outreachTiming.steps);
       setDealStages(dealStageData);
       setProspectStages(prospectStageData);
       setClickupCrmSettings(clickupCrmData);
@@ -470,6 +473,7 @@ export default function SettingsPage() {
         linkedin_prompt: outreachContent.linkedin_prompt.trim(),
         step_templates: outreachContent.step_templates.map((template, index) => ({
           step_number: index + 1,
+          channel: template.channel,
           label: template.label.trim() || `Step ${index + 1}`,
           goal: template.goal.trim(),
           subject_hint: template.subject_hint?.trim() || null,
@@ -1114,14 +1118,14 @@ export default function SettingsPage() {
                   Current sequence timing
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                  {outreachStepDelays.map((delay, index) => (
-                    <span key={`${delay}-${index}`} className="crm-chip" style={{ background: "#eef2ff", color: "#4958d8", borderColor: "#d8def8" }}>
-                      Step {index + 1}: Day {delay}
+                  {outreachTimingSteps.map((step) => (
+                    <span key={`${step.step_number}-${step.channel}-${step.day}`} className="crm-chip" style={{ background: "#eef2ff", color: "#4958d8", borderColor: "#d8def8" }}>
+                      Step {step.step_number}: {step.channel === "linkedin" ? "LinkedIn" : step.channel === "call" ? "Call" : "Email"} · Day {step.day}
                     </span>
                   ))}
                 </div>
                 <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
-                  Need to change day gaps? Use the existing sequence timing controls. This tab only shapes the copy and prompting.
+                  Timing now supports mixed touches too, so the shared playbook can combine email, LinkedIn, and call steps without needing separate workflows.
                 </p>
               </div>
             </div>
@@ -1191,9 +1195,9 @@ export default function SettingsPage() {
                           <span className="crm-chip" style={{ background: "#eef2ff", color: "#4958d8", borderColor: "#d8def8" }}>
                             Step {index + 1}
                           </span>
-                          {outreachStepDelays[index] !== undefined && (
+                          {outreachTimingSteps[index] && (
                             <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>
-                              Sends on Day {outreachStepDelays[index]}
+                              {outreachTimingSteps[index].channel === "linkedin" ? "LinkedIn" : outreachTimingSteps[index].channel === "call" ? "Call" : "Email"} · Day {outreachTimingSteps[index].day}
                             </span>
                           )}
                         </div>
@@ -1204,6 +1208,21 @@ export default function SettingsPage() {
                       </div>
 
                       <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.55fr) minmax(0, 1fr)", gap: 14 }}>
+                        <div>
+                          <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                            Channel
+                          </div>
+                          <select
+                            value={template.channel}
+                            onChange={(event) => updateTemplate(index, "channel", event.target.value)}
+                            disabled={!outreachContent}
+                            style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                          >
+                            <option value="email">Email</option>
+                            <option value="call">Call</option>
+                            <option value="linkedin">LinkedIn</option>
+                          </select>
+                        </div>
                         <div>
                           <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
                             Template label

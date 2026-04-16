@@ -5,11 +5,15 @@ import { settingsApi } from "../../lib/api";
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSaved?: (delays: number[]) => void;
+  onSaved?: (steps: Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }>) => void;
 }
 
 export default function SequenceSettingsModal({ open, onClose, onSaved }: Props) {
-  const [delays, setDelays] = useState<number[]>([0, 3, 7]);
+  const [steps, setSteps] = useState<Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }>>([
+    { step_number: 1, day: 0, channel: "email" },
+    { step_number: 2, day: 3, channel: "linkedin" },
+    { step_number: 3, day: 7, channel: "call" },
+  ]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -21,34 +25,40 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
     setError("");
     setSaved(false);
     settingsApi.getOutreach()
-      .then((d) => setDelays(d.step_delays))
+      .then((d) => setSteps(d.steps))
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
   }, [open]);
 
-  const updateDelay = (i: number, val: string) => {
+  const updateDay = (i: number, val: string) => {
     const n = parseInt(val, 10);
     if (isNaN(n) || n < 0) return;
-    setDelays((prev) => prev.map((d, idx) => (idx === i ? n : d)));
+    setSteps((prev) => prev.map((step, idx) => (idx === i ? { ...step, day: n } : step)));
+  };
+
+  const updateChannel = (i: number, channel: string) => {
+    const nextChannel = channel === "call" || channel === "linkedin" ? channel : "email";
+    setSteps((prev) => prev.map((step, idx) => (idx === i ? { ...step, channel: nextChannel } : step)));
   };
 
   const addStep = () => {
-    const last = delays[delays.length - 1] ?? 0;
-    setDelays((prev) => [...prev, last + 3]);
+    const last = steps[steps.length - 1];
+    const nextDay = (last?.day ?? 0) + 3;
+    setSteps((prev) => [...prev, { step_number: prev.length + 1, day: nextDay, channel: "email" }]);
   };
 
   const removeStep = (i: number) => {
-    if (delays.length <= 1) return;
-    setDelays((prev) => prev.filter((_, idx) => idx !== i));
+    if (steps.length <= 1) return;
+    setSteps((prev) => prev.filter((_, idx) => idx !== i).map((step, idx) => ({ ...step, step_number: idx + 1 })));
   };
 
   const handleSave = async () => {
     setSaving(true);
     setError("");
     try {
-      const result = await settingsApi.updateOutreach(delays);
+      const result = await settingsApi.updateOutreach(steps.map((step, index) => ({ ...step, step_number: index + 1 })));
       setSaved(true);
-      onSaved?.(result.step_delays);
+      onSaved?.(result.steps);
       setTimeout(onClose, 800);
     } catch {
       setError("Failed to save settings");
@@ -106,11 +116,11 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
             {/* Steps list */}
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
-                Email Steps
+                Sequence Steps
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {delays.map((delay, i) => (
+                {steps.map((step, i) => (
                   <div key={i} style={{
                     display: "flex", alignItems: "center", gap: 10,
                     background: "#f7fbff",
@@ -130,28 +140,44 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
                     </div>
 
                     <div style={{ flex: 1, fontSize: 13, color: "#2c4a63" }}>
-                      {i === 0 ? "Send on Day" : "Send on Day"}
+                      <select
+                        value={step.channel}
+                        onChange={(e) => updateChannel(i, e.target.value)}
+                        style={{
+                          width: "100%",
+                          border: "1px solid #c8d9e8",
+                          borderRadius: 8,
+                          padding: "6px 10px",
+                          fontSize: 13,
+                          color: "#0f2744",
+                          background: "#fff",
+                          outline: "none",
+                        }}
+                      >
+                        <option value="email">Email</option>
+                        <option value="call">Call</option>
+                        <option value="linkedin">LinkedIn</option>
+                      </select>
                     </div>
 
                     {/* Day input */}
                     <input
                       type="number"
                       min={0}
-                      value={delay}
-                      onChange={(e) => updateDelay(i, e.target.value)}
-                      disabled={i === 0}
+                      value={step.day}
+                      onChange={(e) => updateDay(i, e.target.value)}
                       style={{
                         width: 64, textAlign: "center",
                         border: "1px solid #c8d9e8",
                         borderRadius: 8, padding: "5px 8px",
                         fontSize: 14, fontWeight: 600, color: "#0f2744",
-                        background: i === 0 ? "#eef4fa" : "#fff",
+                        background: "#fff",
                         outline: "none",
                       }}
                     />
 
                     {/* Remove button — only for steps beyond the first two */}
-                    {delays.length > 2 && i > 0 ? (
+                    {steps.length > 2 && i > 0 ? (
                       <button
                         onClick={() => removeStep(i)}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "#c0cdd8", padding: 2 }}
@@ -168,7 +194,7 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
             </div>
 
             {/* Add step */}
-            {delays.length < 6 && (
+            {steps.length < 6 && (
               <button
                 onClick={addStep}
                 style={{

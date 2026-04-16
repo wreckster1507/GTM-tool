@@ -291,6 +291,7 @@ export default function Meetings() {
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
+  const [linkFilter, setLinkFilter] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [totalMeetings, setTotalMeetings] = useState(0);
   const [meetingPages, setMeetingPages] = useState(1);
@@ -312,6 +313,7 @@ export default function Meetings() {
         status: statusFilter,
         meetingType: typeFilter,
         assigneeId: assigneeFilter,
+        linkState: linkFilter,
       });
 
       const ms = pageResp.items;
@@ -338,11 +340,11 @@ export default function Meetings() {
 
   useEffect(() => {
     loadData();
-  }, [page, statusFilter, typeFilter, assigneeFilter]);
+  }, [page, statusFilter, typeFilter, assigneeFilter, linkFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, typeFilter, assigneeFilter]);
+  }, [statusFilter, typeFilter, assigneeFilter, linkFilter]);
 
   useEffect(() => {
     if (!showModal || !form.company_id) {
@@ -363,7 +365,7 @@ export default function Meetings() {
     [hideDeveloper, users],
   );
 
-  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0;
+  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0;
 
   const handleCreate = async () => {
     if (!form.title.trim()) {
@@ -445,6 +447,15 @@ export default function Meetings() {
           onChange={setTypeFilter}
           placeholder="All types"
         />
+        <MultiSelectDropdown
+          options={[
+            { value: "linked", label: "Linked" },
+            { value: "needs_review", label: "Needs review" },
+          ]}
+          selected={linkFilter}
+          onChange={setLinkFilter}
+          placeholder="All links"
+        />
         {isAdmin && visibleUsers.length > 0 && (
           <MultiSelectDropdown
             options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
@@ -456,7 +467,7 @@ export default function Meetings() {
         {hasFilters && (
           <button
             type="button"
-            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); }}
+            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); }}
             style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
           >
             Reset
@@ -486,14 +497,38 @@ export default function Meetings() {
                 {meetings.map((m) => (
                   <tr key={m.id}>
                     <td style={styles.td}>
-                      <Link
-                        to={`/meetings/${m.id}`}
-                        style={{ fontWeight: 700, color: "#24364b", textDecoration: "none" }}
-                      >
-                        {m.title}
-                      </Link>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <Link
+                          to={`/meetings/${m.id}`}
+                          style={{ fontWeight: 700, color: "#24364b", textDecoration: "none" }}
+                        >
+                          {m.title}
+                        </Link>
+                        {(!m.company_id || !m.deal_id) && (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              width: "fit-content",
+                              padding: "3px 8px",
+                              borderRadius: 999,
+                              border: "1px solid #ffd8b4",
+                              background: "#fff6ec",
+                              color: "#b25a1d",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.05em",
+                            }}
+                          >
+                            Needs review
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td style={styles.td}>{m.company_id ? (companyName[m.company_id] ?? "-") : "-"}</td>
+                    <td style={styles.td}>
+                      {m.company_id ? (companyName[m.company_id] ?? "-") : <span style={{ color: "#b25a1d", fontWeight: 700 }}>Unlinked</span>}
+                    </td>
                     <td style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
                     <td style={styles.td}>{formatDate(m.scheduled_at)}</td>
                     <td style={styles.td}>

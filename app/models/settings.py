@@ -215,14 +215,23 @@ class WorkspaceSettings(SQLModel, table=True):
 class OutreachSettingsRead(SQLModel):
     step_delays: list[int]
     steps_count: int
+    steps: list["OutreachTimingStep"] = Field(default_factory=list)
 
 
 class OutreachSettingsUpdate(SQLModel):
-    step_delays: list[int]
+    step_delays: list[int] = Field(default_factory=list)
+    steps: list["OutreachTimingStep"] = Field(default_factory=list)
+
+
+class OutreachTimingStep(SQLModel):
+    step_number: int
+    day: int
+    channel: str = "email"
 
 
 class OutreachTemplateStep(SQLModel):
     step_number: int
+    channel: str = "email"
     label: str
     goal: str
     subject_hint: Optional[str] = None

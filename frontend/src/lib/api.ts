@@ -344,12 +344,12 @@ export const outreachApi = {
     }),
   getSteps: (sequenceId: string) =>
     request<OutreachStep[]>(`/api/v1/outreach/sequences/${sequenceId}/steps`),
-  addStep: (sequenceId: string, step: Pick<OutreachStep, "step_number" | "subject" | "body" | "delay_value" | "delay_unit"> & { variants?: Array<Record<string, unknown>> | null }) =>
+  addStep: (sequenceId: string, step: Pick<OutreachStep, "step_number" | "channel" | "subject" | "body" | "delay_value" | "delay_unit"> & { variants?: Record<string, unknown> | Array<Record<string, unknown>> | null }) =>
     request<OutreachStep>(`/api/v1/outreach/sequences/${sequenceId}/steps`, {
       method: "POST",
       body: JSON.stringify(step),
     }),
-  updateStep: (stepId: string, fields: Partial<Pick<OutreachStep, "subject" | "body" | "delay_value" | "delay_unit" | "status" | "variants">>) =>
+  updateStep: (stepId: string, fields: Partial<Pick<OutreachStep, "channel" | "subject" | "body" | "delay_value" | "delay_unit" | "status" | "variants">>) =>
     request<OutreachStep>(`/api/v1/outreach/steps/${stepId}`, {
       method: "PATCH",
       body: JSON.stringify(fields),
@@ -504,6 +504,7 @@ export const meetingsApi = {
     status?: string[];
     meetingType?: string[];
     assigneeId?: string[];
+    linkState?: string[];
     hasIntel?: boolean;
     order?: "asc" | "desc";
   }) => {
@@ -516,6 +517,7 @@ export const meetingsApi = {
     for (const value of params.status ?? []) search.append("status", value);
     for (const value of params.meetingType ?? []) search.append("meeting_type", value);
     for (const value of params.assigneeId ?? []) search.append("assignee_id", value);
+    for (const value of params.linkState ?? []) search.append("link_state", value);
     if (params.hasIntel !== undefined) search.set("has_intel", params.hasIntel ? "true" : "false");
     if (params.order) search.set("order", params.order);
     return requestPaginated<Meeting>(`/api/v1/meetings/?${search.toString()}`);
@@ -1366,11 +1368,11 @@ export const executionTrackerApi = {
 
 export const settingsApi = {
   getOutreach: () =>
-    request<{ step_delays: number[]; steps_count: number }>("/api/v1/settings/outreach"),
-  updateOutreach: (step_delays: number[]) =>
-    request<{ step_delays: number[]; steps_count: number }>("/api/v1/settings/outreach", {
+    request<{ step_delays: number[]; steps_count: number; steps: Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }> }>("/api/v1/settings/outreach"),
+  updateOutreach: (steps: Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }>) =>
+    request<{ step_delays: number[]; steps_count: number; steps: Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }> }>("/api/v1/settings/outreach", {
       method: "PATCH",
-      body: JSON.stringify({ step_delays }),
+      body: JSON.stringify({ steps }),
     }),
   getOutreachContent: () =>
     request<OutreachContentSettings>("/api/v1/settings/outreach-content"),

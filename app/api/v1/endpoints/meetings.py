@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -26,6 +26,7 @@ async def list_meetings(
     status: list[str] = Query(default=[]),
     meeting_type: list[str] = Query(default=[]),
     assignee_id: list[UUID] = Query(default=[]),
+    link_state: list[str] = Query(default=[]),
     has_intel: Optional[bool] = Query(default=None),
     order: str = Query(default="desc"),
 ):
@@ -57,6 +58,14 @@ async def list_meetings(
         ensure_deal_join()
         stmt = stmt.where(Deal.assigned_to_id.in_(assignee_id))
         count_stmt = count_stmt.where(Deal.assigned_to_id.in_(assignee_id))
+    link_state_set = {value.strip().lower() for value in link_state if value}
+    if link_state_set == {"needs_review"}:
+        review_clause = or_(Meeting.company_id.is_(None), Meeting.deal_id.is_(None))
+        stmt = stmt.where(review_clause)
+        count_stmt = count_stmt.where(review_clause)
+    elif link_state_set == {"linked"}:
+        stmt = stmt.where(Meeting.company_id.is_not(None), Meeting.deal_id.is_not(None))
+        count_stmt = count_stmt.where(Meeting.company_id.is_not(None), Meeting.deal_id.is_not(None))
     if has_intel is True:
         stmt = stmt.where(Meeting.research_data.is_not(None))
         count_stmt = count_stmt.where(Meeting.research_data.is_not(None))

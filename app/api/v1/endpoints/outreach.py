@@ -29,6 +29,19 @@ _ALLOWED_SEQUENCE_FIELDS = frozenset(
 )
 
 
+def _normalize_variants_payload(raw):
+    if isinstance(raw, dict):
+        payload = dict(raw)
+        payload_variants = payload.get("variants")
+        payload["variants"] = payload_variants if isinstance(payload_variants, list) else []
+        channel = str(payload.get("channel") or "email").strip().lower()
+        payload["channel"] = channel if channel in {"email", "call", "linkedin"} else "email"
+        return payload
+    if isinstance(raw, list):
+        return {"channel": "email", "variants": raw}
+    return {"channel": "email", "variants": []}
+
+
 def _sequence_started(seq: OutreachSequence) -> bool:
     return bool(
         seq.instantly_campaign_id
@@ -180,8 +193,9 @@ async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSe
         body=step_in.body,
         delay_value=step_in.delay_value,
         delay_unit=step_in.delay_unit,
-        variants=step_in.variants,
+        variants=_normalize_variants_payload(step_in.variants),
     )
+    step.channel = step_in.channel
     session.add(step)
     await session.commit()
     await session.refresh(step)
@@ -201,7 +215,12 @@ async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSes
 
     update_data = updates.model_dump(exclude_none=True)
     for key, val in update_data.items():
-        setattr(step, key, val)
+        if key == "variants":
+            step.variants = _normalize_variants_payload(val)
+        elif key == "channel":
+            step.channel = val
+        else:
+            setattr(step, key, val)
     step.updated_at = datetime.utcnow()
 
     session.add(step)
@@ -291,16 +310,21 @@ async def launch_sequence(
 
     name = campaign_name or f"{contact.first_name} {contact.last_name} — {company_name}"
 
+    email_steps = [step for step in steps if getattr(step, "channel", "email") == "email"]
+
+    if not email_steps:
+        raise ValidationError("This sequence has no email steps to launch yet. Add at least one email touch before launching.")
+
     instantly_steps = [
         {
-            "subject": step.subject or (f"Re: {steps[0].subject}" if i > 0 else "Hello"),
+            "subject": step.subject or (f"Re: {email_steps[0].subject}" if i > 0 else "Hello"),
             "body": step.body,
             "delay_value": step.delay_value,
             # Omit delay_unit — Instantly defaults to days; including it can
             # cause validation errors if the value doesn't match their allowlist
-            "variants": step.variants or [],
+            "variants": _normalize_variants_payload(step.variants).get("variants") or [],
         }
-        for i, step in enumerate(steps)
+        for i, step in enumerate(email_steps)
     ]
 
     # ── Call Instantly API ─────────────────────────────────────────────────────
@@ -383,7 +407,7 @@ async def launch_sequence(
         "sequence_id": str(sequence_id),
         "instantly_campaign_id": campaign_id,
         "contact_email": contact.email,
-        "steps_count": len(steps),
+        "steps_count": len(email_steps),
         "campaign_name": name,
     }
 
@@ -453,6 +477,7 @@ def _steps_from_legacy(seq: OutreachSequence) -> list:
     for i, (subject, body, delay) in enumerate(pairs):
         if body:
             steps.append(SimpleNamespace(
+                channel="email",
                 subject=subject,
                 body=body,
                 delay_value=delay,

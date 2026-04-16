@@ -118,6 +118,7 @@ function MeetingIntelCard({
   const hasResearch = !!meeting.research_data;
   const hasIntelSent = !!(meeting as any).intel_email_sent_at;
   const isRunning = runningIntel === meeting.id;
+  const needsReview = !meeting.company_id || !meeting.deal_id;
 
   const urgency =
     hours !== null && hours <= 2 ? "imminent"
@@ -199,6 +200,23 @@ function MeetingIntelCard({
               {company && (
                 <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>{company.name}</span>
               )}
+              {needsReview && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    padding: "3px 8px",
+                    borderRadius: 999,
+                    background: "#fff6ec",
+                    color: colors.orange,
+                    border: "1px solid #ffd3be",
+                  }}
+                >
+                  Needs review
+                </span>
+              )}
               <span style={{ fontSize: 11, fontWeight: 700, textTransform: "capitalize", padding: "2px 8px", borderRadius: 999, background: "#f0f4fb", color: colors.sub, border: `1px solid ${colors.border}` }}>
                 {meeting.meeting_type.replace(/_/g, " ")}
               </span>
@@ -222,6 +240,15 @@ function MeetingIntelCard({
           <CalendarDays size={13} />
           <span>{formatDate(meeting.scheduled_at)}</span>
         </div>
+
+        {needsReview && (
+          <div style={{ padding: "8px 12px", borderRadius: 10, background: "#fff8f1", border: "1px solid #ffe0bd", display: "flex", alignItems: "flex-start", gap: 8 }}>
+            <AlertTriangle size={13} style={{ color: colors.orange, marginTop: 1, flexShrink: 0 }} />
+            <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.5 }}>
+              Beacon did not find a confident company and deal link for this meeting yet. Use <span style={{ fontWeight: 700 }}>Re-link</span> to review it instead of trusting an automatic guess.
+            </div>
+          </div>
+        )}
 
         {/* Status badges */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -797,6 +824,7 @@ export default function PreMeetingAssistance() {
   const [intelFilter, setIntelFilter] = useState<MultiSelectValue>([]);
   const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>([]);
   const [typeFilter, setTypeFilter] = useState<MultiSelectValue>([]);
+  const [linkFilter, setLinkFilter] = useState<MultiSelectValue>([]);
   const [page, setPage] = useState(1);
   const [totalMeetings, setTotalMeetings] = useState(0);
   const [meetingPages, setMeetingPages] = useState(1);
@@ -818,6 +846,7 @@ export default function PreMeetingAssistance() {
           status: statusFilter,
           meetingType: typeFilter,
           assigneeId: assigneeFilter,
+          linkState: linkFilter,
           hasIntel: hasIntelFilter,
           order: statusFilter.length === 1 && statusFilter[0] === "completed" ? "desc" : "asc",
         }),
@@ -864,11 +893,11 @@ export default function PreMeetingAssistance() {
 
   useEffect(() => {
     loadData();
-  }, [page, statusFilter, intelFilter, assigneeFilter, typeFilter]);
+  }, [page, statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, intelFilter, assigneeFilter, typeFilter]);
+  }, [statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter]);
 
   const companyMap = useMemo(
     () => new Map(companies.map((c) => [c.id, c])),
@@ -935,9 +964,13 @@ export default function PreMeetingAssistance() {
       } else if (assigneeFilter.length > 0 && !m.deal_id) {
         return false;
       }
+      if (linkFilter.length > 0) {
+        const linkState = !m.company_id || !m.deal_id ? "needs_review" : "linked";
+        if (!linkFilter.includes(linkState)) return false;
+      }
       return true;
     });
-  }, [meetings, statusFilter, intelFilter, typeFilter, assigneeFilter, dealAssigneeMap]);
+  }, [meetings, statusFilter, intelFilter, typeFilter, assigneeFilter, linkFilter, dealAssigneeMap]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -1019,6 +1052,17 @@ export default function PreMeetingAssistance() {
             placeholder="All types"
           />
 
+          <MultiSelectDropdown
+            label="Link"
+            options={[
+              { value: "linked", label: "Linked" },
+              { value: "needs_review", label: "Needs review" },
+            ]}
+            selected={linkFilter}
+            onChange={setLinkFilter}
+            placeholder="All links"
+          />
+
           {isAdmin && visibleUsers.length > 0 && (
             <MultiSelectDropdown
               label="Rep"
@@ -1029,10 +1073,10 @@ export default function PreMeetingAssistance() {
             />
           )}
 
-          {(statusFilter.length !== 1 || statusFilter[0] !== "scheduled" || intelFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0) && (
+          {(statusFilter.length !== 1 || statusFilter[0] !== "scheduled" || intelFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0) && (
             <button
               type="button"
-              onClick={() => { setStatusFilter(["scheduled"]); setIntelFilter([]); setTypeFilter([]); setAssigneeFilter([]); }}
+              onClick={() => { setStatusFilter(["scheduled"]); setIntelFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); }}
               style={{ height: 38, padding: "0 12px", borderRadius: 10, border: `1px solid #ffd0d8`, background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
             >
               <RefreshCw size={11} />

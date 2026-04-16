@@ -14,20 +14,33 @@ interface Props {
   mode?: "drawer" | "inline";
 }
 
-type TabKey = `step_${number}` | "linkedin";
-
-const LINKEDIN_TAB = "linkedin";
 const MAX_SEQUENCE_STEPS = 6;
+type StepChannel = "email" | "call" | "linkedin";
+type TabKey = `step_${number}`;
 
 function stepTabKey(stepNumber: number): `step_${number}` {
   return `step_${stepNumber}`;
 }
 
 function getStepNumberFromTab(tab: TabKey): number | null {
-  if (tab === LINKEDIN_TAB) return null;
   const raw = tab.replace("step_", "");
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getStepChannel(step?: Pick<OutreachStep, "channel"> | null): StepChannel {
+  const value = String(step?.channel || "email").trim().toLowerCase();
+  return value === "call" || value === "linkedin" ? value : "email";
+}
+
+function getStepLabel(step: Pick<OutreachStep, "step_number" | "channel">, index: number): string {
+  const channel = getStepChannel(step);
+  if (channel === "call") return `Call ${index + 1}`;
+  if (channel === "linkedin") return `LinkedIn ${index + 1}`;
+  if (index === 0) return "Email 1";
+  if (index === 1) return "Follow-up";
+  if (index === 2) return "Final";
+  return `Email ${step.step_number}`;
 }
 
 const PERSONA_LABEL: Record<string, string> = {
@@ -153,6 +166,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
         id: `${source.id}-1`,
         sequence_id: source.id,
         step_number: 1,
+        channel: "email" as const,
         subject: source.subject_1,
         body: source.email_1 ?? "",
         delay_value: 0,
@@ -166,6 +180,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
         id: `${source.id}-2`,
         sequence_id: source.id,
         step_number: 2,
+        channel: "email" as const,
         subject: source.subject_2,
         body: source.email_2 ?? "",
         delay_value: 3,
@@ -179,6 +194,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
         id: `${source.id}-3`,
         sequence_id: source.id,
         step_number: 3,
+        channel: "email" as const,
         subject: source.subject_3,
         body: source.email_3 ?? "",
         delay_value: 7,
@@ -255,17 +271,18 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
   const currentStep = currentStepNumber == null
     ? null
     : sortedSteps.find((step) => step.step_number === currentStepNumber) ?? null;
+  const currentChannel = getStepChannel(currentStep);
 
   const subject = useMemo(() => {
-    if (tab === LINKEDIN_TAB) return null;
+    if (currentChannel !== "email") return null;
     return currentStep?.subject ?? null;
-  }, [currentStep, tab]);
+  }, [currentChannel, currentStep]);
 
   const body = useMemo(() => {
     if (!seq) return "";
-    const text = tab === LINKEDIN_TAB ? (seq.linkedin_message ?? "") : (currentStep?.body ?? "");
+    const text = currentStep?.body ?? "";
     return text.replace(/^Subject:.*\n\n?/i, "").trim();
-  }, [currentStep, seq, tab]);
+  }, [currentStep, seq]);
 
   const tabDayLabel = currentStep ? `Day ${currentStep.delay_value}` : "";
   const visibleTimingSteps = sortedSteps;
@@ -277,6 +294,30 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
       current.map((step) =>
         step.id === stepId
           ? { ...step, delay_value: nextValue }
+          : step
+      )
+    );
+    setTimingError("");
+    setTimingOk(false);
+  };
+
+  const handleChannelChange = (stepId: string, rawValue: string) => {
+    const nextChannel: StepChannel =
+      rawValue === "call" || rawValue === "linkedin" ? rawValue : "email";
+    setSteps((current) =>
+      current.map((step) =>
+        step.id === stepId
+          ? {
+              ...step,
+              channel: nextChannel,
+              subject: nextChannel === "email" ? (step.subject ?? "") : undefined,
+              body:
+                nextChannel === "call"
+                  ? (step.body || "Call this prospect and use the recent outreach context before logging a disposition.")
+                  : nextChannel === "linkedin"
+                    ? (step.body || seq?.linkedin_message || "Send a short LinkedIn touch tailored to this prospect's role.")
+                    : step.body,
+            }
           : step
       )
     );
@@ -302,7 +343,12 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
     try {
       const updatedSteps = await Promise.all(
         editableSteps.map((step) =>
-          outreachApi.updateStep(step.id, { delay_value: step.delay_value })
+          outreachApi.updateStep(step.id, {
+            delay_value: step.delay_value,
+            channel: getStepChannel(step),
+            subject: getStepChannel(step) === "email" ? (step.subject ?? "") : undefined,
+            body: step.body,
+          })
         )
       );
       setSteps((current) =>
@@ -333,22 +379,23 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
   };
 
   const handleSave = async () => {
-    if (!seq || !currentStep || tab === LINKEDIN_TAB) return;
+    if (!seq || !currentStep) return;
     setSaving(true);
     try {
       await outreachApi.updateStep(currentStep.id, {
-        subject: editSubject,
+        channel: currentChannel,
+        subject: currentChannel === "email" ? editSubject : undefined,
         body: editBody,
       });
       setSteps((current) =>
         current.map((step) =>
           step.id === currentStep.id
-            ? { ...step, subject: editSubject, body: editBody }
+            ? { ...step, channel: currentChannel, subject: currentChannel === "email" ? editSubject : undefined, body: editBody }
             : step
         )
       );
 
-      if (currentStep.step_number <= 3) {
+      if (currentChannel === "email" && currentStep.step_number <= 3) {
         const suffix = String(currentStep.step_number) as "1" | "2" | "3";
         const updated = await outreachApi.updateSequence(seq.id, {
           [`subject_${suffix}`]: editSubject,
@@ -376,16 +423,14 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
   const isLaunched = !!(seq?.instantly_campaign_id || seq?.launched_at);
   const canEditTiming = !!seq && !isLaunched;
 
-  const getStepTabStyle = (kind: "email1" | "followup" | "final" | "other" | "linkedin", active: boolean): CSSProperties => {
-    const tone = kind === "email1"
+  const getStepTabStyle = (kind: StepChannel | "other", active: boolean): CSSProperties => {
+    const tone = kind === "email"
       ? { bg: "#eaf4ff", border: "#c9e0f8", text: palette.blue }
-      : kind === "followup"
+      : kind === "call"
         ? { bg: "#fff4df", border: "#ffe0b2", text: "#b56d00" }
-        : kind === "final"
-          ? { bg: "#e8f8f0", border: palette.greenBorder, text: palette.green }
-          : kind === "linkedin"
-            ? { bg: "#eef1ff", border: "#d7ddff", text: "#4f46e5" }
-            : { bg: "#f4f8fc", border: palette.line, text: palette.sub };
+        : kind === "linkedin"
+          ? { bg: "#eef1ff", border: "#d7ddff", text: "#4f46e5" }
+          : { bg: "#f4f8fc", border: palette.line, text: palette.sub };
 
     return {
       border: `1px solid ${active ? tone.border : palette.line}`,
@@ -416,11 +461,12 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
     try {
       const created = await outreachApi.addStep(seq.id, {
         step_number: last.step_number + 1,
+        channel: "email",
         subject: last.subject ?? "",
         body: last.body,
         delay_value: last.delay_value + 3,
         delay_unit: last.delay_unit || "days",
-        variants: last.variants ?? null,
+        variants: null,
       });
       setSteps((current) => [...current, created]);
       setTab(stepTabKey(created.step_number));
@@ -601,27 +647,20 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
               <StepTimeline seq={seq} steps={steps} />
 
               {/* ── Email tabs ──────────────────────────────────────────────── */}
-              <div style={{ ...panel, padding: 8, display: "grid", gridTemplateColumns: `repeat(${Math.max(visibleTimingSteps.length + 1, 2)}, minmax(0, 1fr))`, gap: 8 }}>
+              <div style={{ ...panel, padding: 8, display: "grid", gridTemplateColumns: `repeat(${Math.max(visibleTimingSteps.length, 2)}, minmax(0, 1fr))`, gap: 8 }}>
                 {visibleTimingSteps.map((step, index) => {
                   const stepKey = stepTabKey(step.step_number);
-                  const label =
-                    index === 0 ? "Email 1" :
-                    index === 1 ? "Follow-up" :
-                    index === 2 ? "Final" :
-                    `Step ${step.step_number}`;
-                  const kind =
-                    index === 0 ? "email1" :
-                    index === 1 ? "followup" :
-                    index === 2 ? "final" :
-                    "other";
+                  const channel = getStepChannel(step);
+                  const label = getStepLabel(step, index);
+                  const Icon = channel === "linkedin" ? Linkedin : channel === "call" ? Phone : Mail;
                   return (
                   <button
                     key={step.id}
                     onClick={() => handleTabChange(stepKey)}
-                    style={getStepTabStyle(kind, tab === stepKey)}
+                    style={getStepTabStyle(channel, tab === stepKey)}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                      <Mail size={13} />
+                      <Icon size={13} />
                       {label}
                     </span>
                     <span style={{ fontSize: 10, fontWeight: 600, color: palette.muted }}>
@@ -629,16 +668,6 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
                     </span>
                   </button>
                 )})}
-                <button
-                  key={LINKEDIN_TAB}
-                  onClick={() => handleTabChange(LINKEDIN_TAB)}
-                  style={getStepTabStyle("linkedin", tab === LINKEDIN_TAB)}
-                >
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    <Linkedin size={13} />
-                    LinkedIn
-                  </span>
-                </button>
               </div>
 
               <div style={{ ...panel, padding: "12px 14px" }}>
@@ -690,6 +719,27 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
                         <span style={{ fontSize: 12, fontWeight: 700, color: palette.sub }}>
                           Step {index + 1}
                         </span>
+                        <select
+                          value={getStepChannel(step)}
+                          disabled={!canEditTiming}
+                          onChange={(e) => handleChannelChange(step.id, e.target.value)}
+                          style={{
+                            width: "100%",
+                            boxSizing: "border-box",
+                            border: `1px solid ${palette.line}`,
+                            borderRadius: 8,
+                            padding: "9px 12px",
+                            fontSize: 13,
+                            color: palette.text,
+                            fontFamily: "inherit",
+                            outline: "none",
+                            background: canEditTiming ? "#fff" : "#f4f8fc",
+                          }}
+                        >
+                          <option value="email">Email</option>
+                          <option value="call">Call</option>
+                          <option value="linkedin">LinkedIn</option>
+                        </select>
                         <input
                           type="number"
                           min={0}
@@ -710,7 +760,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
                           }}
                         />
                         <span style={{ fontSize: 11, color: palette.muted }}>
-                          Send on Day {step.delay_value}
+                          {getStepChannel(step) === "call" ? "Call on" : getStepChannel(step) === "linkedin" ? "Touch on LinkedIn on" : "Send on"} Day {step.delay_value}
                         </span>
                         {canEditTiming && visibleTimingSteps.length > 1 && index === visibleTimingSteps.length - 1 && (
                           <button
@@ -756,7 +806,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
               )}
 
               {/* Subject */}
-              {tab !== LINKEDIN_TAB && (subject || editing) && (
+              {currentChannel === "email" && (subject || editing) && (
                 <div style={{ ...panel, padding: "12px 14px" }}>
                   <div style={{ color: palette.muted, fontSize: 11, letterSpacing: 0.4, fontWeight: 700, marginBottom: 6 }}>SUBJECT</div>
                   {editing ? (
@@ -819,7 +869,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
               </div>
 
               {/* LinkedIn profile link */}
-              {tab === LINKEDIN_TAB && contact?.linkedin_url && (
+              {currentChannel === "linkedin" && contact?.linkedin_url && (
                 <a
                   href={contact.linkedin_url}
                   target="_blank" rel="noopener noreferrer"
@@ -830,7 +880,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
               )}
 
               {/* ── Launch section ──────────────────────────────────────────── */}
-              {tab !== LINKEDIN_TAB && (
+              {currentChannel === "email" && (
                 isLaunched ? (
                   // Already launched — show campaign info
                   <div style={{ ...panel, padding: "14px 16px", borderLeft: `3px solid ${palette.green}` }}>
@@ -1027,11 +1077,8 @@ function StepTimeline({ seq, steps }: { seq: OutreachSequence; steps: OutreachSt
   const timeline = [...steps]
     .sort((a, b) => a.step_number - b.step_number)
     .map((step, index) => ({
-      label:
-        index === 0 ? "Initial email" :
-        index === 1 ? "Follow-up" :
-        index === 2 ? "Final touch" :
-        `Step ${step.step_number}`,
+      label: getStepLabel(step, index),
+      channel: getStepChannel(step),
       day: `Day ${step.delay_value}`,
       body: step.body,
     }));
@@ -1057,11 +1104,11 @@ function StepTimeline({ seq, steps }: { seq: OutreachSequence; steps: OutreachSt
                   width: 28, height: 28, borderRadius: "50%",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: 11, fontWeight: 800,
-                  background: isDone ? palette.greenSoft : isSent ? palette.accentSoft : isReady ? "#f0f4fa" : "#f5f5f5",
-                  border: `2px solid ${isDone ? palette.greenBorder : isSent ? "#ffc8b4" : isReady ? "#c5d4e8" : "#e0e0e0"}`,
-                  color: isDone ? palette.green : isSent ? palette.accent : isReady ? palette.sub : palette.muted,
+                  background: isDone ? palette.greenSoft : isSent ? palette.accentSoft : isReady ? (step.channel === "linkedin" ? "#eef1ff" : step.channel === "call" ? "#fff4df" : "#f0f4fa") : "#f5f5f5",
+                  border: `2px solid ${isDone ? palette.greenBorder : isSent ? "#ffc8b4" : isReady ? (step.channel === "linkedin" ? "#d7ddff" : step.channel === "call" ? "#ffe0b2" : "#c5d4e8") : "#e0e0e0"}`,
+                  color: isDone ? palette.green : isSent ? palette.accent : isReady ? (step.channel === "linkedin" ? "#4f46e5" : step.channel === "call" ? "#b56d00" : palette.sub) : palette.muted,
                 }}>
-                  {isDone ? <CheckCircle size={13} /> : isSent ? <Send size={11} /> : <Clock size={11} />}
+                  {isDone ? <CheckCircle size={13} /> : isSent ? <Send size={11} /> : step.channel === "linkedin" ? <Linkedin size={11} /> : step.channel === "call" ? <Phone size={11} /> : <Mail size={11} />}
                 </div>
                 <div style={{ textAlign: "center" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: palette.text }}>{step.label}</div>

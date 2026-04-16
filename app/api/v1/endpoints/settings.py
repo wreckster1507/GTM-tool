@@ -33,6 +33,7 @@ from app.models.settings import (
     OutreachContentSettingsUpdate,
     OutreachSettingsRead,
     OutreachSettingsUpdate,
+    OutreachTimingStep,
     PipelineSummarySettingsRead,
     PipelineSummarySettingsUpdate,
     PreMeetingAutomationSettingsRead,
@@ -71,6 +72,7 @@ _DEFAULT_OUTREACH_CONTENT = {
     "step_templates": [
         {
             "step_number": 1,
+            "channel": "email",
             "label": "Initial email",
             "goal": "Start a personalized conversation with a specific reason for reaching out.",
             "subject_hint": "Quick question about {{company_name}}",
@@ -84,29 +86,25 @@ _DEFAULT_OUTREACH_CONTENT = {
         },
         {
             "step_number": 2,
+            "channel": "linkedin",
             "label": "Follow-up",
-            "goal": "Add one fresh signal or proof point without repeating the first note.",
-            "subject_hint": "Re: {{company_name}} implementation motion",
+            "goal": "Make a light LinkedIn touch so the rep can stay visible between emails.",
+            "subject_hint": None,
             "body_template": (
-                "Hi {{first_name}},\n\n"
-                "Following up with one more angle: teams like yours use Beacon to remove manual coordination "
-                "from implementation work and get faster rollout consistency.\n\n"
-                "Happy to share a quick example if useful."
+                "Reference the contact's role, the first email, and one concrete reason to connect on LinkedIn."
             ),
-            "prompt_hint": "Reference the first email lightly and contribute one new idea, signal, or stat.",
+            "prompt_hint": "Keep it short and human. This is a LinkedIn touch, not a full email.",
         },
         {
             "step_number": 3,
+            "channel": "call",
             "label": "Final touch",
-            "goal": "Close the loop politely while keeping the door open.",
-            "subject_hint": "Re: {{company_name}}",
+            "goal": "Give the SDR a concise call step with context and a reason to reach out live.",
+            "subject_hint": None,
             "body_template": (
-                "Hi {{first_name}},\n\n"
-                "Last nudge from me. If implementation orchestration is on your roadmap this quarter, "
-                "I can share what Beacon is doing for teams with similar rollout complexity.\n\n"
-                "If not relevant, no worries."
+                "Call this contact and reference the latest company signal plus the most relevant implementation pain Beacon can solve."
             ),
-            "prompt_hint": "Be brief, respectful, and easy to ignore without sounding passive-aggressive.",
+            "prompt_hint": "Make this feel like a live talk track the SDR can use during the call, not an email.",
         },
     ],
 }
@@ -256,6 +254,7 @@ def _normalized_outreach_content(value: dict | None, step_count: int | None = No
         normalized_steps.append(
             {
                 "step_number": int(step.get("step_number") or idx),
+                "channel": str(step.get("channel") or "email").strip().lower() or "email",
                 "label": str(step.get("label") or f"Step {idx}"),
                 "goal": str(step.get("goal") or ""),
                 "subject_hint": str(step.get("subject_hint") or "") or None,
@@ -481,7 +480,16 @@ async def get_outreach_settings(session: DBSession, _user: CurrentUser):
     """Return the global outreach sequence timing defaults."""
     row = await _get_or_create(session)
     delays = row.outreach_step_delays or _DEFAULTS
-    return OutreachSettingsRead(step_delays=delays, steps_count=len(delays))
+    content = _normalized_outreach_content(row.outreach_content_settings, step_count=len(delays))
+    steps = [
+        OutreachTimingStep(
+            step_number=index,
+            day=delay,
+            channel=(content.step_templates[index - 1].channel if index - 1 < len(content.step_templates) else "email"),
+        )
+        for index, delay in enumerate(delays, start=1)
+    ]
+    return OutreachSettingsRead(step_delays=delays, steps_count=len(delays), steps=steps)
 
 
 @router.patch("/outreach", response_model=OutreachSettingsRead)
@@ -491,18 +499,55 @@ async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSess
     Accepts a list of integers — one per step, in days from sequence start.
     E.g. [0, 4, 10] → send on Day 0, Day 4, Day 10.
     """
-    if len(body.step_delays) < 1 or len(body.step_delays) > 10:
+    raw_steps = body.steps or [
+        OutreachTimingStep(step_number=index, day=delay, channel="email")
+        for index, delay in enumerate(body.step_delays, start=1)
+    ]
+
+    if len(raw_steps) < 1 or len(raw_steps) > 10:
         from fastapi import HTTPException
-        raise HTTPException(status_code=422, detail="step_delays must have 1–10 entries")
+        raise HTTPException(status_code=422, detail="steps must have 1–10 entries")
+
+    normalized_steps: list[OutreachTimingStep] = []
+    last_day = -1
+    for index, step in enumerate(sorted(raw_steps, key=lambda item: item.step_number), start=1):
+        channel = step.channel.strip().lower() if step.channel else "email"
+        if channel not in {"email", "call", "linkedin"}:
+            raise HTTPException(status_code=422, detail="step channel must be email, call, or linkedin")
+        if step.day < 0:
+            raise HTTPException(status_code=422, detail="step day must be 0 or greater")
+        if step.day < last_day:
+            raise HTTPException(status_code=422, detail="step days must be in ascending order")
+        normalized_steps.append(OutreachTimingStep(step_number=index, day=step.day, channel=channel))
+        last_day = step.day
 
     row = await _get_or_create(session)
-    row.outreach_step_delays = body.step_delays
+    row.outreach_step_delays = [step.day for step in normalized_steps]
+    content = _normalized_outreach_content(row.outreach_content_settings, step_count=len(normalized_steps))
+    updated_templates = []
+    for index, step in enumerate(normalized_steps, start=1):
+        template = content.step_templates[index - 1]
+        updated_templates.append(
+            {
+                "step_number": index,
+                "channel": step.channel,
+                "label": template.label,
+                "goal": template.goal,
+                "subject_hint": template.subject_hint,
+                "body_template": template.body_template,
+                "prompt_hint": template.prompt_hint,
+            }
+        )
+    row.outreach_content_settings = {
+        **(row.outreach_content_settings or {}),
+        "step_templates": updated_templates,
+    }
     session.add(row)
     await session.commit()
     await session.refresh(row)
 
     delays = row.outreach_step_delays
-    return OutreachSettingsRead(step_delays=delays, steps_count=len(delays))
+    return OutreachSettingsRead(step_delays=delays, steps_count=len(delays), steps=normalized_steps)
 
 
 @router.get("/outreach-content", response_model=OutreachContentSettingsRead)
@@ -529,9 +574,13 @@ async def update_outreach_content_settings(
         if step.step_number in seen_numbers:
             raise HTTPException(status_code=422, detail="step_numbers must be unique")
         seen_numbers.add(step.step_number)
+        channel = (step.channel or "email").strip().lower()
+        if channel not in {"email", "call", "linkedin"}:
+            raise HTTPException(status_code=422, detail="step channel must be email, call, or linkedin")
         normalized_steps.append(
             {
                 "step_number": step.step_number,
+                "channel": channel,
                 "label": step.label.strip() or f"Step {idx}",
                 "goal": step.goal.strip(),
                 "subject_hint": (step.subject_hint or "").strip() or None,
