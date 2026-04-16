@@ -621,7 +621,12 @@ export default function AccountSourcingCompanyDetail() {
     }
   }, [id]);
 
-  const refreshUntilSettled = useCallback(async (options?: { attempts?: number; delayMs?: number; stopWhen?: (company: Company) => boolean }) => {
+  const refreshUntilSettled = useCallback(async (options?: {
+    attempts?: number;
+    delayMs?: number;
+    stopWhen?: (company: Company) => boolean;
+    onProgress?: (state: { attempt: number; attempts: number; company: Company }) => void;
+  }) => {
     if (!id) return;
     const attempts = options?.attempts ?? 18;
     const delayMs = options?.delayMs ?? 5000;
@@ -633,6 +638,7 @@ export default function AccountSourcingCompanyDetail() {
       ]);
       setCompany(c);
       setContacts(ct);
+      options?.onProgress?.({ attempt: i + 1, attempts, company: c });
       if (options?.stopWhen?.(c)) {
         return true;
       }
@@ -1175,6 +1181,7 @@ export default function AccountSourcingCompanyDetail() {
               <button
                 onClick={async () => {
                   setIcpResearching(true);
+                  let progressToastShown = false;
                   try {
                     setResearchStatus({
                       tone: "running",
@@ -1189,6 +1196,22 @@ export default function AccountSourcingCompanyDetail() {
                       stopWhen: (next) =>
                         `${next.enriched_at || ""}|${next.icp_score ?? ""}|${next.domain}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "icp_analysis") || ""}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "research_quality") || ""}` !== researchFingerprint ||
                         !next.domain.endsWith(".unknown"),
+                      onProgress: ({ attempt, attempts }) => {
+                        setResearchStatus({
+                          tone: "running",
+                          message:
+                            attempt === 1
+                              ? "Beacon is collecting fresh account data and checking for updated ICP signals."
+                              : `Beacon is still researching this account and checking for fresh results (${attempt}/${attempts}).`,
+                        });
+                        if (!progressToastShown && attempt >= 2) {
+                          progressToastShown = true;
+                          toast.info(
+                            "Beacon is still researching this account in the background. You can keep working while we refresh the latest signals.",
+                            "Research in progress",
+                          );
+                        }
+                      },
                     });
                     if (settled) {
                       setResearchStatus({

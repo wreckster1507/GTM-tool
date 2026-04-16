@@ -659,12 +659,13 @@ async def process_personal_emails(
                     DealContact.contact_id.in_(matched_contact_ids)
                 ).distinct()
             )
-            deal_ids = [row.deal_id for row in dc_result.all()]
-            unique_deal_ids = list(dict.fromkeys(deal_ids))
+            matched_deal_ids = [row.deal_id for row in dc_result.all()]
+            unique_deal_ids = list(dict.fromkeys(matched_deal_ids))
             if len(unique_deal_ids) == 1:
+                deal_ids = unique_deal_ids
                 meeting_candidate_deal_id = unique_deal_ids[0]
 
-        # ── Pass 2: company domain match ─────────────────────────────────────
+        # ── Pass 2: company domain match (only when one active deal is clear) ─
         if not deal_ids:
             external_domains = {
                 _domain_from_email(addr)
@@ -675,6 +676,7 @@ async def process_personal_emails(
             external_domains.discard(user_domain)
 
             domain_matched_company_ids: set[UUID] = set()
+            company_domain_deal_candidates: set[UUID] = set()
             for domain in external_domains:
                 if domain in company_domain_map:
                     company_id, _ = company_domain_map[domain]
@@ -687,14 +689,14 @@ async def process_personal_emails(
                         )
                     )
                     for row in deal_result.all():
-                        if row.id not in deal_ids:
-                            deal_ids.append(row.id)
+                        company_domain_deal_candidates.add(row.id)
             if len(domain_matched_company_ids) == 1:
                 active_company_deal_ids = [
-                    deal_id for deal_id in dict.fromkeys(deal_ids)
+                    deal_id for deal_id in company_domain_deal_candidates
                     if _is_active_deal_stage(deal_stage_map.get(deal_id))
                 ]
                 if len(active_company_deal_ids) == 1:
+                    deal_ids = [active_company_deal_ids[0]]
                     meeting_candidate_deal_id = active_company_deal_ids[0]
 
         if not deal_ids and (msg.subject or msg.body_text):
@@ -705,9 +707,15 @@ async def process_personal_emails(
             if company_match:
                 matched_company_id, _ = company_match
                 deal_result = await session.execute(
-                    select(Deal.id).where(Deal.company_id == matched_company_id)
+                    select(Deal.id, Deal.stage).where(Deal.company_id == matched_company_id)
                 )
-                deal_ids = [row.id for row in deal_result.all()]
+                active_company_deal_ids = [
+                    row.id for row in deal_result.all()
+                    if _is_active_deal_stage(row.stage)
+                ]
+                if len(active_company_deal_ids) == 1:
+                    deal_ids = [active_company_deal_ids[0]]
+                    meeting_candidate_deal_id = active_company_deal_ids[0]
 
         # ── Pass 4: AI classification fallback ───────────────────────────────
         if not deal_ids and (msg.subject or msg.body_text):
@@ -730,9 +738,15 @@ async def process_personal_emails(
                     if comp_row:
                         matched_company_id = comp_row
                         deal_result = await session.execute(
-                            select(Deal.id).where(Deal.company_id == comp_row)
+                            select(Deal.id, Deal.stage).where(Deal.company_id == comp_row)
                         )
-                        deal_ids = [r.id for r in deal_result.all()]
+                        active_company_deal_ids = [
+                            row.id for row in deal_result.all()
+                            if _is_active_deal_stage(row.stage)
+                        ]
+                        if len(active_company_deal_ids) == 1:
+                            deal_ids = [active_company_deal_ids[0]]
+                            meeting_candidate_deal_id = active_company_deal_ids[0]
 
         if not deal_ids:
             # No match found — still may need gap-fill (new contact from external domain)
