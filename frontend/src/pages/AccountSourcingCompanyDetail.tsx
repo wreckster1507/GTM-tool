@@ -25,6 +25,7 @@ import {
 import { accountSourcingApi, companiesApi, contactsApi, dealsApi } from "../lib/api";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
+import { useToast } from "../lib/ToastContext";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
@@ -574,6 +575,7 @@ export default function AccountSourcingCompanyDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const { isAdmin } = useAuth();
+  const toast = useToast();
 
   const [company, setCompany] = useState<Company | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -581,6 +583,10 @@ export default function AccountSourcingCompanyDetail() {
 
   const [re, setRe] = useState(false);
   const [icpResearching, setIcpResearching] = useState(false);
+  const [researchStatus, setResearchStatus] = useState<{
+    tone: "idle" | "running" | "success" | "warning" | "error";
+    message: string;
+  }>({ tone: "idle", message: "" });
   const [showAddStakeholder, setShowAddStakeholder] = useState(false);
   const [showDealModal, setShowDealModal] = useState(false);
   const [showActivityModal, setShowActivityModal] = useState(false);
@@ -627,9 +633,10 @@ export default function AccountSourcingCompanyDetail() {
       setCompany(c);
       setContacts(ct);
       if (options?.stopWhen?.(c)) {
-        return;
+        return true;
       }
     }
+    return false;
   }, [id]);
 
   useEffect(() => {
@@ -873,6 +880,8 @@ export default function AccountSourcingCompanyDetail() {
     }
   };
 
+  const researchFingerprint = `${company.enriched_at || ""}|${company.icp_score ?? ""}|${company.domain}|${cacheTs(cache, "icp_analysis") || ""}|${cacheTs(cache, "research_quality") || ""}`;
+
   const tier = company.icp_tier || "cold";
 
   return (
@@ -1076,6 +1085,49 @@ export default function AccountSourcingCompanyDetail() {
                   ) : null}
                 </div>
               ) : null}
+
+              {researchStatus.tone !== "idle" ? (
+                <div
+                  style={{
+                    marginTop: 12,
+                    borderRadius: 12,
+                    padding: "10px 12px",
+                    border:
+                      researchStatus.tone === "running"
+                        ? "1px solid #c8daf8"
+                        : researchStatus.tone === "success"
+                          ? "1px solid #b7e6c5"
+                          : researchStatus.tone === "warning"
+                            ? "1px solid #f0d4ac"
+                            : "1px solid #f3c3ba",
+                    background:
+                      researchStatus.tone === "running"
+                        ? "#f0f6ff"
+                        : researchStatus.tone === "success"
+                          ? "#f0fbf4"
+                          : researchStatus.tone === "warning"
+                            ? "#fff7eb"
+                            : "#fff4f2",
+                    color:
+                      researchStatus.tone === "running"
+                        ? "#1a4fa8"
+                        : researchStatus.tone === "success"
+                          ? "#1f7a47"
+                          : researchStatus.tone === "warning"
+                            ? "#a46206"
+                            : "#c53030",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    lineHeight: 1.55,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  {researchStatus.tone === "running" ? <Loader2 size={14} className="animate-spin" /> : null}
+                  <span>{researchStatus.message}</span>
+                </div>
+              ) : null}
             </div>
 
             <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
@@ -1098,13 +1150,48 @@ export default function AccountSourcingCompanyDetail() {
                 onClick={async () => {
                   setIcpResearching(true);
                   try {
+                    setResearchStatus({
+                      tone: "running",
+                      message: "ICP research started. Beacon is refreshing account fit, signals, and recommendations in the background.",
+                    });
+                    toast.info(
+                      "Beacon started ICP research for this account. You can keep using the app while it refreshes.",
+                      "Research started",
+                    );
                     await accountSourcingApi.icpResearch(company.id);
-                    const currentEnrichedAt = company.enriched_at;
-                    await refreshUntilSettled({
+                    const settled = await refreshUntilSettled({
                       stopWhen: (next) =>
-                        next.enriched_at !== currentEnrichedAt ||
+                        `${next.enriched_at || ""}|${next.icp_score ?? ""}|${next.domain}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "icp_analysis") || ""}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "research_quality") || ""}` !== researchFingerprint ||
                         !next.domain.endsWith(".unknown"),
                     });
+                    if (settled) {
+                      setResearchStatus({
+                        tone: "success",
+                        message: "ICP research finished. The latest account intelligence is now loaded.",
+                      });
+                      toast.success(
+                        "Beacon finished refreshing ICP research for this account.",
+                        "Research complete",
+                      );
+                    } else {
+                      setResearchStatus({
+                        tone: "warning",
+                        message: "Research is still running in the background. We’ll keep the current view until fresh results land.",
+                      });
+                      toast.warning(
+                        "ICP research is still running. Give it another minute and refresh if needed.",
+                        "Still working",
+                      );
+                    }
+                  } catch (error) {
+                    setResearchStatus({
+                      tone: "error",
+                      message: "Beacon couldn’t start or finish ICP research right now. Please try again once.",
+                    });
+                    toast.error(
+                      error instanceof Error ? error.message : "Unable to refresh ICP research right now.",
+                      "Research failed",
+                    );
                   } finally {
                     setIcpResearching(false);
                     load();

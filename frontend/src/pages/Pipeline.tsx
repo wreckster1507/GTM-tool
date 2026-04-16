@@ -1858,7 +1858,7 @@ export default function Pipeline() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 2 }}>View</span>
-            {[{ key: "deal" as const, label: "Deals", sub: "Sales pipeline", icon: DollarSign, active: "#175089", soft: "#eaf2ff" }, { key: "prospect" as const, label: "Prospects", sub: "Live outreach board", icon: Target, active: "#177b75", soft: "#e7f7f5" }].map((item) => {
+            {[{ key: "deal" as const, label: "Deals", sub: "Sales pipeline", icon: DollarSign, active: "#175089", soft: "#eaf2ff" }].map((item) => {
               const Icon = item.icon;
               const active = tab === item.key;
               return (
@@ -1901,61 +1901,25 @@ export default function Pipeline() {
           </div>
 
           <div style={{ flex: 1 }} />
-          {tab === "deal" ? (
-            <div style={{ display: "grid", gap: 10 }}>
-              {canImportCrm && (
-                <button
-                  className="crm-button soft"
-                  onClick={() => {
-                    setCrmImportError("");
-                    setCrmImportResult(null);
-                    setShowCrmImport(true);
-                  }}
-                  style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-                >
-                  <Building2 size={14} />Import from CRM
-                </button>
-              )}
-              <button className="crm-button primary" onClick={() => setCreateDealStage(effectiveDealStages.find((stage) => stage.group === "active")?.id ?? "reprospect")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Plus size={14} />New Deal</button>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 10 }}>
+            {canImportCrm && (
               <button
-                className="crm-button primary"
-                disabled={migratingProspects || !canMigrateProspects}
-                onClick={() => prospectImportInputRef.current?.click()}
-                style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor, opacity: migratingProspects || !canMigrateProspects ? 0.75 : 1 }}
-              >
-                <Upload size={14} />
-                {migratingProspects ? "Migrating..." : "Migrate Prospects"}
-              </button>
-              <input
-                ref={prospectImportInputRef}
-                type="file"
-                accept=".csv,.xlsx"
-                style={{ display: "none" }}
-                disabled={migratingProspects || !canMigrateProspects}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    void handleProspectMigration(file);
-                  }
-                  event.currentTarget.value = "";
+                className="crm-button soft"
+                onClick={() => {
+                  setCrmImportError("");
+                  setCrmImportResult(null);
+                  setShowCrmImport(true);
                 }}
-              />
-              <button className="crm-button primary" onClick={() => setShowAddProspect(true)} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}>
-                <Plus size={14} />Add Prospect
+                style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+              >
+                <Building2 size={14} />Import from CRM
               </button>
-              <button className="crm-button soft" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <Target size={14} />Open Prospecting
-              </button>
-              {isAdmin && (
-                <button className="crm-button soft" onClick={handleBulkDeleteProspects} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "#dc2626", borderColor: "#fecaca" }}>
-                  <Trash2 size={14} />Delete All Prospects
-                </button>
-              )}
-            </div>
-          )}
+            )}
+            <button className="crm-button primary" onClick={() => setCreateDealStage(effectiveDealStages.find((stage) => stage.group === "active")?.id ?? "reprospect")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Plus size={14} />New Deal</button>
+            <button className="crm-button soft" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Target size={14} />Open Prospecting
+            </button>
+          </div>
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflow: "hidden" }}>

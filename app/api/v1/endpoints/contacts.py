@@ -116,6 +116,7 @@ async def list_contacts(
     email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified"),
     ae_id: Optional[str] = Query(default=None, description="Filter by one or more assigned AE user IDs"),
     sdr_id: Optional[str] = Query(default=None, description="Filter by one or more assigned SDR user IDs"),
+    prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches"),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
@@ -131,6 +132,7 @@ async def list_contacts(
         email_state=email_state,
         ae_id=ae_id,
         sdr_id=sdr_id,
+        prospect_only=prospect_only,
         skip=pagination.skip,
         limit=pagination.limit,
     )
@@ -140,6 +142,11 @@ async def list_contacts(
 @router.post("/", response_model=ContactRead, status_code=201)
 async def create_contact(payload: ContactCreate, session: DBSession, _user: CurrentUser):
     contact = Contact(**payload.model_dump())
+    current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+    current_enrichment.setdefault("source", "manual_prospect")
+    current_enrichment.setdefault("uploaded_by", _user.email)
+    current_enrichment.setdefault("uploaded_at", datetime.utcnow().isoformat())
+    contact.enrichment_data = current_enrichment
     if not contact.persona:
         contact.persona = classify_persona(contact)
     saved = await ContactRepository(session).save(contact)
@@ -352,6 +359,7 @@ async def import_contacts_csv(
         raw_enrichment = contact_fields.get("enrichment_data") if isinstance(contact_fields.get("enrichment_data"), dict) else {}
         raw_enrichment["source"] = "prospect_csv_upload"
         raw_enrichment["uploaded_by"] = current_user.email
+        raw_enrichment["uploaded_at"] = datetime.utcnow().isoformat()
         contact_fields["enrichment_data"] = raw_enrichment
 
         email = (contact_fields.get("email") or "").strip().lower() if isinstance(contact_fields.get("email"), str) else None

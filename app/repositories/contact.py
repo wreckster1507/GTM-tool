@@ -17,6 +17,18 @@ from app.models.outreach import OutreachSequence
 from app.repositories.base import BaseRepository
 from app.services.contact_tracking import apply_contact_tracking
 
+FREE_EMAIL_PROVIDERS = frozenset({
+    "gmail.com",
+    "outlook.com",
+    "hotmail.com",
+    "yahoo.com",
+    "icloud.com",
+    "aol.com",
+    "protonmail.com",
+    "me.com",
+    "live.com",
+})
+
 
 def _parse_multi_query(value: str | None) -> list[str]:
     if not value:
@@ -48,6 +60,7 @@ class ContactRepository(BaseRepository[Contact]):
         email_state: Optional[str] = None,
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
+        prospect_only: bool = False,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ContactRead], int]:
@@ -67,6 +80,27 @@ class ContactRepository(BaseRepository[Contact]):
         if company_id:
             base_stmt = base_stmt.where(Contact.company_id == company_id)
             count_stmt = count_stmt.where(Contact.company_id == company_id)
+
+        if prospect_only:
+            email_domain = func.lower(func.split_part(Contact.email, "@", 2))
+            normalized_company_domain = func.lower(func.replace(Company.domain, "www.", ""))
+            business_domain_mismatch = and_(
+                Contact.email.is_not(None),
+                Contact.email != "",
+                Company.domain.is_not(None),
+                Company.domain != "",
+                ~Company.domain.ilike("%.unknown"),
+                ~email_domain.in_(tuple(FREE_EMAIL_PROVIDERS)),
+                email_domain != normalized_company_domain,
+            )
+            junk_filters = [
+                Contact.email.is_not(None),
+                ~func.lower(Contact.email).like("%@beacon.li"),
+                ~func.lower(Contact.email).like("zippy+%@beacon.li"),
+                ~business_domain_mismatch,
+            ]
+            base_stmt = base_stmt.where(*junk_filters)
+            count_stmt = count_stmt.where(*junk_filters)
 
         normalized_q = (q or "").strip()
         if normalized_q:

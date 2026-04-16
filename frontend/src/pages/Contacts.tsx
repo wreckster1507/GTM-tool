@@ -1,12 +1,13 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, angelMappingApi, authApi, contactsApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, angelMappingApi, authApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
 import type { Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
+import { useToast } from "../lib/ToastContext";
 import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
-  Building2, Target, Settings2, Phone, Upload, Download,
+  Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import {
@@ -64,16 +65,17 @@ export default function Contacts() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin, user } = useAuth();
+  const toast = useToast();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
   const pageSize = 50;
 
   // ── Contacts state — initialised from URL so filters survive navigation ──
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [personaFilter, setPersonaFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("persona")));
+  const [personaFilter, setPersonaFilter] = useState<string[]>([]);
   const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
-  const [emailFilter, setEmailFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("email")));
+  const [emailFilter, setEmailFilter] = useState<string[]>([]);
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
@@ -85,6 +87,7 @@ export default function Contacts() {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [resetting, setResetting] = useState(false);
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
+  const [openActionsId, setOpenActionsId] = useState<string | null>(null);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
@@ -113,9 +116,9 @@ export default function Contacts() {
       persona: personaFilter.length ? personaFilter : undefined,
       outreachLane: laneFilter.length ? laneFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
-      emailState: emailFilter.length ? emailFilter : undefined,
       aeId: aeFilter.length ? aeFilter : undefined,
       sdrId: sdrFilter.length ? sdrFilter : undefined,
+      prospectOnly: true,
     }).then((result) => {
       setContacts(result.items);
       setContactsTotal(result.total);
@@ -250,16 +253,14 @@ export default function Contacts() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
-      personaFilter.length ? next.set("persona", personaFilter.join(",")) : next.delete("persona");
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
-      emailFilter.length ? next.set("email", emailFilter.join(",")) : next.delete("email");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [search, personaFilter, laneFilter, sequenceFilter, emailFilter, aeFilter, sdrFilter, page]);
+  }, [search, laneFilter, sequenceFilter, aeFilter, sdrFilter, page]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -270,12 +271,18 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter, aeFilter, sdrFilter]);
+  }, [debouncedSearch, laneFilter, sequenceFilter, aeFilter, sdrFilter]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [tab, page, debouncedSearch, personaFilter, laneFilter, sequenceFilter, emailFilter, aeFilter, sdrFilter]);
+  }, [tab, page, debouncedSearch, laneFilter, sequenceFilter, aeFilter, sdrFilter]);
+
+  useEffect(() => {
+    const dismiss = () => setOpenActionsId(null);
+    window.addEventListener("click", dismiss);
+    return () => window.removeEventListener("click", dismiss);
+  }, []);
 
   // ── Angel mapping grouping ──────────────────────────────────────────
   const filteredMappings = filterAngelMappings(mappings, angelSearch, filterStrength);
@@ -318,6 +325,27 @@ export default function Contacts() {
       setMappings((prev) => prev.filter((m) => m.id !== id));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete mapping");
+    }
+  };
+
+  const handleConvertContactToDeal = async (contact: Contact) => {
+    if (!contact.company_id) {
+      toast.warning("This prospect needs a company before it can be converted to a deal.", "Company required");
+      return;
+    }
+    const contactName = `${contact.first_name} ${contact.last_name}`.trim() || contact.email || "Prospect";
+    try {
+      const deal = await dealsApi.create({
+        name: `${contact.company_name ?? "Account"} - ${contactName}`,
+        company_id: contact.company_id,
+        assigned_to_id: contact.assigned_to_id || undefined,
+        stage: "qualified_lead",
+      });
+      await dealsApi.addContact(deal.id, contact.id, "champion");
+      toast.success(`${contactName} was converted into a deal.`, "Deal created");
+      navigate("/pipeline");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to convert this prospect into a deal.", "Conversion failed");
     }
   };
 
@@ -621,10 +649,8 @@ export default function Contacts() {
             {/* Filters */}
             {(() => {
               const hasFilters = !!(
-                personaFilter.length ||
                 laneFilter.length ||
                 sequenceFilter.length ||
-                emailFilter.length ||
                 aeFilter.length ||
                 sdrFilter.length ||
                 search
@@ -645,14 +671,6 @@ export default function Contacts() {
                   zIndex: 5,
                 }}>
                   <MultiSelectFilter
-                    label="Persona"
-                    values={personaFilter}
-                    onChange={setPersonaFilter}
-                    options={PERSONA_FILTER_OPTIONS}
-                    allLabel="All personas"
-                    minWidth={160}
-                  />
-                  <MultiSelectFilter
                     label="Lane"
                     values={laneFilter}
                     onChange={setLaneFilter}
@@ -668,15 +686,6 @@ export default function Contacts() {
                     allLabel="All sequence states"
                     minWidth={170}
                   />
-                  <MultiSelectFilter
-                    label="Email"
-                    values={emailFilter}
-                    onChange={setEmailFilter}
-                    options={EMAIL_FILTER_OPTIONS}
-                    allLabel="All email states"
-                    minWidth={160}
-                  />
-
                   {/* Owner filters */}
                   {teamUsers.length > 0 && (
                     <>
@@ -716,8 +725,8 @@ export default function Contacts() {
                     <button
                       type="button"
                       onClick={() => {
-                        setSearch(""); setPersonaFilter([]);
-                        setLaneFilter([]); setSequenceFilter([]); setEmailFilter([]);
+                        setSearch("");
+                        setLaneFilter([]); setSequenceFilter([]);
                         setAeFilter([]); setSdrFilter([]);
                       }}
                       style={{
@@ -756,15 +765,18 @@ export default function Contacts() {
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Stage</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Progress</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Persona</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>AE</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>SDR</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Verified</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Added</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {contacts.map((c) => (
+                      {contacts.map((c) => {
+                        const enrichment = (c.enrichment_data || {}) as Record<string, unknown>;
+                        const uploadedBy = typeof enrichment.uploaded_by === "string" ? enrichment.uploaded_by : undefined;
+                        const uploadedAt = typeof enrichment.uploaded_at === "string" ? enrichment.uploaded_at : c.created_at;
+                        return (
                         <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
                           <td>
                             <div className="flex items-center gap-3 min-w-0">
@@ -773,7 +785,9 @@ export default function Contacts() {
                               </div>
                               <div className="min-w-0">
                                 <p className="font-bold text-[#25384d] truncate">{c.first_name} {c.last_name}</p>
-                                <p className="text-[13px] text-[#7a8ea4] mt-0.5">{c.seniority ?? "-"}</p>
+                                <p className="text-[13px] text-[#7a8ea4] mt-0.5">
+                                  {uploadedBy ? `Added by ${uploadedBy} · ${new Date(uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : (c.seniority ?? "-")}
+                                </p>
                               </div>
                             </div>
                           </td>
@@ -887,18 +901,6 @@ export default function Contacts() {
                               );
                             })()}
                           </td>
-                          <td>
-                            {c.persona ? (
-                              <span
-                                className="inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold"
-                                style={PERSONA_STYLE[c.persona] ?? PERSONA_STYLE.unknown}
-                              >
-                                {PERSONA_LABEL[c.persona] ?? c.persona}
-                              </span>
-                            ) : (
-                              <span className="text-[#96a7ba]">-</span>
-                            )}
-                          </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             <AssignDropdown
                               entityType="contact"
@@ -924,58 +926,102 @@ export default function Contacts() {
                             />
                           </td>
                           <td>
-                            {c.email_verified ? (
-                              <span className="inline-flex items-center gap-1 text-[#24966f] font-semibold text-[12px]">
-                                <CheckCircle2 className="h-4 w-4" />Yes
+                            <div style={{ display: "grid", gap: 3 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: "#1e3a52" }}>
+                                {uploadedBy ? uploadedBy : "Imported / synced"}
                               </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-[#9caabd] font-semibold text-[12px]">
-                                <XCircle className="h-4 w-4" />No
+                              <span style={{ fontSize: 11.5, color: "#7a8ea4" }}>
+                                {new Date(uploadedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                               </span>
-                            )}
+                            </div>
                           </td>
-                          <td>
-                            <div className="flex items-center gap-2">
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <div style={{ position: "relative", display: "inline-flex" }}>
                               <button
-                                onClick={(e) => { e.stopPropagation(); setSelectedContact(c); }}
-                                className="crm-button soft h-12 px-4 text-[13px]"
-                              >
-                                <Sparkles className="h-3.5 w-3.5" />Outreach
-                              </button>
-                              {c.phone && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (window.__aircallDial) {
-                                      window.__aircallDial(c.phone!, `${c.first_name} ${c.last_name}`);
-                                    }
-                                  }}
-                                  className="flex items-center justify-center h-12 w-12 rounded-xl text-[#175089] hover:text-[#fff] hover:bg-[#175089] transition-colors border border-[#c8d9ec]"
-                                  title={`Call ${c.phone}`}
-                                >
-                                  <Phone className="h-4 w-4" />
-                                </button>
-                              )}
-                              <button
-                                onClick={async (e) => {
+                                type="button"
+                                onClick={(e) => {
                                   e.stopPropagation();
-                                  if (!window.confirm(`Delete "${c.first_name} ${c.last_name}"?`)) return;
-                                  await contactsApi.delete(c.id);
-                                  if (contacts.length === 1 && page > 1) {
-                                    setPage((current) => current - 1);
-                                  } else {
-                                    loadContacts();
-                                  }
+                                  setOpenActionsId((current) => (current === c.id ? null : c.id));
                                 }}
-                                className="flex items-center justify-center h-12 w-12 rounded-xl text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
-                                title="Delete contact"
+                                style={{
+                                  width: 38,
+                                  height: 38,
+                                  borderRadius: 12,
+                                  border: "1px solid #dce8f4",
+                                  background: "#fff",
+                                  color: "#4a6580",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  cursor: "pointer",
+                                }}
+                                title="Prospect actions"
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <MoreHorizontal size={16} />
                               </button>
+                              {openActionsId === c.id ? (
+                                <div
+                                  style={{
+                                    position: "absolute",
+                                    top: 44,
+                                    right: 0,
+                                    zIndex: 20,
+                                    minWidth: 180,
+                                    borderRadius: 14,
+                                    border: "1px solid #dce8f4",
+                                    background: "#fff",
+                                    boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)",
+                                    padding: 8,
+                                    display: "grid",
+                                    gap: 4,
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedContact(c);
+                                      setOpenActionsId(null);
+                                    }}
+                                    className="crm-button soft"
+                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}
+                                  >
+                                    <Sparkles className="h-3.5 w-3.5" />Outreach
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!c.company_id}
+                                    onClick={() => {
+                                      setOpenActionsId(null);
+                                      void handleConvertContactToDeal(c);
+                                    }}
+                                    className="crm-button soft"
+                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, opacity: c.company_id ? 1 : 0.55 }}
+                                  >
+                                    <Target className="h-3.5 w-3.5" />Convert to deal
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setOpenActionsId(null);
+                                      if (!window.confirm(`Delete "${c.first_name} ${c.last_name}"?`)) return;
+                                      await contactsApi.delete(c.id);
+                                      if (contacts.length === 1 && page > 1) {
+                                        setPage((current) => current - 1);
+                                      } else {
+                                        loadContacts();
+                                      }
+                                    }}
+                                    className="crm-button soft"
+                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, color: "#c0392b", borderColor: "#fecaca" }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />Delete
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      )})}
                     </tbody>
                   </table>
                 </div>

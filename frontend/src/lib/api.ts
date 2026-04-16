@@ -162,6 +162,7 @@ export const contactsApi = {
     emailState?: string[];
     aeId?: string[];
     sdrId?: string[];
+    prospectOnly?: boolean;
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -175,6 +176,7 @@ export const contactsApi = {
     if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
     if (params.aeId?.length) search.set("ae_id", params.aeId.join(","));
     if (params.sdrId?.length) search.set("sdr_id", params.sdrId.join(","));
+    if (params.prospectOnly) search.set("prospect_only", "true");
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),
