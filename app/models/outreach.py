@@ -86,9 +86,32 @@ class OutreachStep(OutreachStepBase, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    @property
+    def channel(self) -> str:
+        if isinstance(self.variants, dict):
+            channel = str(self.variants.get("channel") or "").strip().lower()
+            if channel in {"email", "call", "linkedin"}:
+                return channel
+        return "email"
+
+    @channel.setter
+    def channel(self, value: str) -> None:
+        channel = str(value or "email").strip().lower()
+        if channel not in {"email", "call", "linkedin"}:
+            channel = "email"
+        if isinstance(self.variants, dict):
+            payload = dict(self.variants)
+        elif isinstance(self.variants, list):
+            payload = {"variants": self.variants}
+        else:
+            payload = {}
+        payload["channel"] = channel
+        self.variants = payload
+
 
 class OutreachStepRead(OutreachStepBase):
     id: UUID
+    channel: str = "email"
     variants: Optional[Any] = None
     status: str
     created_at: datetime
@@ -97,17 +120,19 @@ class OutreachStepRead(OutreachStepBase):
 
 class OutreachStepCreate(SQLModel):
     step_number: int
+    channel: str = "email"
     subject: Optional[str] = None
     body: str
     delay_value: int = 0
     delay_unit: str = "Days"
-    variants: Optional[list[dict]] = None
+    variants: Optional[Any] = None
 
 
 class OutreachStepUpdate(SQLModel):
+    channel: Optional[str] = None
     subject: Optional[str] = None
     body: Optional[str] = None
     delay_value: Optional[int] = None
     delay_unit: Optional[str] = None
-    variants: Optional[list[dict]] = None
+    variants: Optional[Any] = None
     status: Optional[str] = None

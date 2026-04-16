@@ -82,6 +82,17 @@ export interface Contact {
   tracking_score?: number;
   tracking_label?: string;
   tracking_last_activity_at?: string;
+  // Per-channel tracking
+  email_open_count?: number;
+  email_click_count?: number;
+  email_last_opened_at?: string;
+  call_status?: string;       // none | attempted | connected | voicemail | callback
+  call_disposition?: string;  // interested | not_interested | callback | wrong_number | no_answer
+  call_notes?: string;
+  call_last_at?: string;
+  linkedin_status?: string;   // none | sent | accepted | replied
+  linkedin_last_at?: string;
+  timezone?: string;
   created_at: string;
   updated_at: string;
 }
@@ -233,11 +244,12 @@ export interface OutreachStep {
   id: string;
   sequence_id: string;
   step_number: number;
+  channel?: "email" | "call" | "linkedin";
   subject?: string;
   body: string;
   delay_value: number;
   delay_unit: string;
-  variants?: Array<Record<string, unknown>> | null;
+  variants?: Record<string, unknown> | Array<Record<string, unknown>> | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -433,6 +445,8 @@ export interface Meeting {
   title: string;
   company_id?: string;
   deal_id?: string;
+  external_source?: string;
+  external_source_id?: string;
   scheduled_at?: string;
   status: string;
   meeting_type: string;
@@ -444,6 +458,7 @@ export interface Meeting {
   ai_summary?: string;
   mom_draft?: string;
   meeting_score?: number;
+  intel_email_sent_at?: string;
   what_went_right?: string;
   what_went_wrong?: string;
   next_steps?: string;
@@ -524,11 +539,18 @@ export interface ProspectStageSettings {
 
 export interface OutreachTemplateStep {
   step_number: number;
+  channel: "email" | "call" | "linkedin";
   label: string;
   goal: string;
   subject_hint?: string | null;
   body_template?: string | null;
   prompt_hint?: string | null;
+}
+
+export interface OutreachTimingStep {
+  step_number: number;
+  day: number;
+  channel: "email" | "call" | "linkedin";
 }
 
 export interface OutreachContentSettings {

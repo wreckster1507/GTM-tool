@@ -8,6 +8,7 @@ import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
+  Mail, Clock, PhoneCall, Globe,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import {
@@ -90,6 +91,11 @@ export default function Contacts() {
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
   const [taskContact, setTaskContact] = useState<Contact | null>(null);
+  const [callContact, setCallContact] = useState<Contact | null>(null);
+  const [callDisposition, setCallDisposition] = useState("");
+  const [callNotes, setCallNotes] = useState("");
+  const [callStatus, setCallStatus] = useState("attempted");
+  const [savingDisposition, setSavingDisposition] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
@@ -362,6 +368,41 @@ export default function Contacts() {
     }
   };
 
+  const openCallSidebar = (contact: Contact) => {
+    setCallContact(contact);
+    setCallStatus("attempted");
+    setCallDisposition("");
+    setCallNotes("");
+    // Trigger dial
+    if (contact.phone) {
+      if (window.__aircallDial) {
+        window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
+      } else {
+        window.location.href = `tel:${contact.phone}`;
+      }
+    }
+  };
+
+  const saveCallDisposition = async () => {
+    if (!callContact || !callDisposition) return;
+    setSavingDisposition(true);
+    try {
+      await contactsApi.update(callContact.id, {
+        call_status: callStatus,
+        call_disposition: callDisposition,
+        call_notes: callNotes || undefined,
+        call_last_at: new Date().toISOString(),
+      });
+      toast.success(`Call disposition saved for ${callContact.first_name}.`, "Call logged");
+      setCallContact(null);
+      loadContacts();
+    } catch {
+      toast.error("Failed to save call disposition.", "Error");
+    } finally {
+      setSavingDisposition(false);
+    }
+  };
+
   const handleDeleteInvestor = async (id: string) => {
     if (!confirm("Delete this investor and all their mappings?")) return;
     try {
@@ -380,88 +421,92 @@ export default function Contacts() {
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
           {/* Row 1 — tab cards */}
-          <div style={{ display: "flex", gap: 12 }}>
-            {/* Contacts tab */}
-            <button
-              type="button"
-              onClick={() => handleTabChange("contacts")}
-              style={{
-                flex: 1, display: "flex", alignItems: "center", gap: 14,
-                padding: "16px 20px", borderRadius: 16, cursor: "pointer",
-                border: tab === "contacts" ? "1.5px solid #b8d0f0" : "1.5px solid #e8eef5",
-                background: tab === "contacts"
-                  ? "linear-gradient(135deg, #f0f6ff 0%, #e8f0fb 100%)"
-                  : "#fff",
-                boxShadow: tab === "contacts"
-                  ? "0 4px 16px rgba(23, 80, 137, 0.08)"
-                  : "0 2px 8px rgba(17,34,68,0.04)",
-                transition: "all 0.15s ease",
-                textAlign: "left",
-              }}
-            >
-              <div style={{
-                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: tab === "contacts" ? "#175089" : "#eaf2ff",
-                color: tab === "contacts" ? "#fff" : "#175089",
-              }}>
-                <Users size={17} />
+          {/* SDR Activity Cards — replace single large contacts count */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {/* Prospects card */}
+            <div style={{
+              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
+              padding: "14px 18px", borderRadius: 14,
+              border: "1.5px solid #b8d0f0",
+              background: "linear-gradient(135deg, #f0f6ff 0%, #e8f0fb 100%)",
+              boxShadow: "0 4px 16px rgba(23, 80, 137, 0.08)",
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#175089", color: "#fff" }}>
+                <Users size={16} />
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Contacts</span>
-                  <span style={{
-                    fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
-                    background: tab === "contacts" ? "#175089" : "#e8f0fb",
-                    color: tab === "contacts" ? "#fff" : "#175089",
-                  }}>{contactsTotal}</span>
-                </div>
-                <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 2 }}>
-                  Stakeholders, personas, and outreach readiness
-                </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#0f2744", lineHeight: 1 }}>{contactsTotal}</div>
+                <div style={{ fontSize: 11, color: "#7a96b0", marginTop: 2, fontWeight: 600 }}>Prospects</div>
               </div>
-            </button>
-
-            {/* Angel Mapping tab — hidden */}
-            {false && <button
-              type="button"
-              onClick={() => handleTabChange("angel-mapping")}
-              style={{
-                flex: 1, display: "flex", alignItems: "center", gap: 14,
-                padding: "16px 20px", borderRadius: 16, cursor: "pointer",
-                border: tab === "angel-mapping" ? "1.5px solid #b2e0dc" : "1.5px solid #e8eef5",
-                background: tab === "angel-mapping"
-                  ? "linear-gradient(135deg, #f0faf9 0%, #e6f5f4 100%)"
-                  : "#fff",
-                boxShadow: tab === "angel-mapping"
-                  ? "0 4px 16px rgba(23, 123, 117, 0.08)"
-                  : "0 2px 8px rgba(17,34,68,0.04)",
-                transition: "all 0.15s ease",
-                textAlign: "left",
-              }}
-            >
-              <div style={{
-                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: tab === "angel-mapping" ? "#177b75" : "#e7f7f5",
-                color: tab === "angel-mapping" ? "#fff" : "#177b75",
-              }}>
-                <Network size={17} />
+            </div>
+            {/* Calls made */}
+            <div style={{
+              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
+              padding: "14px 18px", borderRadius: 14,
+              border: "1.5px solid #bfdbfe",
+              background: "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)",
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#2563eb", color: "#fff" }}>
+                <PhoneCall size={16} />
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Angel Mapping</span>
-                  <span style={{
-                    fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
-                    background: tab === "angel-mapping" ? "#177b75" : "#e7f7f5",
-                    color: tab === "angel-mapping" ? "#fff" : "#177b75",
-                  }}>{mappings.length}</span>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#1e3a8a", lineHeight: 1 }}>
+                  {contacts.filter(c => c.call_status && c.call_status !== "none").length}
                 </div>
-                <div style={{ fontSize: 12, color: "#7a96b0", marginTop: 2 }}>
-                  Warm intro paths from investors into target accounts
-                </div>
+                <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2, fontWeight: 600 }}>Calls Logged</div>
               </div>
-            </button>}
+            </div>
+            {/* Emails opened */}
+            <div style={{
+              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
+              padding: "14px 18px", borderRadius: 14,
+              border: "1.5px solid #bbf7d0",
+              background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)",
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#16a34a", color: "#fff" }}>
+                <Mail size={16} />
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", lineHeight: 1 }}>
+                  {contacts.filter(c => (c.email_open_count ?? 0) > 0).length}
+                </div>
+                <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2, fontWeight: 600 }}>Emails Opened</div>
+              </div>
+            </div>
+            {/* LinkedIn connected */}
+            <div style={{
+              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
+              padding: "14px 18px", borderRadius: 14,
+              border: "1.5px solid #e9d5ff",
+              background: "linear-gradient(135deg, #fdf4ff 0%, #f3e8ff 100%)",
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#7c3aed", color: "#fff" }}>
+                <Link2 size={16} />
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#4c1d95", lineHeight: 1 }}>
+                  {contacts.filter(c => c.linkedin_status && c.linkedin_status !== "none").length}
+                </div>
+                <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2, fontWeight: 600 }}>LinkedIn Active</div>
+              </div>
+            </div>
+            {/* Meeting booked */}
+            <div style={{
+              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
+              padding: "14px 18px", borderRadius: 14,
+              border: "1.5px solid #fde68a",
+              background: "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)",
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#d97706", color: "#fff" }}>
+                <Clock size={16} />
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#78350f", lineHeight: 1 }}>
+                  {contacts.filter(c => c.sequence_status === "meeting_booked").length}
+                </div>
+                <div style={{ fontSize: 11, color: "#d97706", marginTop: 2, fontWeight: 600 }}>Meetings Booked</div>
+              </div>
+            </div>
           </div>
 
           {/* Row 2 — contextual action bar */}
@@ -778,6 +823,10 @@ export default function Contacts() {
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Stage</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Progress</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Timezone</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email Status</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Call</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>LinkedIn</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>AE</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>SDR</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Added</th>
@@ -895,6 +944,84 @@ export default function Contacts() {
                               );
                             })()}
                           </td>
+                          {/* Timezone */}
+                          <td>
+                            {c.timezone ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#4a6580" }}>
+                                <Globe size={11} />
+                                <span style={{ whiteSpace: "nowrap" }}>{c.timezone}</span>
+                              </div>
+                            ) : (
+                              <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>
+                            )}
+                          </td>
+                          {/* Email status */}
+                          <td>
+                            {(() => {
+                              const opens = c.email_open_count ?? 0;
+                              if (opens > 0) {
+                                return (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
+                                      <Mail size={10} /> Opened ×{opens}
+                                    </span>
+                                    {c.email_last_opened_at && (
+                                      <span style={{ fontSize: 11, color: "#7a8ea4" }}>
+                                        {new Date(c.email_last_opened_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              if (c.sequence_status === "sent" || c.sequence_status === "queued_instantly") {
+                                return <span style={{ fontSize: 11, color: "#7a8ea4" }}>Sent</span>;
+                              }
+                              return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
+                            })()}
+                          </td>
+                          {/* Call status */}
+                          <td>
+                            {(() => {
+                              const cs = c.call_status;
+                              const disposition = c.call_disposition;
+                              if (!cs || cs === "none") return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
+                              const callColors: Record<string, { bg: string; border: string; color: string }> = {
+                                connected: { bg: "#f0fdf4", border: "#bbf7d0", color: "#16a34a" },
+                                voicemail: { bg: "#fef9c3", border: "#fde68a", color: "#92400e" },
+                                attempted: { bg: "#f0f6ff", border: "#bfdbfe", color: "#1d4ed8" },
+                                callback: { bg: "#fdf4ff", border: "#e9d5ff", color: "#7c3aed" },
+                              };
+                              const style = callColors[cs] ?? { bg: "#f1f5f9", border: "#e2e8f0", color: "#475569" };
+                              return (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: style.color, background: style.bg, border: `1px solid ${style.border}`, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
+                                    <PhoneCall size={10} /> {cs.charAt(0).toUpperCase() + cs.slice(1)}
+                                  </span>
+                                  {disposition && (
+                                    <span style={{ fontSize: 11, color: "#7a8ea4" }}>{disposition.replace(/_/g, " ")}</span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          {/* LinkedIn status */}
+                          <td>
+                            {(() => {
+                              const ls = c.linkedin_status;
+                              if (!ls || ls === "none") return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
+                              const liColors: Record<string, { bg: string; border: string; color: string }> = {
+                                sent: { bg: "#f0f6ff", border: "#bfdbfe", color: "#1d4ed8" },
+                                accepted: { bg: "#f0fdf4", border: "#bbf7d0", color: "#16a34a" },
+                                replied: { bg: "#fdf4ff", border: "#e9d5ff", color: "#7c3aed" },
+                              };
+                              const style = liColors[ls] ?? { bg: "#f1f5f9", border: "#e2e8f0", color: "#475569" };
+                              return (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: style.color, background: style.bg, border: `1px solid ${style.border}`, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
+                                  <Link2 size={10} /> {ls.charAt(0).toUpperCase() + ls.slice(1)}
+                                </span>
+                              );
+                            })()}
+                          </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             <AssignDropdown
                               entityType="contact"
@@ -937,12 +1064,7 @@ export default function Contacts() {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (!c.phone) return;
-                                  if (window.__aircallDial) {
-                                    window.__aircallDial(c.phone, `${c.first_name} ${c.last_name}`.trim());
-                                    toast.info(`Calling ${c.first_name || c.email || "prospect"}…`, "Aircall");
-                                  } else {
-                                    window.location.href = `tel:${c.phone}`;
-                                  }
+                                  openCallSidebar(c);
                                 }}
                                 style={{
                                   height: 38,
@@ -1683,6 +1805,154 @@ export default function Contacts() {
         onClose={() => setShowAddProspect(false)}
         onCreated={loadContacts}
       />
+
+      {/* ── Call Disposition Sidebar ─────────────────────────────────── */}
+      {callContact && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 200,
+          display: "flex", justifyContent: "flex-end",
+        }}>
+          {/* Dim backdrop — clicking it does NOT close (must fill disposition first) */}
+          <div style={{ flex: 1, background: "rgba(10,20,40,0.35)" }} />
+
+          {/* Panel */}
+          <div style={{
+            width: 400, maxWidth: "100vw",
+            background: "#fff",
+            borderLeft: "1px solid #d5e3ef",
+            boxShadow: "-24px 0 48px rgba(14,38,66,0.16)",
+            display: "flex", flexDirection: "column",
+            overflowY: "auto",
+          }}>
+            {/* Header */}
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0f2744,#175089)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <PhoneCall size={16} color="#fff" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Call in progress</div>
+                    <div style={{ fontSize: 12, color: "#7a96b0" }}>{callContact.first_name} {callContact.last_name}</div>
+                  </div>
+                </div>
+                <span style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
+                  Disposition required
+                </span>
+              </div>
+            </div>
+
+            {/* Pre-call intel */}
+            <div style={{ padding: "16px 22px", borderBottom: "1px solid #e8eef5" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Pre-call intel</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {callContact.title && (
+                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
+                    <span style={{ fontWeight: 600 }}>Title:</span> {callContact.title}
+                  </div>
+                )}
+                {callContact.phone && (
+                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
+                    <span style={{ fontWeight: 600 }}>Phone:</span>{" "}
+                    <a href={`tel:${callContact.phone}`} style={{ color: "#175089" }}>{callContact.phone}</a>
+                  </div>
+                )}
+                {callContact.timezone && (
+                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
+                    <span style={{ fontWeight: 600 }}>Timezone:</span> {callContact.timezone}
+                  </div>
+                )}
+                {callContact.outreach_lane && (
+                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
+                    <span style={{ fontWeight: 600 }}>Lane:</span> {callContact.outreach_lane.replace(/_/g, " ")}
+                  </div>
+                )}
+                {callContact.conversation_starter && (
+                  <div style={{ fontSize: 13, color: "#2c4a63", background: "#f0f6ff", border: "1px solid #c8daf0", borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 11, textTransform: "uppercase", color: "#546679", letterSpacing: "0.05em" }}>Conversation starter</div>
+                    {callContact.conversation_starter}
+                  </div>
+                )}
+                {callContact.personalization_notes && (
+                  <div style={{ fontSize: 13, color: "#2c4a63", background: "#f7fbff", border: "1px solid #dbe6f2", borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 11, textTransform: "uppercase", color: "#546679", letterSpacing: "0.05em" }}>Personalization notes</div>
+                    {callContact.personalization_notes}
+                  </div>
+                )}
+                {!callContact.conversation_starter && !callContact.personalization_notes && !callContact.title && (
+                  <div style={{ fontSize: 13, color: "#7a96b0", fontStyle: "italic" }}>No pre-call intel available for this prospect.</div>
+                )}
+              </div>
+            </div>
+
+            {/* Disposition form */}
+            <div style={{ padding: "16px 22px", flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Log this call</div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Call outcome</label>
+                <select
+                  value={callStatus}
+                  onChange={(e) => setCallStatus(e.target.value)}
+                  style={{ width: "100%", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none" }}
+                >
+                  <option value="attempted">Attempted — no answer</option>
+                  <option value="voicemail">Left voicemail</option>
+                  <option value="connected">Connected — spoke with prospect</option>
+                  <option value="callback">Requested callback</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Disposition *</label>
+                <select
+                  value={callDisposition}
+                  onChange={(e) => setCallDisposition(e.target.value)}
+                  style={{ width: "100%", border: `1px solid ${callDisposition ? "#c8d9e8" : "#f87171"}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, color: callDisposition ? "#0f2744" : "#7a96b0", background: "#fff", outline: "none" }}
+                >
+                  <option value="">— Select disposition —</option>
+                  <option value="interested">Interested — follow up</option>
+                  <option value="callback">Schedule callback</option>
+                  <option value="not_interested">Not interested</option>
+                  <option value="wrong_number">Wrong number / bad contact</option>
+                  <option value="no_answer">No answer — will retry</option>
+                </select>
+                {!callDisposition && (
+                  <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>Required before closing</div>
+                )}
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes</label>
+                <textarea
+                  value={callNotes}
+                  onChange={(e) => setCallNotes(e.target.value)}
+                  placeholder="What came up on the call? Any objections or signals…"
+                  rows={4}
+                  style={{ width: "100%", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <button
+                onClick={() => void saveCallDisposition()}
+                disabled={!callDisposition || savingDisposition}
+                style={{
+                  width: "100%", padding: "11px 0", borderRadius: 12, border: "none",
+                  background: callDisposition ? "linear-gradient(135deg,#0f2744,#175089)" : "#e8eef5",
+                  color: callDisposition ? "#fff" : "#9aafbe",
+                  fontSize: 14, fontWeight: 700,
+                  cursor: callDisposition ? "pointer" : "not-allowed",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  opacity: savingDisposition ? 0.7 : 1,
+                }}
+              >
+                {savingDisposition ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                {savingDisposition ? "Saving…" : "Save & close"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

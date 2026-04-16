@@ -40,6 +40,7 @@ DEFAULT_STAGE_PROBABILITIES: dict[str, float] = {
 }
 PROPOSAL_STAGES = {"poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"}
 HOT_MEETING_MARKERS = {"meeting_booked", "call booked", "demo booked"}
+REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 
 
 class SalesSummary(BaseModel):
@@ -395,24 +396,36 @@ async def sales_dashboard(
             ).where(Activity.created_at >= window_start)
         )
     ).all()
+    # Apply rep filter on activities by checking ownership
+    if filter_rep_ids:
+        activity_rows = [
+            row for row in activity_rows
+            if _activity_rep_id(row, deal_owner=deal_owner, contact_owner=contact_owner) in filter_rep_ids
+        ]
     if filter_geographies:
         activity_rows = [row for row in activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
 
+    # Meetings: use scheduled_at as the primary signal (when the meeting actually happened)
+    # Fall back to created_at only when scheduled_at is missing
     meetings_rows = (
         await session.execute(
             select(
                 Meeting.deal_id,
+                Meeting.company_id,
                 Meeting.scheduled_at,
                 Meeting.created_at,
                 Meeting.status,
+                Meeting.external_source,
             ).where(
                 or_(
                     Meeting.scheduled_at >= window_start,
-                    Meeting.created_at >= window_start,
+                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start),
                 )
             )
         )
     ).all()
+    if filter_rep_ids:
+        meetings_rows = [row for row in meetings_rows if deal_owner.get(row.deal_id) in filter_rep_ids]
     if filter_geographies:
         meetings_rows = [row for row in meetings_rows if row.deal_id in allowed_deal_ids]
 
@@ -583,9 +596,10 @@ async def sales_dashboard(
     for row in meetings_rows:
         if row.status == "cancelled":
             continue
-        row_rep_id = deal_owner.get(row.deal_id)
-        if filter_rep_ids and row_rep_id not in filter_rep_ids:
+        source = str(row.external_source or "").strip().lower()
+        if source not in REAL_MEETING_SOURCES:
             continue
+        row_rep_id = deal_owner.get(row.deal_id)
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         meeting_bucket = rep_activity.setdefault(
             rep_key,
@@ -694,7 +708,11 @@ async def sales_dashboard(
 
     leads_count = sum(1 for row in contact_rows if row.created_at >= window_start)
     meeting_stage_contacts = sum(1 for row in contact_rows if _contact_meeting_signal(row))
-    meetings_count = sum(1 for row in meetings_rows if row.status != "cancelled")
+    meetings_count = sum(
+        1
+        for row in meetings_rows
+        if row.status != "cancelled" and str(row.external_source or "").strip().lower() in REAL_MEETING_SOURCES
+    )
     proposal_count = sum(
         1
         for row in deal_rows
@@ -706,20 +724,19 @@ async def sales_dashboard(
         if row.stage == "closed_won" and row.updated_at >= window_start
     )
 
-    meeting_volume = max(meeting_stage_contacts, meetings_count)
     funnel_rows = [
         FunnelStep(key="lead", label="Lead", count=leads_count),
         FunnelStep(
             key="meeting",
             label="Meeting",
-            count=meeting_volume,
-            conversion_from_previous=_conversion(leads_count, meeting_volume),
+            count=meetings_count,
+            conversion_from_previous=_conversion(leads_count, meetings_count),
         ),
         FunnelStep(
             key="proposal",
             label="Proposal",
             count=proposal_count,
-            conversion_from_previous=_conversion(meeting_volume, proposal_count),
+            conversion_from_previous=_conversion(meetings_count, proposal_count),
         ),
         FunnelStep(
             key="closed_won",

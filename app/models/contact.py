@@ -41,6 +41,17 @@ class Contact(ContactBase, table=True):
     conversation_starter: Optional[str] = None
     personalization_notes: Optional[str] = None
     talking_points: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    # Per-channel tracking
+    email_open_count: int = Field(default=0)
+    email_click_count: int = Field(default=0)
+    email_last_opened_at: Optional[datetime] = None
+    call_status: Optional[str] = None   # none | attempted | connected | voicemail | callback
+    call_disposition: Optional[str] = None  # interested | not_interested | callback | wrong_number | no_answer
+    call_notes: Optional[str] = None
+    call_last_at: Optional[datetime] = None
+    linkedin_status: Optional[str] = None  # none | sent | accepted | replied
+    linkedin_last_at: Optional[datetime] = None
+    timezone: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -76,6 +87,17 @@ class ContactRead(ContactBase):
     tracking_score: Optional[int] = None
     tracking_label: Optional[str] = None
     tracking_last_activity_at: Optional[datetime] = None
+    # Per-channel tracking
+    email_open_count: int = 0
+    email_click_count: int = 0
+    email_last_opened_at: Optional[datetime] = None
+    call_status: Optional[str] = None
+    call_disposition: Optional[str] = None
+    call_notes: Optional[str] = None
+    call_last_at: Optional[datetime] = None
+    linkedin_status: Optional[str] = None
+    linkedin_last_at: Optional[datetime] = None
+    timezone: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -107,3 +129,13 @@ class ContactUpdate(SQLModel):
     conversation_starter: Optional[str] = None
     personalization_notes: Optional[str] = None
     talking_points: Optional[Any] = None
+    email_open_count: Optional[int] = None
+    email_click_count: Optional[int] = None
+    email_last_opened_at: Optional[datetime] = None
+    call_status: Optional[str] = None
+    call_disposition: Optional[str] = None
+    call_notes: Optional[str] = None
+    call_last_at: Optional[datetime] = None
+    linkedin_status: Optional[str] = None
+    linkedin_last_at: Optional[datetime] = None
+    timezone: Optional[str] = None
