@@ -598,6 +598,7 @@ export default function AccountSourcingCompanyDetail() {
   const [domainSaving, setDomainSaving] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
+  const [existingCompanyDeals, setExistingCompanyDeals] = useState<Array<{ id: string; name: string; stage?: string }>>([]);
   const [dealForm, setDealForm] = useState({
     name: "",
     value: "",
@@ -846,7 +847,17 @@ export default function AccountSourcingCompanyDetail() {
     setCreatingDeal(true);
     setDealError("");
     try {
-      await dealsApi.create({
+      const normalizedRequestedName = dealForm.name.trim().toLowerCase();
+      const duplicate = existingCompanyDeals.find(
+        (deal) => deal.name.trim().toLowerCase() === normalizedRequestedName
+      );
+      if (duplicate) {
+        toast.info(`Opened "${duplicate.name}" instead of creating a duplicate deal.`, "Deal already exists");
+        setShowDealModal(false);
+        nav(`/deals/${duplicate.id}`);
+        return;
+      }
+      const createdDeal = await dealsApi.create({
         company_id: company.id,
         name: dealForm.name.trim(),
         stage: dealForm.stage,
@@ -855,6 +866,8 @@ export default function AccountSourcingCompanyDetail() {
       });
       setShowDealModal(false);
       setDealForm({ name: "", value: "", stage: "discovery", close_date_est: "" });
+      toast.success(`${createdDeal.name} was created and linked to ${company.name}.`, "Deal created");
+      nav(`/deals/${createdDeal.id}`);
     } catch (error) {
       setDealError(error instanceof Error ? error.message : "Failed to create deal");
     } finally {
@@ -883,6 +896,19 @@ export default function AccountSourcingCompanyDetail() {
   const researchFingerprint = `${company.enriched_at || ""}|${company.icp_score ?? ""}|${company.domain}|${cacheTs(cache, "icp_analysis") || ""}|${cacheTs(cache, "research_quality") || ""}`;
 
   const tier = company.icp_tier || "cold";
+
+  useEffect(() => {
+    if (!showDealModal || !company) return;
+    setDealError("");
+    setDealForm((current) => ({
+      ...current,
+      name: current.name.trim() ? current.name : `${company.name} - Discovery`,
+    }));
+    dealsApi
+      .list(0, 25, company.id)
+      .then((rows) => setExistingCompanyDeals(rows.map((deal) => ({ id: deal.id, name: deal.name, stage: deal.stage }))))
+      .catch(() => setExistingCompanyDeals([]));
+  }, [showDealModal, company]);
 
   return (
     <div style={pageStyle}>
@@ -1850,6 +1876,34 @@ export default function AccountSourcingCompanyDetail() {
               placeholder="Deal name"
               style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
             />
+            {existingCompanyDeals.length ? (
+              <div style={{ display: "grid", gap: 8, padding: "10px 12px", borderRadius: 12, background: "#f8fbff", border: `1px solid ${colors.border}` }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.35 }}>
+                  EXISTING DEALS
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {existingCompanyDeals.map((deal) => (
+                    <button
+                      key={deal.id}
+                      type="button"
+                      onClick={() => nav(`/deals/${deal.id}`)}
+                      style={{
+                        borderRadius: 999,
+                        border: "1px solid #dce8f4",
+                        background: "#fff",
+                        color: "#1f5ecc",
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {deal.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <input
                 value={dealForm.value}

@@ -20,6 +20,7 @@ import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
+import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import AddProspectModal from "./contacts/AddProspectModal";
 import { ANGEL_SURFACE, ANGEL_TEXT, PERSONA_LABEL, PERSONA_STYLE, STRENGTH_LABEL, STRENGTH_STYLE } from "./contacts/constants";
 import { filterAngelMappings, getMissingCompanyKey, groupAngelMappingsByCompany } from "./contacts/utils";
@@ -88,6 +89,7 @@ export default function Contacts() {
   const [resetting, setResetting] = useState(false);
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
+  const [taskContact, setTaskContact] = useState<Contact | null>(null);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
@@ -335,8 +337,19 @@ export default function Contacts() {
     }
     const contactName = `${contact.first_name} ${contact.last_name}`.trim() || contact.email || "Prospect";
     try {
+      const desiredName = `${contact.company_name ?? "Account"} - ${contactName}`;
+      const existingDeals = await dealsApi.list(0, 50, contact.company_id);
+      const duplicate = existingDeals.find(
+        (deal) => deal.name.trim().toLowerCase() === desiredName.trim().toLowerCase()
+      );
+      if (duplicate) {
+        await dealsApi.addContact(duplicate.id, contact.id, "champion");
+        toast.info(`Opened existing deal "${duplicate.name}" instead of creating a duplicate.`, "Deal already exists");
+        navigate(`/deals/${duplicate.id}`);
+        return;
+      }
       const deal = await dealsApi.create({
-        name: `${contact.company_name ?? "Account"} - ${contactName}`,
+        name: desiredName,
         company_id: contact.company_id,
         assigned_to_id: contact.assigned_to_id || undefined,
         stage: "qualified_lead",
@@ -810,33 +823,14 @@ export default function Contacts() {
                                 ? <span style={{ fontSize: 13, color: "#1e3a52", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
                                 : <span className="text-[#96a7ba]">-</span>
                               }
-                              <div style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={(e) => e.stopPropagation()}>
-                                {c.phone && (
-                                  <a
-                                    href={`tel:${c.phone}`}
-                                    title={c.phone}
-                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, color: "#175089", textDecoration: "none", background: "#eaf2ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 7px" }}
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      if (window.__aircallDial) window.__aircallDial(c.phone!, `${c.first_name} ${c.last_name}`);
-                                    }}
-                                  >
-                                    <Phone size={11} />
-                                    {c.phone}
-                                  </a>
-                                )}
-                                {c.linkedin_url && (
-                                  <a
-                                    href={c.linkedin_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    title="LinkedIn profile"
-                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, color: "#0a66c2", textDecoration: "none", background: "#e8f2ff", border: "1px solid #b8d4f0", borderRadius: 6, padding: "2px 7px" }}
-                                  >
-                                    <Link2 size={11} />
-                                    LinkedIn
-                                  </a>
-                                )}
+                              <div style={{ color: "#7a8ea4", fontSize: 11.5 }}>
+                                {c.phone && c.linkedin_url
+                                  ? "Phone and LinkedIn ready"
+                                  : c.phone
+                                    ? "Phone ready"
+                                    : c.linkedin_url
+                                      ? "LinkedIn ready"
+                                      : "No direct channel saved"}
                               </div>
                             </div>
                           </td>
@@ -936,7 +930,67 @@ export default function Contacts() {
                             </div>
                           </td>
                           <td onClick={(e) => e.stopPropagation()}>
-                            <div style={{ position: "relative", display: "inline-flex" }}>
+                            <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                              <button
+                                type="button"
+                                disabled={!c.phone}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!c.phone) return;
+                                  if (window.__aircallDial) {
+                                    window.__aircallDial(c.phone, `${c.first_name} ${c.last_name}`.trim());
+                                    toast.info(`Calling ${c.first_name || c.email || "prospect"}…`, "Aircall");
+                                  } else {
+                                    window.location.href = `tel:${c.phone}`;
+                                  }
+                                }}
+                                style={{
+                                  height: 38,
+                                  borderRadius: 10,
+                                  border: "1px solid #c8daf0",
+                                  background: c.phone ? "#eaf2ff" : "#f6f8fb",
+                                  color: c.phone ? "#175089" : "#9aa8b7",
+                                  padding: "0 10px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  cursor: c.phone ? "pointer" : "default",
+                                  fontSize: 12.5,
+                                  fontWeight: 700,
+                                }}
+                                title={c.phone ? c.phone : "No phone number"}
+                              >
+                                <Phone size={13} />
+                                Call
+                              </button>
+                              <a
+                                href={c.linkedin_url || undefined}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!c.linkedin_url) e.preventDefault();
+                                }}
+                                style={{
+                                  height: 38,
+                                  borderRadius: 10,
+                                  border: "1px solid #b8d4f0",
+                                  background: c.linkedin_url ? "#e8f2ff" : "#f6f8fb",
+                                  color: c.linkedin_url ? "#0a66c2" : "#9aa8b7",
+                                  padding: "0 10px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  cursor: c.linkedin_url ? "pointer" : "default",
+                                  fontSize: 12.5,
+                                  fontWeight: 700,
+                                  textDecoration: "none",
+                                }}
+                                title={c.linkedin_url ? "Open LinkedIn profile" : "No LinkedIn profile"}
+                              >
+                                <Link2 size={13} />
+                                LinkedIn
+                              </a>
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -986,6 +1040,17 @@ export default function Contacts() {
                                     style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}
                                   >
                                     <Sparkles className="h-3.5 w-3.5" />Outreach
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setTaskContact(c);
+                                      setOpenActionsId(null);
+                                    }}
+                                    className="crm-button soft"
+                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}
+                                  >
+                                    <Plus className="h-3.5 w-3.5" />Manual task
                                   </button>
                                   <button
                                     type="button"
@@ -1440,6 +1505,17 @@ export default function Contacts() {
 
       {/* Outreach drawer (contacts tab) */}
       <OutreachDrawer contact={selectedContact} onClose={() => setSelectedContact(null)} />
+
+      {taskContact ? (
+        <TaskCenterModal
+          isOpen={Boolean(taskContact)}
+          onClose={() => setTaskContact(null)}
+          entityType="contact"
+          entityId={taskContact.id}
+          entityLabel={`${taskContact.first_name} ${taskContact.last_name}`.trim() || taskContact.email || "Prospect"}
+          onChanged={() => loadContacts()}
+        />
+      ) : null}
 
       {/* Global sequence timing settings */}
       <SequenceSettingsModal
