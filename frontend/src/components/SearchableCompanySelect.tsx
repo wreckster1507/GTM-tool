@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Check, ChevronDown, Loader2, Search } from "lucide-react";
-import { accountSourcingApi } from "../lib/api";
+import { accountSourcingApi, companiesApi } from "../lib/api";
 import type { Company } from "../types";
 
 type SearchableCompanySelectProps = {
@@ -24,14 +24,15 @@ export default function SearchableCompanySelect({
 }: SearchableCompanySelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Company[]>([]);
+  const [catalog, setCatalog] = useState<Company[]>([]);
   const [loading, setLoading] = useState(false);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedCompany = useMemo(
-    () => [...results, ...companies].find((company) => company.id === value),
-    [companies, results, value],
+    () => [...catalog, ...companies].find((company) => company.id === value),
+    [catalog, companies, value],
   );
 
   useEffect(() => {
@@ -61,48 +62,54 @@ export default function SearchableCompanySelect({
     if (!open) return;
 
     let cancelled = false;
-    setLoading(true);
-    const handle = window.setTimeout(async () => {
+    if (catalogLoaded) return;
+
+    const loadCatalog = async () => {
+      setLoading(true);
       try {
-        const response = await accountSourcingApi.listCompaniesPaginated({
-          skip: 0,
-          limit: 40,
-          q: query.trim() || undefined,
-        });
-        let next = response.items;
-        if (selectedCompany && !next.some((company) => company.id === selectedCompany.id)) {
-          next = [selectedCompany, ...next];
+        const [crmCompanies, sourcingCompanies] = await Promise.all([
+          companiesApi.list(0, 1000).catch(() => []),
+          accountSourcingApi.listCompanies(0, 1000).catch(() => []),
+        ]);
+        const merged = new Map<string, Company>();
+        for (const company of [...crmCompanies, ...sourcingCompanies, ...companies]) {
+          if (!company?.id) continue;
+          merged.set(company.id, company);
         }
         if (!cancelled) {
-          setResults(next);
+          setCatalog(Array.from(merged.values()));
+          setCatalogLoaded(true);
         }
       } catch {
         if (!cancelled) {
-          const needle = query.trim().toLowerCase();
-          const fallback = companies
-            .filter((company) => !needle || company.name.toLowerCase().includes(needle))
-            .slice(0, 40);
-          setResults(
-            selectedCompany && !fallback.some((company) => company.id === selectedCompany.id)
-              ? [selectedCompany, ...fallback]
-              : fallback,
-          );
+          setCatalog(companies);
+          setCatalogLoaded(true);
         }
       } finally {
         if (!cancelled) {
           setLoading(false);
         }
       }
-    }, 120);
+    };
+
+    void loadCatalog();
 
     return () => {
       cancelled = true;
-      window.clearTimeout(handle);
     };
-  }, [companies, open, query, selectedCompany]);
+  }, [catalogLoaded, companies, open]);
+
+  const results = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    let next = catalog.filter((company) => !needle || company.name.toLowerCase().includes(needle));
+    if (selectedCompany && !next.some((company) => company.id === selectedCompany.id)) {
+      next = [selectedCompany, ...next];
+    }
+    return next.slice(0, 50);
+  }, [catalog, query, selectedCompany]);
 
   const selectCompany = (companyId?: string) => {
-    const company = [...results, ...companies].find((entry) => entry.id === companyId);
+    const company = [...catalog, ...companies].find((entry) => entry.id === companyId);
     onChange(companyId);
     setQuery(company?.name ?? "");
     setOpen(false);
