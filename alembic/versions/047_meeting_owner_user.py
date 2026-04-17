@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "047"
-down_revision = "046_commit_to_deal_and_priority_tag"
+down_revision = "046"
 branch_labels = None
 depends_on = None
 
