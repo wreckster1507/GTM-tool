@@ -898,15 +898,11 @@ export default function Contacts() {
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>LinkedIn</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>AE</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>SDR</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Added</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {contacts.map((c) => {
-                        const enrichment = (c.enrichment_data || {}) as Record<string, unknown>;
-                        const uploadedBy = typeof enrichment.uploaded_by === "string" ? enrichment.uploaded_by : undefined;
-                        const uploadedAt = typeof enrichment.uploaded_at === "string" ? enrichment.uploaded_at : c.created_at;
                         return (
                         <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
                           <td>
@@ -917,7 +913,7 @@ export default function Contacts() {
                               <div className="min-w-0">
                                 <p className="font-bold text-[#25384d] truncate">{c.first_name} {c.last_name}</p>
                                 <p className="text-[13px] text-[#7a8ea4] mt-0.5">
-                                  {uploadedBy ? `Added by ${uploadedBy} · ${new Date(uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : (c.seniority ?? "-")}
+                                  {c.seniority ?? "-"}
                                 </p>
                               </div>
                             </div>
@@ -1178,10 +1174,10 @@ export default function Contacts() {
                           <td>
                             <div style={{ display: "grid", gap: 3 }}>
                               <span style={{ fontSize: 12, fontWeight: 700, color: "#1e3a52" }}>
-                                {uploadedBy ? uploadedBy : "Imported / synced"}
+                                {c.sdr_name || "Imported / synced"}
                               </span>
                               <span style={{ fontSize: 11.5, color: "#7a8ea4" }}>
-                                {new Date(uploadedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                {new Date(c.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                               </span>
                             </div>
                           </td>

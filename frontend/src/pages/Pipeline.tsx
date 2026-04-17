@@ -580,7 +580,7 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority: "normal", assigned_to_id: "", geography: "", tags: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority: "normal", assigned_to_id: "", geography: "", tags: "", source: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [companySearch, setCompanySearch] = useState("");
@@ -608,6 +608,10 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
       setError("Deal name is required");
       return;
     }
+    if (!form.source) {
+      setError("Deal source is required");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -621,6 +625,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         priority: form.priority,
         assigned_to_id: form.assigned_to_id || undefined,
         geography: form.geography || undefined,
+        source: form.source || undefined,
         tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
       } as Partial<Deal>);
       onCreated(deal);
@@ -720,6 +725,25 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
               <input type="date" style={modalInputStyle} value={form.close_date_est} onChange={(event) => setForm((current) => ({ ...current, close_date_est: event.target.value }))} />
             </div>
             <input style={modalInputStyle} placeholder="Tags, comma separated" value={form.tags} onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))} />
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}>
+                Deal Source <span style={{ color: "#dc2626" }}>*</span>
+              </label>
+              <select
+                style={{ ...modalInputStyle, background: form.source ? "#fff" : "#fffbf5", border: form.source ? "1px solid #dbe6f2" : "1.5px solid #fbbf24", color: form.source ? "#1f2d3d" : "#92400e" }}
+                value={form.source}
+                onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))}
+              >
+                <option value="">Select source (required)</option>
+                <option value="inbound">Inbound</option>
+                <option value="outbound">Outbound</option>
+                <option value="referral">Referral</option>
+                <option value="partner">Partner</option>
+                <option value="event">Event</option>
+                <option value="cold_call">Cold Call</option>
+                <option value="linkedin">LinkedIn</option>
+              </select>
+            </div>
           </div>
 
           {error && <p style={{ fontSize: 12, color: "#b94a24", fontWeight: 600, marginTop: 12 }}>{error}</p>}
@@ -960,10 +984,19 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
           {(contact.assigned_to_name || contact.sdr_name) ? <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(contact.assigned_to_name || contact.sdr_name || "")}`} style={{ width: 20, height: 20 }}>{getInitials(contact.assigned_to_name || contact.sdr_name || "RP")}</div> : <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#e8eef5" }} />}
           <div style={{ fontSize: 10, color: "#7a8ca1" }}>{contact.sequence_status || contact.instantly_status || "ready"}</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#7a8ca1" }}>
-          {contact.email && <Mail size={11} />}
-          {contact.phone && <Phone size={11} />}
-          {contact.linkedin_url && <Globe size={11} />}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {contact.email
+            ? <Mail size={11} color="#7a8ca1" />
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Email</span>
+          }
+          {contact.phone
+            ? <Phone size={11} color="#7a8ca1" />
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Phone</span>
+          }
+          {contact.linkedin_url
+            ? <Globe size={11} color="#7a8ca1" />
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+LinkedIn</span>
+          }
         </div>
       </div>
     </button>
@@ -1217,7 +1250,10 @@ function ProspectDetailDrawer({
                       <a href={`mailto:${currentContact.email}`} style={{ color: "#1f6feb", fontSize: 12, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>Send</a>
                     </>
                   ) : (
-                    <span style={{ fontSize: 13, color: "#94a3b8" }}>No email yet</span>
+                    <>
+                      <span style={{ flex: 1, fontSize: 13, color: "#94a3b8" }}>No email yet</span>
+                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
+                    </>
                   )}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1228,20 +1264,33 @@ function ProspectDetailDrawer({
                       <button type="button" onClick={() => window.__aircallDial?.(currentContact.phone!, fullName || undefined)} style={{ color: "#1f8f5f", fontSize: 12, fontWeight: 700, background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>Call</button>
                     </>
                   ) : (
-                    <span style={{ fontSize: 13, color: "#94a3b8" }}>No phone yet</span>
+                    <>
+                      <span style={{ flex: 1, fontSize: 13, color: "#94a3b8" }}>No phone yet</span>
+                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
+                    </>
                   )}
                 </div>
-                {currentContact.linkedin_url ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Globe size={14} color="#6b7f95" />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Globe size={14} color="#6b7f95" />
+                  {currentContact.linkedin_url ? (
                     <a href={currentContact.linkedin_url} target="_blank" rel="noreferrer" style={{ color: "#55657a", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>LinkedIn Profile</a>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Globe size={14} color="#6b7f95" />
-                    <span style={{ fontSize: 13, color: "#94a3b8" }}>No LinkedIn profile yet</span>
-                  </div>
-                )}
+                  ) : (
+                    <>
+                      <span style={{ flex: 1, fontSize: 13, color: "#94a3b8" }}>No LinkedIn yet</span>
+                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
+                    </>
+                  )}
+                </div>
+                <div style={{ marginTop: 8, paddingTop: 10, borderTop: "1px solid #f0f4f8", display: "grid", gridTemplateColumns: "120px 1fr", gap: 6, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0" }}>Added</span>
+                  <span style={{ fontSize: 12, color: "#5e738b" }}>{new Date(currentContact.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                  {(currentContact.sdr_name || currentContact.assigned_to_name) && (
+                    <>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0" }}>Uploaded by</span>
+                      <span style={{ fontSize: 12, color: "#5e738b", fontWeight: 600 }}>{currentContact.sdr_name || currentContact.assigned_to_name}</span>
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>
