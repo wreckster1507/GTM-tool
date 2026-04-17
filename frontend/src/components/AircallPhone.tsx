@@ -133,18 +133,27 @@ export default function AircallPhonePanel() {
       setMinimised(false);
       setCallState(prev => ({ ...prev, phoneNumber, contactName, status: "ringing" }));
 
-      // Wait for panel to be visible, then send dial command
-      setTimeout(() => {
-        if (phoneRef.current) {
-          phoneRef.current.send(
-            "dial_number",
-            { phone_number: phoneNumber },
-            (success: boolean) => {
-              if (!success) console.warn("[Aircall] dial_number command failed");
+      // Attempt dial with retry — SDK iframe needs to be fully ready
+      const attemptDial = (attemptsLeft: number) => {
+        if (!phoneRef.current) return;
+        phoneRef.current.send(
+          "dial_number",
+          { phone_number: phoneNumber },
+          (success: boolean) => {
+            if (success) {
+              console.log("[Aircall] dial_number sent:", phoneNumber);
+            } else if (attemptsLeft > 1) {
+              console.warn("[Aircall] dial_number not ready, retrying…");
+              setTimeout(() => attemptDial(attemptsLeft - 1), 600);
+            } else {
+              console.warn("[Aircall] dial_number failed after retries — panel is open, rep can dial manually");
             }
-          );
-        }
-      }, 300);
+          }
+        );
+      };
+
+      // Wait 500ms for iframe to become interactive, then retry up to 3 times
+      setTimeout(() => attemptDial(3), 500);
     };
 
     window.__aircallOpen = () => {

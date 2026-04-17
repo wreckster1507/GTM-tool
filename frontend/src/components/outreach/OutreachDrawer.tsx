@@ -551,7 +551,9 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                 {contact?.email && (
                   <a
-                    href={`mailto:${contact.email}`}
+                    href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{
                       ...ghostBtn,
                       textDecoration: "none",

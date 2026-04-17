@@ -248,12 +248,31 @@ export default function ExecutionTracker() {
   const [entityFilter, setEntityFilter] = useState("");
   const [progressFilter, setProgressFilter] = useState("");
   const [needsUpdateOnly, setNeedsUpdateOnly] = useState(false);
+  const [dueDateFilter, setDueDateFilter] = useState<"" | "overdue" | "today" | "this_week">("");
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedItemKey, setSelectedItemKey] = useState("");
   const [draft, setDraft] = useState<UpdateDraft>(EMPTY_DRAFT);
   const pageSize = 25;
+
+  const filteredItems = useMemo(() => {
+    if (!dueDateFilter) return items;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().slice(0, 10);
+    const weekEnd = new Date(today);
+    weekEnd.setDate(today.getDate() + 7);
+    const weekEndStr = weekEnd.toISOString().slice(0, 10);
+    return items.filter((item) => {
+      if (dueDateFilter === "overdue") return item.next_step_overdue;
+      const due = item.latest_update?.next_step_due_date?.slice(0, 10);
+      if (!due) return false;
+      if (dueDateFilter === "today") return due === todayStr;
+      if (dueDateFilter === "this_week") return due >= todayStr && due <= weekEndStr;
+      return true;
+    });
+  }, [items, dueDateFilter]);
 
   const selectedItem = useMemo(
     () => items.find((item) => itemKey(item) === selectedItemKey) ?? null,
@@ -267,7 +286,7 @@ export default function ExecutionTracker() {
 
   useEffect(() => {
     setPage(1);
-  }, [deferredSearch, assigneeFilter, entityFilter, progressFilter, needsUpdateOnly]);
+  }, [deferredSearch, assigneeFilter, entityFilter, progressFilter, needsUpdateOnly, dueDateFilter]);
 
   useEffect(() => {
     const params = {
@@ -466,6 +485,12 @@ export default function ExecutionTracker() {
                 </option>
               ))}
             </select>
+            <select value={dueDateFilter} onChange={(event) => setDueDateFilter(event.target.value as "" | "overdue" | "today" | "this_week")} style={{ minWidth: 170, height: 42, padding: "0 12px" }}>
+              <option value="">All due dates</option>
+              <option value="overdue">Overdue</option>
+              <option value="today">Due today</option>
+              <option value="this_week">Due this week</option>
+            </select>
           </div>
           <div className="crm-toolbar-actions">
             <button
@@ -520,14 +545,14 @@ export default function ExecutionTracker() {
                       <Loader2 size={18} className="animate-spin" />
                     </td>
                   </tr>
-                ) : items.length === 0 ? (
+                ) : filteredItems.length === 0 ? (
                   <tr>
                     <td colSpan={isAdmin ? 6 : 5} style={{ textAlign: "center", padding: 40, color: "#73829c" }}>
                       No assigned work matches these filters yet.
                     </td>
                   </tr>
                 ) : (
-                  items.map((item) => {
+                  filteredItems.map((item) => {
                     const selected = itemKey(item) === selectedItemKey;
                     const progressTone = toneForProgress(item.latest_update?.progress_state);
                     return (
