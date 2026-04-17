@@ -13,13 +13,15 @@ from app.models.deal import Deal
 
 MILESTONE_STAGE_MAP: dict[str, str] = {
     "demo_done": "demo_done",
+    "poc_agreed": "poc_agreed",
     "poc_wip": "poc_wip",
     "poc_done": "poc_done",
     "closed_won": "closed_won",
 }
 
 MILESTONE_LABELS: dict[str, str] = {
-    "demo_done": "New Demo Done",
+    "demo_done": "Demo Done",
+    "poc_agreed": "POC Agreed",
     "poc_wip": "POC WIP",
     "poc_done": "POC Done",
     "closed_won": "Closed Won",

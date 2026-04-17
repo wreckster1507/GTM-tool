@@ -52,6 +52,12 @@ class SalesSummary(BaseModel):
     overdue_close_count: int
     missing_close_date_count: int
     stale_deal_count: int
+    # Milestone-based counts (deduplicated: first time per company)
+    demo_done_count: int = 0
+    poc_agreed_count: int = 0
+    poc_done_count: int = 0
+    closed_won_count: int = 0
+    closed_won_value: float = 0.0
 
 
 class RepActivityRow(BaseModel):
@@ -119,6 +125,7 @@ class MonthlyUniqueFunnelRow(BaseModel):
     month_key: str
     label: str
     demo_done: int
+    poc_agreed: int = 0
     poc_wip: int
     poc_done: int
     closed_won: int
@@ -127,6 +134,8 @@ class MonthlyUniqueFunnelRow(BaseModel):
 class SalesDashboardRead(BaseModel):
     generated_at: datetime
     window_days: int
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
     summary: SalesSummary
     highlights: list[str]
     rep_activity: list[RepActivityRow]
@@ -255,6 +264,7 @@ def _build_monthly_unique_funnel_rows(
     counts = {
         month_key: {
             "demo_done": 0,
+            "poc_agreed": 0,
             "poc_wip": 0,
             "poc_done": 0,
             "closed_won": 0,
@@ -272,6 +282,7 @@ def _build_monthly_unique_funnel_rows(
             month_key=month_key,
             label=_month_label(month_key),
             demo_done=counts[month_key]["demo_done"],
+            poc_agreed=counts[month_key]["poc_agreed"],
             poc_wip=counts[month_key]["poc_wip"],
             poc_done=counts[month_key]["poc_done"],
             closed_won=counts[month_key]["closed_won"],
@@ -327,12 +338,23 @@ async def sales_dashboard(
     window_days: Annotated[int, Query(ge=30, le=365)] = 90,
     rep_id: Annotated[list[UUID], Query()] = [],
     geography: Annotated[list[str], Query()] = [],
+    from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
+    to_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window end")] = None,
 ):
     filter_rep_ids = rep_id or []
     filter_geographies = {_normalize_geography_key(g) for g in geography if g}
     now = datetime.utcnow()
     today = date.today()
-    window_start = now - timedelta(days=window_days)
+
+    # Calendar date range overrides window_days when provided
+    if from_date:
+        window_start = datetime.fromisoformat(from_date)
+    else:
+        window_start = now - timedelta(days=window_days)
+    if to_date:
+        window_end = datetime.fromisoformat(to_date) + timedelta(days=1)  # inclusive
+    else:
+        window_end = now
     monthly_unique_funnel = await _load_monthly_unique_funnel(
         session,
         months=12,
@@ -393,7 +415,7 @@ async def sales_dashboard(
                 Activity.created_at,
                 Activity.created_by_id,
                 Activity.aircall_user_name,
-            ).where(Activity.created_at >= window_start)
+            ).where(Activity.created_at >= window_start, Activity.created_at <= window_end)
         )
     ).all()
     # Apply rep filter on activities by checking ownership
@@ -724,6 +746,37 @@ async def sales_dashboard(
         if row.stage == "closed_won" and row.updated_at >= window_start
     )
 
+    # Milestone-based deduplicated counts for the selected window
+    # Each company counted only once (first time it reached the milestone)
+    milestone_stmt = (
+        select(
+            CompanyStageMilestone.milestone_key,
+            CompanyStageMilestone.first_reached_at,
+            Deal.value.label("deal_value"),
+            Deal.geography.label("deal_geography"),
+        )
+        .outerjoin(Deal, CompanyStageMilestone.deal_id == Deal.id)
+        .where(
+            CompanyStageMilestone.first_reached_at >= window_start,
+            CompanyStageMilestone.first_reached_at <= window_end,
+            CompanyStageMilestone.milestone_key.in_(["demo_done", "poc_agreed", "poc_done", "closed_won"]),
+        )
+    )
+    if filter_rep_ids:
+        milestone_stmt = milestone_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
+    milestone_summary_rows = (await session.execute(milestone_stmt)).all()
+    if filter_geographies:
+        milestone_summary_rows = [
+            row for row in milestone_summary_rows
+            if _normalize_geography_key(row.deal_geography) in filter_geographies
+        ]
+
+    ms_demo_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "demo_done")
+    ms_poc_agreed = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_agreed")
+    ms_poc_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_done")
+    ms_closed_won = sum(1 for r in milestone_summary_rows if r.milestone_key == "closed_won")
+    ms_closed_won_value = sum(_to_float(r.deal_value) for r in milestone_summary_rows if r.milestone_key == "closed_won")
+
     funnel_rows = [
         FunnelStep(key="lead", label="Lead", count=leads_count),
         FunnelStep(
@@ -774,6 +827,8 @@ async def sales_dashboard(
     return SalesDashboardRead(
         generated_at=now,
         window_days=window_days,
+        from_date=from_date,
+        to_date=to_date,
         summary=SalesSummary(
             pipeline_amount=round(pipeline_amount, 2),
             weighted_pipeline_amount=round(weighted_pipeline_amount, 2),
@@ -783,6 +838,11 @@ async def sales_dashboard(
             overdue_close_count=overdue_close_count,
             missing_close_date_count=missing_close_date_count,
             stale_deal_count=stale_deal_count,
+            demo_done_count=ms_demo_done,
+            poc_agreed_count=ms_poc_agreed,
+            poc_done_count=ms_poc_done,
+            closed_won_count=ms_closed_won,
+            closed_won_value=round(ms_closed_won_value, 2),
         ),
         highlights=highlights[:5],
         rep_activity=rep_activity_rows,

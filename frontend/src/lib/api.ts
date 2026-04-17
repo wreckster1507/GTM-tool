@@ -1028,6 +1028,11 @@ export type SalesDashboardSummary = {
   overdue_close_count: number;
   missing_close_date_count: number;
   stale_deal_count: number;
+  demo_done_count: number;
+  poc_agreed_count: number;
+  poc_done_count: number;
+  closed_won_count: number;
+  closed_won_value: number;
 };
 
 export type SalesRepActivityRow = {
@@ -1089,6 +1094,7 @@ export type MonthlyUniqueFunnelRow = {
   month_key: string;
   label: string;
   demo_done: number;
+  poc_agreed: number;
   poc_wip: number;
   poc_done: number;
   closed_won: number;
@@ -1103,6 +1109,8 @@ export type SalesQuotaState = {
 export type SalesDashboard = {
   generated_at: string;
   window_days: number;
+  from_date?: string | null;
+  to_date?: string | null;
   summary: SalesDashboardSummary;
   highlights: string[];
   rep_activity: SalesRepActivityRow[];
@@ -1116,10 +1124,12 @@ export type SalesDashboard = {
 };
 
 export const analyticsApi = {
-  salesDashboard: (windowDays = 90, repIds: string[] = [], geographies: string[] = []) => {
+  salesDashboard: (windowDays = 90, repIds: string[] = [], geographies: string[] = [], fromDate?: string, toDate?: string) => {
     const params = new URLSearchParams({ window_days: String(windowDays) });
     for (const id of repIds) params.append("rep_id", id);
     for (const g of geographies) params.append("geography", g);
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
     return request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?${params.toString()}`);
   },
   monthlyFunnelSummary: (months = 12) =>

@@ -370,14 +370,15 @@ function FunnelView({ steps }: { steps: SalesFunnelStep[] }) {
 function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
   const maxCount = useMemo(
     () => Math.max(
-      ...rows.flatMap((row) => [row.demo_done, row.poc_wip, row.poc_done, row.closed_won]),
+      ...rows.flatMap((row) => [row.demo_done, row.poc_agreed, row.poc_wip, row.poc_done, row.closed_won]),
       1,
     ),
     [rows],
   );
 
   const series = [
-    { key: "demo_done" as const, label: "New Demo Done", color: "#4e6be6" },
+    { key: "demo_done" as const, label: "Demo Done", color: "#4e6be6" },
+    { key: "poc_agreed" as const, label: "POC Agreed", color: "#7c3aed" },
     { key: "poc_wip" as const, label: "POC WIP", color: "#17a2b8" },
     { key: "poc_done" as const, label: "POC Done", color: "#2fa56b" },
     { key: "closed_won" as const, label: "Closed Won", color: "#d58b2a" },
@@ -398,9 +399,9 @@ function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
         ))}
       </div>
       <div style={{ overflowX: "auto" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 720 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 860 }}>
           {rows.map((row) => (
-            <div key={row.month_key} style={{ display: "grid", gridTemplateColumns: "110px repeat(4, minmax(120px, 1fr))", gap: 12, alignItems: "center" }}>
+            <div key={row.month_key} style={{ display: "grid", gridTemplateColumns: "110px repeat(5, minmax(110px, 1fr))", gap: 12, alignItems: "center" }}>
               <div>
                 <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#213547" }}>{row.label}</p>
                 <p style={{ margin: "4px 0 0", fontSize: 11, color: "#73849a" }}>Unique companies</p>
@@ -613,9 +614,14 @@ export default function SalesAnalytics() {
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [repFilter, setRepFilter] = useState<string[]>([]);
   const [geographyFilter, setGeographyFilter] = useState<string[]>([]);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // When a custom date range is set, window buttons are ignored
+  const usingCustomRange = !!(fromDate && toDate);
   const hideDeveloper = isDeveloperUser(user);
 
   const visibleTeamUsers = useMemo(
@@ -652,7 +658,7 @@ export default function SalesAnalytics() {
     setError(null);
 
     analyticsApi
-      .salesDashboard(windowDays, repFilter, geographyFilter)
+      .salesDashboard(windowDays, repFilter, geographyFilter, fromDate || undefined, toDate || undefined)
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -666,7 +672,7 @@ export default function SalesAnalytics() {
     return () => {
       cancelled = true;
     };
-  }, [windowDays, repFilter, geographyFilter]);
+  }, [windowDays, repFilter, geographyFilter, fromDate, toDate]);
 
   const metricCards: Array<{
     label: string;
@@ -716,6 +722,41 @@ export default function SalesAnalytics() {
       hint: "Deals sitting in the same stage for 30 days or more",
       tone: data.summary.stale_deal_count > 0 ? "amber" : "green" as const,
       icon: Sigma,
+    },
+    {
+      label: "Demo Done",
+      value: String(data.summary.demo_done_count),
+      hint: "Unique companies that reached Demo Done for the first time in this window",
+      tone: "blue" as const,
+      icon: Check,
+    },
+    {
+      label: "POC Agreed",
+      value: String(data.summary.poc_agreed_count),
+      hint: "Unique companies that agreed to a POC for the first time in this window",
+      tone: "blue" as const,
+      icon: ArrowUpRight,
+    },
+    {
+      label: "POC Done",
+      value: String(data.summary.poc_done_count),
+      hint: "Unique companies that completed a POC for the first time in this window",
+      tone: "green" as const,
+      icon: Check,
+    },
+    {
+      label: "Closed Won",
+      value: String(data.summary.closed_won_count),
+      hint: `${formatShortCurrency(data.summary.closed_won_value)} in won deal value in this window`,
+      tone: data.summary.closed_won_count > 0 ? "green" : "blue" as const,
+      icon: Trophy,
+    },
+    {
+      label: "Won Value",
+      value: formatShortCurrency(data.summary.closed_won_value),
+      hint: `${data.summary.closed_won_count} deals closed won in this window`,
+      tone: data.summary.closed_won_value > 0 ? "green" : "blue" as const,
+      icon: TrendingUp,
     },
   ] : [];
 
@@ -770,14 +811,14 @@ export default function SalesAnalytics() {
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setWindowDays(value)}
+                  onClick={() => { setWindowDays(value); setFromDate(""); setToDate(""); }}
                   style={{
                     height: 38,
                     padding: "0 14px",
                     borderRadius: 999,
-                    border: value === windowDays ? "1px solid #ffbeab" : "1px solid #d9e3ef",
-                    background: value === windowDays ? "#fff1ea" : "#fff",
-                    color: value === windowDays ? "#b85024" : "#506378",
+                    border: !usingCustomRange && value === windowDays ? "1px solid #ffbeab" : "1px solid #d9e3ef",
+                    background: !usingCustomRange && value === windowDays ? "#fff1ea" : "#fff",
+                    color: !usingCustomRange && value === windowDays ? "#b85024" : "#506378",
                     fontSize: 12,
                     fontWeight: 800,
                     cursor: "pointer",
@@ -786,6 +827,27 @@ export default function SalesAnalytics() {
                   {value}d
                 </button>
               ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 12, border: usingCustomRange ? "1.5px solid #a5b4fc" : "1px solid #d9e3ef", background: usingCustomRange ? "#eef2ff" : "#fff" }}>
+                <CalendarRange size={13} style={{ color: usingCustomRange ? "#4f46e5" : "#94a3b8", flexShrink: 0 }} />
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  style={{ border: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#374151", outline: "none", width: 120 }}
+                />
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>→</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  style={{ border: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#374151", outline: "none", width: 120 }}
+                />
+                {usingCustomRange && (
+                  <button type="button" onClick={() => { setFromDate(""); setToDate(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1 }}>✕</button>
+                )}
+              </div>
             </div>
             <MultiSelectDropdown
               label="Rep filter"

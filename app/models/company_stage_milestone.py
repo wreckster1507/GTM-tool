@@ -8,6 +8,7 @@ from sqlmodel import Field, SQLModel
 
 MILESTONE_KEYS = (
     "demo_done",
+    "poc_agreed",
     "poc_wip",
     "poc_done",
     "closed_won",
