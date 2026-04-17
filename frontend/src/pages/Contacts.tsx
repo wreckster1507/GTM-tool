@@ -13,7 +13,6 @@ import {
 import { avatarColor, getInitials } from "../lib/utils";
 import {
   getProspectTrackingScore,
-  getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
@@ -957,14 +956,16 @@ export default function Contacts() {
                             {(() => {
                               const tone = getProspectTrackingTone(c);
                               const progressSteps = getProspectProgressSteps(c);
+                              const currentStep = progressSteps.find((step) => step.state === "current") ?? progressSteps[0];
                               return (
                                 <div
                                   style={{
-                                    minWidth: 310,
-                                    padding: "10px 12px",
-                                    borderRadius: 14,
-                                    background: tone.soft,
-                                    border: `1px solid ${tone.border}`,
+                                    minWidth: 300,
+                                    padding: "12px 14px",
+                                    borderRadius: 16,
+                                    background: "#ffffff",
+                                    border: "1px solid #e5edf5",
+                                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.9)",
                                   }}
                                 >
                                   <div
@@ -973,68 +974,89 @@ export default function Contacts() {
                                       alignItems: "center",
                                       justifyContent: "space-between",
                                       gap: 10,
-                                      marginBottom: 6,
+                                      marginBottom: 10,
                                     }}
                                   >
-                                    <span style={{ color: tone.color, fontWeight: 800, fontSize: 12 }}>
+                                    <span
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        padding: "4px 9px",
+                                        borderRadius: 999,
+                                        background: tone.soft,
+                                        border: `1px solid ${tone.border}`,
+                                        color: tone.color,
+                                        fontWeight: 800,
+                                        fontSize: 11.5,
+                                      }}
+                                    >
                                       {getProspectTrackingScore(c)}
                                     </span>
-                                    {c.tracking_last_activity_at ? (
-                                      <span style={{ color: "#7a8ea4", fontSize: 11, fontWeight: 600 }}>
-                                        {new Date(c.tracking_last_activity_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                                      </span>
-                                    ) : null}
+                                    <span style={{ color: "#7a8ea4", fontSize: 11, fontWeight: 700 }}>
+                                      {currentStep.label}
+                                    </span>
                                   </div>
                                   <div
                                     style={{
-                                      display: "grid",
-                                      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-                                      gap: 4,
+                                      display: "flex",
                                       alignItems: "center",
-                                      marginBottom: 8,
+                                      gap: 0,
                                     }}
                                   >
                                     {progressSteps.map((step, index) => {
-                                      const stateStyle = step.state === "done"
-                                        ? { background: tone.background, border: tone.border, color: tone.color }
-                                        : step.state === "current"
-                                          ? { background: "#eaf2ff", border: "#bfd7fb", color: "#175089" }
-                                          : { background: "#f5f8fb", border: "#dbe5ef", color: "#8aa0b5" };
+                                      const stateStyle =
+                                        step.state === "done"
+                                          ? { fill: tone.color, border: tone.border, text: tone.color, line: tone.border, ring: "transparent" }
+                                          : step.state === "current"
+                                            ? { fill: "#ffffff", border: "#175089", text: "#175089", line: "#bfd7fb", ring: "rgba(23,80,137,0.12)" }
+                                            : { fill: "#ffffff", border: "#d6e0ea", text: "#8aa0b5", line: "#dbe5ef", ring: "transparent" };
                                       return (
-                                        <div key={step.key} style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                                        <div key={step.key} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
                                           <div
                                             title={`${step.label}: ${step.detail}`}
                                             style={{
-                                              minWidth: 0,
-                                              flex: 1,
-                                              height: 28,
-                                              borderRadius: 999,
-                                              border: `1px solid ${stateStyle.border}`,
-                                              background: stateStyle.background,
-                                              color: stateStyle.color,
                                               display: "flex",
+                                              flexDirection: "column",
                                               alignItems: "center",
-                                              justifyContent: "center",
-                                              padding: "0 8px",
-                                              fontSize: 10,
-                                              fontWeight: 800,
-                                              letterSpacing: 0.2,
-                                              whiteSpace: "nowrap",
+                                              gap: 6,
+                                              minWidth: 0,
                                             }}
                                           >
-                                            {step.label}
+                                            <div
+                                              style={{
+                                                width: 16,
+                                                height: 16,
+                                                borderRadius: 999,
+                                                border: `2px solid ${stateStyle.border}`,
+                                                background: stateStyle.fill,
+                                                boxShadow: step.state === "current" ? `0 0 0 5px ${stateStyle.ring}` : "none",
+                                                flexShrink: 0,
+                                              }}
+                                            />
+                                            <div
+                                              style={{
+                                                maxWidth: "100%",
+                                                color: stateStyle.text,
+                                                fontSize: 10,
+                                                fontWeight: step.state === "current" ? 800 : 700,
+                                                letterSpacing: 0.15,
+                                                whiteSpace: "nowrap",
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                              }}
+                                            >
+                                              {step.label}
+                                            </div>
                                           </div>
                                           {index < progressSteps.length - 1 ? (
                                             <div
                                               style={{
-                                                width: 8,
+                                                flex: 1,
                                                 height: 2,
                                                 borderRadius: 999,
-                                                background:
-                                                  step.state === "done" || step.state === "current"
-                                                    ? tone.border
-                                                    : "#dbe5ef",
-                                                flexShrink: 0,
+                                                background: stateStyle.line,
+                                                margin: "0 4px 18px",
                                               }}
                                             />
                                           ) : null}
@@ -1042,9 +1064,11 @@ export default function Contacts() {
                                       );
                                     })}
                                   </div>
-                                  <div style={{ color: "#4d6178", fontSize: 12.5, lineHeight: 1.5 }}>
-                                    {getProspectTrackingSummary(c)}
-                                  </div>
+                                  {c.tracking_last_activity_at ? (
+                                    <div style={{ marginTop: 10, color: "#8aa0b5", fontSize: 10.5, fontWeight: 700, textAlign: "right" }}>
+                                      Updated {new Date(c.tracking_last_activity_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                    </div>
+                                  ) : null}
                                 </div>
                               );
                             })()}

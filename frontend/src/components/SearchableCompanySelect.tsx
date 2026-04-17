@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Building2, ChevronDown, Loader2, Search } from "lucide-react";
+import { Building2, Check, ChevronDown, Loader2, Search } from "lucide-react";
 import { accountSourcingApi } from "../lib/api";
 import type { Company } from "../types";
 
@@ -23,10 +23,11 @@ export default function SearchableCompanySelect({
   disabled = false,
 }: SearchableCompanySelectProps) {
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
   const [results, setResults] = useState<Company[]>([]);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedCompany = useMemo(
     () => [...results, ...companies].find((company) => company.id === value),
@@ -37,12 +38,24 @@ export default function SearchableCompanySelect({
     const handleClick = (event: MouseEvent) => {
       if (!ref.current?.contains(event.target as Node)) {
         setOpen(false);
-        setSearch("");
+        setQuery(selectedCompany?.name ?? "");
       }
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+  }, [selectedCompany]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery(selectedCompany?.name ?? "");
+    }
+  }, [open, selectedCompany]);
+
+  useEffect(() => {
+    if (open) {
+      window.setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -54,7 +67,7 @@ export default function SearchableCompanySelect({
         const response = await accountSourcingApi.listCompaniesPaginated({
           skip: 0,
           limit: 40,
-          q: search.trim() || undefined,
+          q: query.trim() || undefined,
         });
         let next = response.items;
         if (selectedCompany && !next.some((company) => company.id === selectedCompany.id)) {
@@ -65,7 +78,7 @@ export default function SearchableCompanySelect({
         }
       } catch {
         if (!cancelled) {
-          const needle = search.trim().toLowerCase();
+          const needle = query.trim().toLowerCase();
           const fallback = companies
             .filter((company) => !needle || company.name.toLowerCase().includes(needle))
             .slice(0, 40);
@@ -86,49 +99,88 @@ export default function SearchableCompanySelect({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [companies, open, search, selectedCompany]);
+  }, [companies, open, query, selectedCompany]);
+
+  const selectCompany = (companyId?: string) => {
+    const company = [...results, ...companies].find((entry) => entry.id === companyId);
+    onChange(companyId);
+    setQuery(company?.name ?? "");
+    setOpen(false);
+  };
 
   return (
     <div
       ref={ref}
       style={{ position: "relative" }}
-      onMouseDown={(event) => {
-        event.stopPropagation();
-      }}
     >
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (disabled) return;
-          setOpen((current) => !current);
-        }}
+      <div
         style={{
           width: "100%",
           minHeight: 42,
           borderRadius: 12,
-          border: "1px solid #d7e2ee",
+          border: open ? "1px solid #bfd7fb" : "1px solid #d7e2ee",
           background: disabled ? "#f8fafc" : "#fff",
-          padding: "0 14px",
+          padding: "0 12px",
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
+          gap: 10,
           fontSize: 14,
-          color: selectedCompany ? "#1f2d3d" : "#94a3b8",
-          cursor: disabled ? "default" : "pointer",
+          color: "#1f2d3d",
+          boxShadow: open ? "0 0 0 4px rgba(191,215,251,0.35)" : "none",
         }}
       >
-        <span style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
-          <Building2 size={14} color="#7a96b0" />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {selectedCompany?.name ?? placeholder}
-          </span>
-        </span>
-        <ChevronDown size={14} color="#7a96b0" />
-      </button>
+        <Building2 size={14} color="#7a96b0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={open ? query : (selectedCompany?.name ?? query)}
+          disabled={disabled}
+          onFocus={() => {
+            if (disabled) return;
+            setOpen(true);
+            setQuery(selectedCompany?.name ?? "");
+          }}
+          onChange={(event) => {
+            setOpen(true);
+            setQuery(event.target.value);
+          }}
+          placeholder={placeholder}
+          style={{
+            flex: 1,
+            height: 40,
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            fontSize: 14,
+            color: selectedCompany || query ? "#1f2d3d" : "#94a3b8",
+            minWidth: 0,
+          }}
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (disabled) return;
+            setOpen((current) => !current);
+            if (!open) {
+              setQuery(selectedCompany?.name ?? "");
+            }
+          }}
+          style={{
+            border: "none",
+            background: "transparent",
+            width: 24,
+            height: 24,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: disabled ? "default" : "pointer",
+            flexShrink: 0,
+          }}
+        >
+          <ChevronDown size={14} color="#7a96b0" />
+        </button>
+      </div>
 
       {open && (
         <div
@@ -144,38 +196,13 @@ export default function SearchableCompanySelect({
             zIndex: 40,
             overflow: "hidden",
           }}
-          onMouseDown={(event) => {
-            event.stopPropagation();
-          }}
         >
-          <div style={{ padding: 8, borderBottom: "1px solid #edf2f7" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#f8fafc", borderRadius: 10, padding: "0 10px" }}>
-              <Search size={13} color="#94a3b8" />
-              <input
-                autoFocus
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search companies..."
-                style={{
-                  width: "100%",
-                  height: 34,
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontSize: 13,
-                }}
-              />
-            </div>
-          </div>
-
           <div style={{ maxHeight: 220, overflowY: "auto" }}>
             {allowNone && (
               <button
                 type="button"
                 onClick={() => {
-                  onChange(undefined);
-                  setOpen(false);
-                  setSearch("");
+                  selectCompany(undefined);
                 }}
                 style={{
                   display: "block",
@@ -209,12 +236,12 @@ export default function SearchableCompanySelect({
                   key={company.id}
                   type="button"
                   onClick={() => {
-                    onChange(company.id);
-                    setOpen(false);
-                    setSearch("");
+                    selectCompany(company.id);
                   }}
                   style={{
-                    display: "block",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
                     width: "100%",
                     textAlign: "left",
                     padding: "10px 12px",
@@ -226,7 +253,8 @@ export default function SearchableCompanySelect({
                     cursor: "pointer",
                   }}
                 >
-                  {company.name}
+                  <span>{company.name}</span>
+                  {value === company.id ? <Check size={14} color="#175089" /> : null}
                 </button>
               ))
             )}
