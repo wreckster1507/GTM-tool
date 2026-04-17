@@ -114,7 +114,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const companiesApi = {
-  list: (skip = 0, limit = 200) =>
+  list: (skip = 0, limit = 1000) =>
     requestList<Company>(`/api/v1/companies/?skip=${skip}&limit=${limit}`),
   listPaginated: (skip = 0, limit = 50) =>
     requestPaginated<Company>(`/api/v1/companies/?skip=${skip}&limit=${limit}`),
@@ -128,6 +128,11 @@ export const companiesApi = {
   update: (id: string, data: Partial<Company>) =>
     request<Company>(`/api/v1/companies/${id}`, {
       method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  patch: (id: string, data: Partial<Company>) =>
+    request<Company>(`/api/v1/companies/${id}`, {
+      method: "PATCH",
       body: JSON.stringify(data),
     }),
   delete: (id: string) =>
@@ -157,8 +162,8 @@ export const contactsApi = {
     companyId?: string;
     q?: string;
     persona?: string[];
-    outreachLane?: string[];
     sequenceStatus?: string[];
+    callDisposition?: string[];
     emailState?: string[];
     aeId?: string[];
     sdrId?: string[];
@@ -171,8 +176,8 @@ export const contactsApi = {
     if (params.companyId) search.set("company_id", params.companyId);
     if (params.q) search.set("q", params.q);
     if (params.persona?.length) search.set("persona", params.persona.join(","));
-    if (params.outreachLane?.length) search.set("outreach_lane", params.outreachLane.join(","));
     if (params.sequenceStatus?.length) search.set("sequence_status", params.sequenceStatus.join(","));
+    if (params.callDisposition?.length) search.set("call_disposition", params.callDisposition.join(","));
     if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
     if (params.aeId?.length) search.set("ae_id", params.aeId.join(","));
     if (params.sdrId?.length) search.set("sdr_id", params.sdrId.join(","));

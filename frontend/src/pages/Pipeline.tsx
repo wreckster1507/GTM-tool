@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Building2, CalendarDays, ChevronDown, Clock3, DollarSign, FileText, Filter, Globe, GripVertical, Mail, Phone, Plus, RotateCcw, Search, Settings2, Target, Trash2, Upload, UserCircle2 } from "lucide-react";
+import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
@@ -325,7 +325,8 @@ function normalizeGeo(raw?: string | null): "Americas" | "India" | "APAC" | "Res
   if (["na", "north america", "americas", "latam", "latin america", "canada", "mexico"].includes(value)) return "Americas";
   if (["india", "in"].includes(value)) return "India";
   if (["apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan"].includes(value)) return "APAC";
-  return "Rest of World";
+  if (value === "rest of world") return "Rest of World";
+  return "";
 }
 
 function contactName(contact: Contact) {
@@ -838,35 +839,62 @@ function CrmImportModal({
   );
 }
 
-function DealCard({ deal, onClick, onDragStart, onDragEnd }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void }) {
+
+function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; accountPriorityTag?: "P0" | "P1" | "P2" | null }) {
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
+
   return (
-    <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onClick} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+    <div draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Header row: grip + name + close date */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-        <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0 }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d", lineHeight: 1.35, flex: 1 }}>{deal.name}</span>
+        <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0, cursor: "grab" }} />
+        <button type="button" onClick={onClick} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d", lineHeight: 1.35 }}>{deal.name}</span>
+        </button>
+        {deal.close_date_est && (
+          <span style={{ fontSize: 9, fontWeight: 600, color: isOverdue ? "#dc2626" : "#7a8ca1", whiteSpace: "nowrap", flexShrink: 0, marginTop: 2 }}>
+            {formatDate(deal.close_date_est)}
+          </span>
+        )}
       </div>
-      {deal.company_name && <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#5e738b" }}><Building2 size={11} /><span>{deal.company_name}</span></div>}
-      <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
-      {deal.next_step && <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>{deal.next_step}</div>}
+
+      <button type="button" onClick={onClick} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8, textAlign: "left" }}>
+        {deal.company_name && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#5e738b" }}>
+            <Building2 size={11} />
+            <span>{deal.company_name}</span>
+          </div>
+        )}
+        <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
+        {deal.next_step && <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>{deal.next_step}</div>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
           <EngagementBadge side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} reason={deal.seller_engagement_reason} />
           <EngagementBadge side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} reason={deal.client_engagement_reason} />
         </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-        {(deal.tags ?? []).slice(0, 2).map((tag) => <span key={tag} style={chip("#f8f0ff", "#6b46a0", "#e8d8f8")}>{tag}</span>)}
-      </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {(deal.tags ?? []).slice(0, 2).map((tag) => <span key={tag} style={chip("#f8f0ff", "#6b46a0", "#e8d8f8")}>{tag}</span>)}
+        </div>
+      </button>
+
+      {/* Footer: avatar + days + contacts + P-tag */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid #f0f4f8", marginTop: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {deal.assigned_rep_name ? <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 20, height: 20 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#e8eef5" }} />}
           <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: "#7a8ca1" }}><Clock3 size={10} /><span>{deal.days_in_stage ?? 0}d</span></div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {deal.close_date_est && <span style={{ fontSize: 10, color: isOverdue ? "#dc2626" : "#7a8ca1", fontWeight: isOverdue ? 600 : 400 }}>{formatDate(deal.close_date_est)}</span>}
           {(deal.contact_count ?? 0) > 0 && <span style={{ fontSize: 10, color: "#5e738b", display: "flex", alignItems: "center", gap: 2 }}><UserCircle2 size={10} />{deal.contact_count}</span>}
         </div>
+        {accountPriorityTag && (
+          <span style={{
+            fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 5, flexShrink: 0,
+            background: accountPriorityTag === "P0" ? "#fff1f2" : accountPriorityTag === "P1" ? "#fff7ed" : "#f0fdf4",
+            color: accountPriorityTag === "P0" ? "#be123c" : accountPriorityTag === "P1" ? "#c2410c" : "#15803d",
+            border: `1px solid ${accountPriorityTag === "P0" ? "#fecdd3" : accountPriorityTag === "P1" ? "#fed7aa" : "#bbf7d0"}`,
+          }}>
+            {accountPriorityTag}
+          </span>
+        )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -952,7 +980,7 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, chil
           <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#ecf1f7", color: "#48607b" }}>{count}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {typeof totalValue === "number" && totalValue > 0 && <span style={{ fontSize: 10, color: "#7a96b0" }}>{formatCurrency(totalValue)}</span>}
+          {typeof totalValue === "number" && <span style={{ fontSize: 10, fontWeight: 600, color: totalValue > 0 ? "#3b6ea5" : "#b4c3d4" }}>{formatCurrency(totalValue)}</span>}
           {onAdd && <button onClick={onAdd} style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #dbe6f2", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#7a96b0" }}><Plus size={12} /></button>}
         </div>
       </div>
@@ -1270,6 +1298,10 @@ function AddProspectModal({ companies, onClose, onCreated }: { companies: Compan
       setError("First or last name is required");
       return;
     }
+    if (!form.company_id) {
+      setError("Please map this prospect to a company before adding.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -1331,7 +1363,11 @@ function AddProspectModal({ companies, onClose, onCreated }: { companies: Compan
                 companies={companies}
                 onChange={(companyId) => setForm((f) => ({ ...f, company_id: companyId ?? "" }))}
                 placeholder="Search company..."
+                allowNone={false}
               />
+              <div style={{ marginTop: 6, fontSize: 12, color: "#7f8fa5" }}>
+                A prospect must be mapped to an existing company.
+              </div>
             </div>
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
@@ -1340,7 +1376,7 @@ function AddProspectModal({ companies, onClose, onCreated }: { companies: Compan
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
             <button className="crm-button soft" onClick={onClose} disabled={saving}>Cancel</button>
-            <button className="crm-button primary" onClick={handleCreate} disabled={saving}>{saving ? "Creating..." : "Add Prospect"}</button>
+            <button className="crm-button primary" onClick={handleCreate} disabled={saving || !form.company_id} style={{ opacity: saving || !form.company_id ? 0.7 : 1, cursor: saving || !form.company_id ? "default" : "pointer" }}>{saving ? "Creating..." : "Add Prospect"}</button>
           </div>
         </div>
       </div>
@@ -1365,6 +1401,9 @@ export default function Pipeline() {
   const [assigneeFilters, setAssigneeFilters] = useState<string[]>([]);
   const [geographyFilters, setGeographyFilters] = useState<string[]>([]);
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  const [priorityFilters, setPriorityFilters] = useState<string[]>([]);
+  const [commitFilter, setCommitFilter] = useState<string[]>([]);
+  const [showForecast, setShowForecast] = useState(true);
   const [createDealStage, setCreateDealStage] = useState<string | null>(null);
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [selectedProspect, setSelectedProspect] = useState<Contact | null>(null);
@@ -1387,6 +1426,7 @@ export default function Pipeline() {
   const [crmImportResult, setCrmImportResult] = useState<CrmImportResponse | null>(null);
   const [crmImportError, setCrmImportError] = useState("");
   const [showAddProspect, setShowAddProspect] = useState(false);
+  const [showSidebarMenu, setShowSidebarMenu] = useState(false);
   const prospectImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
@@ -1505,12 +1545,21 @@ export default function Pipeline() {
           return assigneeFilters.includes(deal.assigned_to_id);
         });
       }
-      if (geographyFilters.length) items = items.filter((deal) => geographyFilters.includes(normalizeGeo(deal.geography)));
+      if (geographyFilters.length) items = items.filter((deal) => {
+        const geo = normalizeGeo(deal.geography);
+        if (geographyFilters.includes("unassigned") && !geo) return true;
+        return geo ? geographyFilters.includes(geo) : false;
+      });
       if (tagFilters.length) items = items.filter((deal) => (deal.tags ?? []).some((tag) => tagFilters.includes(tag)));
+      if (priorityFilters.length) items = items.filter((deal) => {
+        const tag = deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : null;
+        return tag ? priorityFilters.includes(tag) : false;
+      });
+      if (commitFilter.length) items = items.filter((deal) => deal.commit_to_deal === true);
       next[stage.id] = items;
     }
     return next;
-  }, [assigneeFilters, dealBoard, effectiveDealStages, geographyFilters, search, stageFilters, tagFilters]);
+  }, [assigneeFilters, commitFilter, companyMap, dealBoard, effectiveDealStages, geographyFilters, priorityFilters, search, stageFilters, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -1542,6 +1591,29 @@ export default function Pipeline() {
     });
     return next;
   }, [assigneeFilters, companyMap, contacts, geographyFilters, search, stageFilters]);
+
+  const FORECAST_STAGES = [
+    { id: "demo_scheduled", label: "Demo Scheduled" },
+    { id: "demo_done", label: "Demo Done" },
+    { id: "poc_agreed", label: "POC Agreed" },
+    { id: "poc_wip", label: "POC WIP" },
+    { id: "poc_done", label: "POC Done" },
+    { id: "commercial_negotiation", label: "Commercial" },
+    { id: "msa_review", label: "MSA Review" },
+    { id: "closed_won", label: "Closed Won" },
+  ];
+
+  const stageForecast = useMemo(() => {
+    return FORECAST_STAGES.map((stage, index) => {
+      const items = dealBoard[stage.id] ?? [];
+      const count = items.length;
+      const value = items.reduce((sum, d) => sum + Number(d.value ?? 0), 0);
+      const prevStage = index > 0 ? FORECAST_STAGES[index - 1] : null;
+      const prevCount = prevStage ? (dealBoard[prevStage.id] ?? []).length : null;
+      const conversionPct = prevCount != null && prevCount > 0 ? Math.round((count / prevCount) * 100) : null;
+      return { ...stage, count, value, conversionPct };
+    });
+  }, [dealBoard]);
 
   const dealSummary = useMemo(() => {
     const visible = Object.values(filteredDealBoard).flat();
@@ -1590,16 +1662,37 @@ export default function Pipeline() {
     ...card,
     value: summary[card.key],
   }));
+  const prospectingPulse = useMemo(() => {
+    const outreach = filteredProspects.outreach.length;
+    const inProgress = filteredProspects.in_progress.length;
+    const meetingBooked = filteredProspects.meeting_booked.length;
+    const needsAttention = filteredProspects.no_response.length + filteredProspects.negative_response.length;
+    const total = Object.values(filteredProspects).reduce((sum, items) => sum + items.length, 0);
+    const actionable = outreach + inProgress + meetingBooked;
+    const bars = [
+      { key: "outreach", value: outreach, color: "#60a5fa" },
+      { key: "in_progress", value: inProgress, color: "#14b8a6" },
+      { key: "meeting_booked", value: meetingBooked, color: "#8b5cf6" },
+      { key: "needs_attention", value: needsAttention, color: "#f59e0b" },
+    ].filter((item) => item.value > 0);
+    return { outreach, inProgress, meetingBooked, needsAttention, total, actionable, bars };
+  }, [filteredProspects]);
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
   const canImportCrm =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
-  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0;
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0;
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
   const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
-  const geographyOptions = GEO_OPTIONS.map((option) => ({ value: option, label: option }));
+  const geographyOptions = [{ value: "unassigned", label: "Unassigned" }, ...GEO_OPTIONS.map((option) => ({ value: option, label: option }))];
+  const priorityOptions = [
+    { value: "P0", label: "P0" },
+    { value: "P1", label: "P1" },
+    { value: "P2", label: "P2" },
+  ];
+  const commitOptions = [{ value: "committed", label: "Committed" }];
   const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
   const accentColor = tab === "deal" ? "#175089" : "#177b75";
   const accentBg = tab === "deal" ? "#f0f6ff" : "#f0faf9";
@@ -1622,6 +1715,8 @@ export default function Pipeline() {
     setAssigneeFilters([]);
     setGeographyFilters([]);
     setTagFilters([]);
+    setPriorityFilters([]);
+    setCommitFilter([]);
   };
 
   const handleDealUpdated = (updated: Deal) => {
@@ -1852,9 +1947,86 @@ export default function Pipeline() {
     <>
       <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
         <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2744", marginBottom: 4 }}>Pipeline</div>
-            <div style={{ fontSize: 11, color: "#7a96b0", lineHeight: 1.5 }}>Drag cards across lanes to move deals or prospects through your stages. Click any card to open the detail drawer.</div>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, position: "relative" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2744", marginBottom: 4 }}>Pipeline</div>
+              <div style={{ fontSize: 11, color: "#7a96b0", lineHeight: 1.5 }}>Drag cards across lanes to move deals or prospects through your stages. Click any card to open the detail drawer.</div>
+            </div>
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => setShowSidebarMenu((value) => !value)}
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 10,
+                  border: "1px solid #dbe6f2",
+                  background: showSidebarMenu ? "#f0f6ff" : "#fff",
+                  color: showSidebarMenu ? "#175089" : "#5e738b",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+                title="More actions"
+              >
+                <MoreHorizontal size={15} />
+              </button>
+              {showSidebarMenu && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 36,
+                    right: 0,
+                    zIndex: 20,
+                    minWidth: 170,
+                    borderRadius: 12,
+                    border: "1px solid #dbe6f2",
+                    background: "#fff",
+                    boxShadow: "0 12px 28px rgba(15, 35, 75, 0.12)",
+                    padding: 6,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                  }}
+                >
+                  {canImportCrm && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSidebarMenu(false);
+                        setCrmImportError("");
+                        setCrmImportResult(null);
+                        setShowCrmImport(true);
+                      }}
+                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", border: "none", background: "transparent", borderRadius: 8, padding: "9px 10px", cursor: "pointer", color: "#28435c", fontSize: 12, fontWeight: 600, textAlign: "left" }}
+                    >
+                      <Building2 size={14} />Import CRM
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSidebarMenu(false);
+                      navigate("/prospecting");
+                    }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", border: "none", background: "transparent", borderRadius: 8, padding: "9px 10px", cursor: "pointer", color: "#28435c", fontSize: 12, fontWeight: 600, textAlign: "left" }}
+                  >
+                    <Target size={14} />Open Prospecting
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSidebarMenu(false);
+                      setCreateDealStage(effectiveDealStages.find((stage) => stage.group === "active")?.id ?? "reprospect");
+                    }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", border: "none", background: "#f8fbff", borderRadius: 8, padding: "9px 10px", cursor: "pointer", color: "#175089", fontSize: 12, fontWeight: 700, textAlign: "left" }}
+                  >
+                    <Plus size={14} />New Deal
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 2 }}>View</span>
@@ -1898,28 +2070,120 @@ export default function Pipeline() {
             <MultiSelectFilter values={assigneeFilters} onChange={setAssigneeFilters} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
             <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
             {tab === "deal" && <MultiSelectFilter values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
+            {tab === "deal" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Commit to Deal</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: commitFilter.length ? "1.5px solid #bbf7d0" : "1px solid #e2eaf2", background: commitFilter.length ? "#f0fdf4" : "#f8fafc" }}>
+                  <input
+                    type="checkbox"
+                    checked={commitFilter.length > 0}
+                    onChange={(e) => setCommitFilter(e.target.checked ? ["committed"] : [])}
+                    style={{ accentColor: "#22c55e", width: 14, height: 14 }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: commitFilter.length ? "#15803d" : "#2d4258" }}>Committed only</span>
+                </label>
+              </div>
+            )}
+            <div
+              style={{
+                borderRadius: 14,
+                border: "1px solid #e7eef7",
+                background: "linear-gradient(180deg, #fbfdff 0%, #f8fbff 100%)",
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#1f3654", letterSpacing: "0.03em", textTransform: "uppercase" }}>
+                    Prospecting Pulse
+                  </div>
+                  <div style={{ fontSize: 11, color: "#7a96b0", marginTop: 3, lineHeight: 1.45 }}>
+                    Lightweight SDR momentum view so deals stay the main focus.
+                  </div>
+                </div>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    background: "#eef6ff",
+                    color: "#2563eb",
+                    border: "1px solid #d7e6fb",
+                  }}
+                >
+                  {currentBoardLoading ? "Loading..." : `${prospectingPulse.total} prospects`}
+                </span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {[
+                  { label: "Ready to work", value: prospectingPulse.outreach + prospectingPulse.inProgress, tone: "#0f766e", bg: "#ecfdf5" },
+                  { label: "Meetings booked", value: prospectingPulse.meetingBooked, tone: "#6d28d9", bg: "#f5f3ff" },
+                  { label: "Needs attention", value: prospectingPulse.needsAttention, tone: "#b45309", bg: "#fff7ed" },
+                  { label: "Active motion", value: prospectingPulse.actionable, tone: "#1d4ed8", bg: "#eff6ff" },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      minWidth: 0,
+                      borderRadius: 10,
+                      padding: "8px 9px",
+                      background: item.bg,
+                      border: "1px solid rgba(148,163,184,0.14)",
+                    }}
+                  >
+                    <div style={{ fontSize: 17, fontWeight: 800, color: item.tone, lineHeight: 1 }}>{currentBoardLoading ? "—" : item.value}</div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#5d7288", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{item.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10 }}>
+                  <span style={{ color: "#7a96b0", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Lane mix</span>
+                  <span style={{ color: "#8da1b5", fontWeight: 600 }}>
+                    {prospectingPulse.total > 0 ? `${prospectingPulse.actionable} actively moving` : "No visible prospects"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", width: "100%", height: 8, borderRadius: 999, overflow: "hidden", background: "#edf2f7" }}>
+                  {prospectingPulse.bars.length ? (
+                    prospectingPulse.bars.map((item) => (
+                      <div
+                        key={item.key}
+                        style={{
+                          width: `${(item.value / Math.max(prospectingPulse.total, 1)) * 100}%`,
+                          background: item.color,
+                        }}
+                      />
+                    ))
+                  ) : (
+                    <div style={{ width: "100%", background: "#dbe6f2" }} />
+                  )}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {[
+                    { label: "Outreach", value: prospectingPulse.outreach, color: "#60a5fa" },
+                    { label: "In progress", value: prospectingPulse.inProgress, color: "#14b8a6" },
+                    { label: "Meeting booked", value: prospectingPulse.meetingBooked, color: "#8b5cf6" },
+                    { label: "Needs attention", value: prospectingPulse.needsAttention, color: "#f59e0b" },
+                  ].map((item) => (
+                    <span key={item.label} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: "#6b7f95", fontWeight: 600 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: 999, background: item.color, display: "inline-block" }} />
+                      {item.label} {currentBoardLoading ? "—" : item.value}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
 
           <div style={{ flex: 1 }} />
-          <div style={{ display: "grid", gap: 10 }}>
-            {canImportCrm && (
-              <button
-                className="crm-button soft"
-                onClick={() => {
-                  setCrmImportError("");
-                  setCrmImportResult(null);
-                  setShowCrmImport(true);
-                }}
-                style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-              >
-                <Building2 size={14} />Import from CRM
-              </button>
-            )}
-            <button className="crm-button primary" onClick={() => setCreateDealStage(effectiveDealStages.find((stage) => stage.group === "active")?.id ?? "reprospect")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: accentColor }}><Plus size={14} />New Deal</button>
-            <button className="crm-button soft" onClick={() => navigate("/prospecting")} style={{ width: "100%", height: 38, fontSize: 13, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <Target size={14} />Open Prospecting
-            </button>
-          </div>
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflow: "hidden" }}>
@@ -1933,6 +2197,64 @@ export default function Pipeline() {
               {busyStage && <span style={{ color: "#2563eb", fontWeight: 600 }}>Updating lane...</span>}
             </div>
           </div>
+
+          {tab === "deal" && (() => {
+            const maxCount = Math.max(...stageForecast.map((s) => s.count), 1);
+            const totalDeals = stageForecast.reduce((s, st) => s + st.count, 0);
+            const totalValue = stageForecast.reduce((s, st) => s + st.value, 0);
+            return (
+              <div style={{ borderBottom: "1px solid #e8eef5", background: "linear-gradient(180deg,#f8fafc 0%,#fff 100%)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px 0" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <TrendingUp size={13} style={{ color: "#3b6ea5" }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#1e3a5f", letterSpacing: "0.02em" }}>Pipeline Funnel</span>
+                    <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500 }}>{totalDeals} deals · {formatCurrency(totalValue)}</span>
+                  </div>
+                  <button type="button" onClick={() => setShowForecast((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", display: "flex", alignItems: "center", gap: 3, padding: "2px 4px", borderRadius: 6, fontSize: 11 }}>
+                    <ChevronDown size={13} style={{ transform: showForecast ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+                    {showForecast ? "hide" : "show"}
+                  </button>
+                </div>
+                {showForecast && (
+                  <div style={{ padding: "12px 20px 14px", overflowX: "auto" }}>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 0, minWidth: "max-content" }}>
+                      {stageForecast.map((stage, index) => {
+                        const barH = Math.max(6, Math.round((stage.count / maxCount) * 60));
+                        const convPct = stage.conversionPct;
+                        const convColor = convPct == null ? "#cbd5e1" : convPct >= 60 ? "#16a34a" : convPct >= 30 ? "#d97706" : "#dc2626";
+                        const convBg = convPct == null ? "#f1f5f9" : convPct >= 60 ? "#dcfce7" : convPct >= 30 ? "#fef3c7" : "#fee2e2";
+                        const isLast = index === stageForecast.length - 1;
+                        const isWon = stage.id === "closed_won";
+                        const barColor = isWon
+                          ? "linear-gradient(180deg,#4ade80,#16a34a)"
+                          : "linear-gradient(180deg,#93c5fd,#3b82f6)";
+                        return (
+                          <div key={stage.id} style={{ display: "flex", alignItems: "flex-end", gap: 0 }}>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, width: 90 }}>
+                              <span style={{ fontSize: 20, fontWeight: 800, color: stage.count > 0 ? "#0f2744" : "#cbd5e1", lineHeight: 1 }}>{stage.count}</span>
+                              <div style={{ width: "100%", height: 60, display: "flex", alignItems: "flex-end", padding: "0 8px" }}>
+                                <div style={{ width: "100%", height: barH, borderRadius: "5px 5px 0 0", background: stage.count > 0 ? barColor : "#e2e8f0", transition: "height 0.3s ease" }} />
+                              </div>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: "#475569", textAlign: "center", lineHeight: 1.3, maxWidth: 86, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage.label}</span>
+                              <span style={{ fontSize: 10, fontWeight: 600, color: stage.value > 0 ? "#2563eb" : "#cbd5e1" }}>{stage.value > 0 ? formatCurrency(stage.value) : "—"}</span>
+                            </div>
+                            {!isLast && (
+                              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: 44, paddingBottom: 32, gap: 3, flexShrink: 0 }}>
+                                <div style={{ background: convBg, borderRadius: 6, padding: "2px 6px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                                  <ArrowRight size={10} style={{ color: convColor }} />
+                                  <span style={{ fontSize: 9, fontWeight: 800, color: convColor, lineHeight: 1 }}>{convPct != null ? `${convPct}%` : "—"}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <div
             className="pipeline-board-scroll"
@@ -1960,7 +2282,7 @@ export default function Pipeline() {
                             next.set("deal", deal.id);
                             return next;
                           }, { replace: true });
-                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
+                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} accountPriorityTag={deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
                         prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
@@ -1981,7 +2303,7 @@ export default function Pipeline() {
           next.delete("deal");
           return next;
         }, { replace: true });
-      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
+      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} onCompanyUpdated={(updated) => setCompanies((prev) => prev.some((c) => c.id === updated.id) ? prev.map((c) => c.id === updated.id ? updated : c) : [...prev, updated])} />}
       {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} companies={companies} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
       {pendingConvertProspect && (
         <>

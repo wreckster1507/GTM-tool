@@ -824,6 +824,19 @@ export default function AccountSourcingCompanyDetail() {
     company?.region ? `🌐 ${company.region}` : undefined,
   ].filter(Boolean) as string[];
 
+  useEffect(() => {
+    if (!showDealModal || !company) return;
+    setDealError("");
+    setDealForm((current) => ({
+      ...current,
+      name: current.name.trim() ? current.name : `${company.name} - Discovery`,
+    }));
+    dealsApi
+      .list(0, 25, company.id)
+      .then((rows) => setExistingCompanyDeals(rows.map((deal) => ({ id: deal.id, name: deal.name, stage: deal.stage }))))
+      .catch(() => setExistingCompanyDeals([]));
+  }, [showDealModal, company]);
+
   if (loading) {
     return (
       <div style={pageStyle}>
@@ -902,19 +915,6 @@ export default function AccountSourcingCompanyDetail() {
   const researchFingerprint = `${company.enriched_at || ""}|${company.icp_score ?? ""}|${company.domain}|${cacheTs(cache, "icp_analysis") || ""}|${cacheTs(cache, "research_quality") || ""}`;
 
   const tier = company.icp_tier || "cold";
-
-  useEffect(() => {
-    if (!showDealModal || !company) return;
-    setDealError("");
-    setDealForm((current) => ({
-      ...current,
-      name: current.name.trim() ? current.name : `${company.name} - Discovery`,
-    }));
-    dealsApi
-      .list(0, 25, company.id)
-      .then((rows) => setExistingCompanyDeals(rows.map((deal) => ({ id: deal.id, name: deal.name, stage: deal.stage }))))
-      .catch(() => setExistingCompanyDeals([]));
-  }, [showDealModal, company]);
 
   return (
     <div style={pageStyle}>

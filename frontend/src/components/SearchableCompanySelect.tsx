@@ -48,8 +48,8 @@ export default function SearchableCompanySelect({
     if (!open) return;
 
     let cancelled = false;
+    setLoading(true);
     const handle = window.setTimeout(async () => {
-      setLoading(true);
       try {
         const response = await accountSourcingApi.listCompaniesPaginated({
           skip: 0,
@@ -89,11 +89,19 @@ export default function SearchableCompanySelect({
   }, [companies, open, search, selectedCompany]);
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div
+      ref={ref}
+      style={{ position: "relative" }}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+      }}
+    >
       <button
         type="button"
         disabled={disabled}
-        onClick={() => {
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
           if (disabled) return;
           setOpen((current) => !current);
         }}
@@ -135,6 +143,9 @@ export default function SearchableCompanySelect({
             boxShadow: "0 18px 36px rgba(15,23,42,0.14)",
             zIndex: 40,
             overflow: "hidden",
+          }}
+          onMouseDown={(event) => {
+            event.stopPropagation();
           }}
         >
           <div style={{ padding: 8, borderBottom: "1px solid #edf2f7" }}>

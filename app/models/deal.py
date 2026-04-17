@@ -83,6 +83,7 @@ class Deal(DealBase, table=True):
     tags: list[str] = Field(default=[], sa_column=Column(JSONB, nullable=False, server_default="[]"))
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     next_step: Optional[str] = Field(default=None, sa_column=Column(Text))
+    commit_to_deal: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -133,6 +134,7 @@ class DealRead(DealBase):
     client_engagement_signal: Optional[dict] = None  # {type, source, label}
     seller_engagement_reason: Optional[str] = None
     client_engagement_reason: Optional[str] = None
+    commit_to_deal: bool = False
 
 
 class DealUpdate(SQLModel):
@@ -159,6 +161,7 @@ class DealUpdate(SQLModel):
     stakeholder_count: Optional[int] = None
     owner_id: Optional[str] = None
     email_cc_alias: Optional[str] = None
+    commit_to_deal: Optional[bool] = None
 
 
 # ── DealContact junction ─────────────────────────────────────────────────────

@@ -55,8 +55,8 @@ class ContactRepository(BaseRepository[Contact]):
         company_id: Optional[UUID] = None,
         q: Optional[str] = None,
         persona: Optional[str] = None,
-        outreach_lane: Optional[str] = None,
         sequence_status: Optional[str] = None,
+        call_disposition: Optional[str] = None,
         email_state: Optional[str] = None,
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
@@ -133,17 +133,25 @@ class ContactRepository(BaseRepository[Contact]):
             base_stmt = base_stmt.where(persona_filter)
             count_stmt = count_stmt.where(persona_filter)
 
-        outreach_lane_values = _parse_multi_query(outreach_lane)
-        if outreach_lane_values:
-            lane_filter = Contact.outreach_lane.in_(outreach_lane_values)
-            base_stmt = base_stmt.where(lane_filter)
-            count_stmt = count_stmt.where(lane_filter)
-
         sequence_values = _parse_multi_query(sequence_status)
         if sequence_values:
             sequence_filter = Contact.sequence_status.in_(sequence_values)
             base_stmt = base_stmt.where(sequence_filter)
             count_stmt = count_stmt.where(sequence_filter)
+
+        call_disposition_values = _parse_multi_query(call_disposition)
+        if call_disposition_values:
+            include_unreviewed = "unreviewed" in call_disposition_values
+            named_dispositions = [value for value in call_disposition_values if value != "unreviewed"]
+            clauses = []
+            if named_dispositions:
+                clauses.append(Contact.call_disposition.in_(named_dispositions))
+            if include_unreviewed:
+                clauses.append(or_(Contact.call_disposition.is_(None), Contact.call_disposition == ""))
+            disposition_filter = or_(*clauses) if clauses else None
+            if disposition_filter is not None:
+                base_stmt = base_stmt.where(disposition_filter)
+                count_stmt = count_stmt.where(disposition_filter)
 
         email_filters = []
         for state in _parse_multi_query(email_state):

@@ -27,7 +27,7 @@ class PaginationParams:
     def __init__(
         self,
         skip: int = Query(default=0, ge=0, description="Records to skip"),
-        limit: int = Query(default=50, ge=1, le=500, description="Max records to return"),
+        limit: int = Query(default=50, ge=1, le=2000, description="Max records to return"),
     ):
         # Centralizing pagination defaults here keeps list endpoints consistent.
         self.skip = skip

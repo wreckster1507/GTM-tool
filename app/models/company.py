@@ -55,6 +55,7 @@ class Company(CompanyBase, table=True):
     last_outreach_at: Optional[datetime] = None
     # Investor mapping fields
     ownership_stage: Optional[str] = None  # e.g. "PE-backed (KKR)", "Public (NYSE: BILL)"
+    priority_tag: Optional[str] = None  # "P0", "P1", "P2"
     pe_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     vc_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     strategic_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -97,6 +98,7 @@ class CompanyRead(CompanyBase):
     outreach_plan: Optional[Any] = None
     last_outreach_at: Optional[datetime] = None
     ownership_stage: Optional[str] = None
+    priority_tag: Optional[str] = None
     pe_investors: Optional[str] = None
     vc_investors: Optional[str] = None
     strategic_investors: Optional[str] = None
@@ -159,6 +161,7 @@ class CompanyUpdate(SQLModel):
     outreach_plan: Optional[Any] = None
     last_outreach_at: Optional[datetime] = None
     ownership_stage: Optional[str] = None
+    priority_tag: Optional[str] = None
     pe_investors: Optional[str] = None
     vc_investors: Optional[str] = None
     strategic_investors: Optional[str] = None

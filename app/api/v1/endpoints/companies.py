@@ -109,6 +109,17 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
     return await repo.save(company)
 
 
+@router.patch("/{company_id}", response_model=CompanyRead)
+async def patch_company(company_id: UUID, payload: CompanyUpdate, session: DBSession, _user: CurrentUser):
+    repo = CompanyRepository(session)
+    company = await repo.get_or_raise(company_id)
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(company, key, value)
+    company.updated_at = datetime.utcnow()
+    return await repo.save(company)
+
+
 @router.delete("/{company_id}", status_code=204)
 async def delete_company(company_id: UUID, session: DBSession, _admin: AdminUser):
     repo = CompanyRepository(session)

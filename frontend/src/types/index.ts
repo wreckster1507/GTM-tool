@@ -40,6 +40,7 @@ export interface Company {
   outreach_plan?: Record<string, unknown>;
   last_outreach_at?: string;
   ownership_stage?: string;
+  priority_tag?: "P0" | "P1" | "P2" | null;
   pe_investors?: string;
   vc_investors?: string;
   strategic_investors?: string;
@@ -184,6 +185,7 @@ export interface Deal {
   client_engagement_signal?: { type: string; source: string; label: string; reason?: string };
   seller_engagement_reason?: string;
   client_engagement_reason?: string;
+  commit_to_deal?: boolean;
 }
 
 export interface MeddpiccAiDimension {

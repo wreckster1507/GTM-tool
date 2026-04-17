@@ -13,7 +13,6 @@ import {
 import { avatarColor, getInitials } from "../lib/utils";
 import {
   getProspectTrackingScore,
-  getProspectTrackingStage,
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
@@ -34,13 +33,6 @@ const PERSONA_FILTER_OPTIONS = [
   { value: "unknown", label: "Unknown" },
 ];
 
-const LANE_FILTER_OPTIONS = [
-  { value: "warm_intro", label: "Warm Intro" },
-  { value: "event_follow_up", label: "Event Follow-up" },
-  { value: "cold_operator", label: "Cold Operator" },
-  { value: "cold_strategic", label: "Cold Strategic" },
-];
-
 const SEQUENCE_FILTER_OPTIONS = [
   { value: "research_needed", label: "Research Needed" },
   { value: "ready", label: "Ready" },
@@ -50,12 +42,91 @@ const SEQUENCE_FILTER_OPTIONS = [
   { value: "meeting_booked", label: "Meeting Booked" },
 ];
 
+const CALL_DISPOSITION_FILTER_OPTIONS = [
+  { value: "unreviewed", label: "Unreviewed" },
+  { value: "interested", label: "Interested" },
+  { value: "working", label: "Working" },
+  { value: "callback", label: "Callback" },
+  { value: "nurture", label: "Nurture" },
+  { value: "not_interested", label: "Not Interested" },
+  { value: "bad_fit", label: "Bad Fit" },
+  { value: "do_not_target", label: "Do Not Target" },
+];
+
 const EMAIL_FILTER_OPTIONS = [
   { value: "has_email", label: "Has email" },
   { value: "missing_email", label: "Missing email" },
   { value: "verified", label: "Verified" },
   { value: "unverified", label: "Unverified" },
 ];
+
+const PROSPECT_PROGRESS_STAGES = [
+  { key: "ready", label: "Ready" },
+  { key: "email", label: "Email" },
+  { key: "call", label: "Call" },
+  { key: "linkedin", label: "LinkedIn" },
+  { key: "reply", label: "Reply" },
+  { key: "meeting", label: "Meeting" },
+] as const;
+
+type ProspectProgressStep = {
+  key: (typeof PROSPECT_PROGRESS_STAGES)[number]["key"];
+  label: string;
+  state: "done" | "current" | "pending";
+  detail: string;
+};
+
+function getProspectProgressSteps(contact: Contact): ProspectProgressStep[] {
+  const sequence = contact.sequence_status || "";
+  const callStatus = contact.call_status || "";
+  const callDisposition = contact.call_disposition || "";
+  const linkedin = contact.linkedin_status || "";
+  const emailOpened = (contact.email_open_count ?? 0) > 0;
+  const emailSent = ["queued_instantly", "sent", "replied", "meeting_booked"].includes(sequence) || emailOpened;
+  const callTouched = Boolean(callStatus && callStatus !== "none");
+  const linkedinTouched = Boolean(linkedin && linkedin !== "none");
+  const replied = sequence === "replied" || sequence === "meeting_booked" || linkedin === "replied" || ["interested", "working", "callback"].includes(callDisposition);
+  const meetingBooked = sequence === "meeting_booked";
+
+  const currentKey: ProspectProgressStep["key"] =
+    meetingBooked ? "meeting" :
+    replied ? "reply" :
+    linkedinTouched ? "linkedin" :
+    callTouched ? "call" :
+    emailSent ? "email" :
+    "ready";
+
+  const reached = new Set<ProspectProgressStep["key"]>(["ready"]);
+  if (emailSent) reached.add("email");
+  if (callTouched) reached.add("call");
+  if (linkedinTouched) reached.add("linkedin");
+  if (replied) reached.add("reply");
+  if (meetingBooked) reached.add("meeting");
+
+  const detailByKey: Record<ProspectProgressStep["key"], string> = {
+    ready: contact.tracking_stage || "Ready for first touch",
+    email: emailOpened
+      ? `Opened ${contact.email_open_count} time${(contact.email_open_count ?? 0) === 1 ? "" : "s"}`
+      : emailSent
+        ? "Email touch sent"
+        : "No email touch yet",
+    call: callDisposition
+      ? callDisposition.replace(/_/g, " ")
+      : callTouched
+        ? callStatus
+        : "No call logged",
+    linkedin: linkedinTouched ? linkedin : "No LinkedIn motion",
+    reply: replied ? (contact.tracking_summary || "Engagement detected") : "Waiting for response",
+    meeting: meetingBooked ? "Meeting booked" : "No meeting yet",
+  };
+
+  return PROSPECT_PROGRESS_STAGES.map((stage) => ({
+    key: stage.key,
+    label: stage.label,
+    state: stage.key === currentKey ? "current" : reached.has(stage.key) ? "done" : "pending",
+    detail: detailByKey[stage.key],
+  }));
+}
 
 function parseSearchParamList(value: string | null): string[] {
   if (!value) return [];
@@ -75,8 +146,8 @@ export default function Contacts() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
-  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
+  const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("call")));
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
@@ -122,8 +193,8 @@ export default function Contacts() {
       limit: pageSize,
       q: debouncedSearch || undefined,
       persona: personaFilter.length ? personaFilter : undefined,
-      outreachLane: laneFilter.length ? laneFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
+      callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
       aeId: aeFilter.length ? aeFilter : undefined,
       sdrId: sdrFilter.length ? sdrFilter : undefined,
       prospectOnly: true,
@@ -261,14 +332,14 @@ export default function Contacts() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
-      laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
+      callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [search, laneFilter, sequenceFilter, aeFilter, sdrFilter, page]);
+  }, [search, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, page]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -279,12 +350,12 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, laneFilter, sequenceFilter, aeFilter, sdrFilter]);
+  }, [debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [tab, page, debouncedSearch, laneFilter, sequenceFilter, aeFilter, sdrFilter]);
+  }, [tab, page, debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter]);
 
   useEffect(() => {
     const dismiss = () => setOpenActionsId(null);
@@ -707,8 +778,8 @@ export default function Contacts() {
             {/* Filters */}
             {(() => {
               const hasFilters = !!(
-                laneFilter.length ||
                 sequenceFilter.length ||
+                callDispositionFilter.length ||
                 aeFilter.length ||
                 sdrFilter.length ||
                 search
@@ -729,20 +800,20 @@ export default function Contacts() {
                   zIndex: 5,
                 }}>
                   <MultiSelectFilter
-                    label="Lane"
-                    values={laneFilter}
-                    onChange={setLaneFilter}
-                    options={LANE_FILTER_OPTIONS}
-                    allLabel="All lanes"
-                    minWidth={160}
-                  />
-                  <MultiSelectFilter
                     label="Sequence"
                     values={sequenceFilter}
                     onChange={setSequenceFilter}
                     options={SEQUENCE_FILTER_OPTIONS}
                     allLabel="All sequence states"
                     minWidth={170}
+                  />
+                  <MultiSelectFilter
+                    label="Call disposition"
+                    values={callDispositionFilter}
+                    onChange={setCallDispositionFilter}
+                    options={CALL_DISPOSITION_FILTER_OPTIONS}
+                    allLabel="All call outcomes"
+                    minWidth={190}
                   />
                   {/* Owner filters */}
                   {teamUsers.length > 0 && (
@@ -784,7 +855,7 @@ export default function Contacts() {
                       type="button"
                       onClick={() => {
                         setSearch("");
-                        setLaneFilter([]); setSequenceFilter([]);
+                        setSequenceFilter([]); setCallDispositionFilter([]);
                         setAeFilter([]); setSdrFilter([]);
                       }}
                       style={{
@@ -821,7 +892,6 @@ export default function Contacts() {
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Company</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Title</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Stage</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Progress</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Timezone</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email Status</th>
@@ -886,33 +956,11 @@ export default function Contacts() {
                           <td>
                             {(() => {
                               const tone = getProspectTrackingTone(c);
+                              const progressSteps = getProspectProgressSteps(c);
                               return (
                                 <div
                                   style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    padding: "6px 10px",
-                                    borderRadius: 999,
-                                    background: tone.background,
-                                    border: `1px solid ${tone.border}`,
-                                    color: tone.color,
-                                    fontSize: 11,
-                                    fontWeight: 800,
-                                    whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {getProspectTrackingStage(c)}
-                                </div>
-                              );
-                            })()}
-                          </td>
-                          <td>
-                            {(() => {
-                              const tone = getProspectTrackingTone(c);
-                              return (
-                                <div
-                                  style={{
-                                    minWidth: 250,
+                                    minWidth: 310,
                                     padding: "10px 12px",
                                     borderRadius: 14,
                                     background: tone.soft,
@@ -936,6 +984,63 @@ export default function Contacts() {
                                         {new Date(c.tracking_last_activity_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                                       </span>
                                     ) : null}
+                                  </div>
+                                  <div
+                                    style={{
+                                      display: "grid",
+                                      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                                      gap: 4,
+                                      alignItems: "center",
+                                      marginBottom: 8,
+                                    }}
+                                  >
+                                    {progressSteps.map((step, index) => {
+                                      const stateStyle = step.state === "done"
+                                        ? { background: tone.background, border: tone.border, color: tone.color }
+                                        : step.state === "current"
+                                          ? { background: "#eaf2ff", border: "#bfd7fb", color: "#175089" }
+                                          : { background: "#f5f8fb", border: "#dbe5ef", color: "#8aa0b5" };
+                                      return (
+                                        <div key={step.key} style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                                          <div
+                                            title={`${step.label}: ${step.detail}`}
+                                            style={{
+                                              minWidth: 0,
+                                              flex: 1,
+                                              height: 28,
+                                              borderRadius: 999,
+                                              border: `1px solid ${stateStyle.border}`,
+                                              background: stateStyle.background,
+                                              color: stateStyle.color,
+                                              display: "flex",
+                                              alignItems: "center",
+                                              justifyContent: "center",
+                                              padding: "0 8px",
+                                              fontSize: 10,
+                                              fontWeight: 800,
+                                              letterSpacing: 0.2,
+                                              whiteSpace: "nowrap",
+                                            }}
+                                          >
+                                            {step.label}
+                                          </div>
+                                          {index < progressSteps.length - 1 ? (
+                                            <div
+                                              style={{
+                                                width: 8,
+                                                height: 2,
+                                                borderRadius: 999,
+                                                background:
+                                                  step.state === "done" || step.state === "current"
+                                                    ? tone.border
+                                                    : "#dbe5ef",
+                                                flexShrink: 0,
+                                              }}
+                                            />
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                   <div style={{ color: "#4d6178", fontSize: 12.5, lineHeight: 1.5 }}>
                                     {getProspectTrackingSummary(c)}
@@ -1185,23 +1290,6 @@ export default function Contacts() {
                                     style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, opacity: c.company_id ? 1 : 0.55 }}
                                   >
                                     <Target className="h-3.5 w-3.5" />Convert to deal
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      setOpenActionsId(null);
-                                      if (!window.confirm(`Delete "${c.first_name} ${c.last_name}"?`)) return;
-                                      await contactsApi.delete(c.id);
-                                      if (contacts.length === 1 && page > 1) {
-                                        setPage((current) => current - 1);
-                                      } else {
-                                        loadContacts();
-                                      }
-                                    }}
-                                    className="crm-button soft"
-                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, color: "#c0392b", borderColor: "#fecaca" }}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />Delete
                                   </button>
                                 </div>
                               ) : null}
@@ -1679,10 +1767,10 @@ export default function Contacts() {
             {importSummary.missing_company_count > 0 && (
               <div style={{ marginTop: 18, border: "1px solid #f5ddaa", background: "#fff8e8", borderRadius: 14, padding: "14px 16px" }}>
                 <div style={{ color: "#8a5b00", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 8 }}>
-                  Placeholder companies created
+                  Company mapping warning
                 </div>
                 <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6 }}>
-                  {importSummary.missing_company_count} compan{importSummary.missing_company_count === 1 ? "y was" : "ies were"} imported as a lightweight account so the prospects could migrate now. You can enrich or remap those accounts later when needed.
+                  {importSummary.missing_company_count} compan{importSummary.missing_company_count === 1 ? "y was" : "ies were"} not matched cleanly to an existing account. Beacon created placeholder companies so the upload could proceed, but we recommend mapping them to the right existing company where possible.
                 </div>
                 <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
                   {importSummary.missing_companies.map((company) => (
@@ -1733,22 +1821,35 @@ export default function Contacts() {
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
                   <div style={{ color: "#7d6d4f", fontSize: 12.5 }}>
-                    Choose enrich when you want Beacon to start researching one of these placeholder accounts. If you skip it for now, the prospects stay migrated and you can enrich later.
+                    You can review these now and map them properly later. If you do nothing, the upload still stands and you can proceed for now.
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleCreateMissingCompanies()}
-                    disabled={creatingMissingCompanies || importSummary.missing_companies.length === 0}
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      borderRadius: 10, border: "1px solid #b8d0f0", background: "#eef5ff", color: "#175089",
-                      padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: creatingMissingCompanies || importSummary.missing_companies.length === 0 ? "default" : "pointer",
-                      opacity: creatingMissingCompanies || importSummary.missing_companies.length === 0 ? 0.7 : 1,
-                    }}
-                  >
-                    {creatingMissingCompanies ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
-                    Enrich all missing companies
-                  </button>
+                  <div style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => setImportSummary(null)}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        borderRadius: 10, border: "1px solid #e2c98d", background: "#fffdf6", color: "#8a5b00",
+                        padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      Proceed for now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCreateMissingCompanies()}
+                      disabled={creatingMissingCompanies || importSummary.missing_companies.length === 0}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        borderRadius: 10, border: "1px solid #b8d0f0", background: "#eef5ff", color: "#175089",
+                        padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: creatingMissingCompanies || importSummary.missing_companies.length === 0 ? "default" : "pointer",
+                        opacity: creatingMissingCompanies || importSummary.missing_companies.length === 0 ? 0.7 : 1,
+                      }}
+                    >
+                      {creatingMissingCompanies ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
+                      Enrich all missing companies
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

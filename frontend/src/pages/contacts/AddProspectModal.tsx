@@ -45,6 +45,10 @@ export default function AddProspectModal({
       setError("First or last name is required");
       return;
     }
+    if (!form.company_id) {
+      setError("Please map this prospect to a company before adding.");
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -108,7 +112,11 @@ export default function AddProspectModal({
                 value={form.company_id}
                 onChange={(companyId) => updateField("company_id", companyId ?? "")}
                 placeholder="Search company..."
+                allowNone={false}
               />
+              <div style={{ marginTop: 6, fontSize: 12, color: "#7f8fa5" }}>
+                A prospect must be mapped to an existing company.
+              </div>
             </div>
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b", marginBottom: 6, display: "block" }}>LinkedIn URL</label>
@@ -117,7 +125,7 @@ export default function AddProspectModal({
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
             <button type="button" onClick={handleClose} disabled={saving} style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "1px solid #d9e1ec", background: "#fff", color: "#5e738b", fontSize: 13, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>Cancel</button>
-            <button type="button" disabled={saving} onClick={() => void handleSubmit()} style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "none", background: "#175089", color: "#fff", fontSize: 13, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>
+            <button type="button" disabled={saving || !form.company_id} onClick={() => void handleSubmit()} style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "none", background: saving || !form.company_id ? "#9eb6d2" : "#175089", color: "#fff", fontSize: 13, fontWeight: 700, cursor: saving || !form.company_id ? "default" : "pointer" }}>
               {saving ? "Creating..." : "Add Prospect"}
             </button>
           </div>

@@ -4,7 +4,7 @@ import {
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search, Loader2, Sparkles,
 } from "lucide-react";
-import { accountSourcingApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi } from "../../lib/api";
+import { accountSourcingApi, companiesApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi } from "../../lib/api";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, User } from "../../types";
@@ -21,6 +21,7 @@ interface Props {
   onDealUpdated: (deal: Deal) => void;
   onDealDeleted?: (dealId: string) => void;
   onConvert?: (deal: Deal) => void;
+  onCompanyUpdated?: (company: Company) => void;
 }
 
 const PERSONA_STYLE: Record<string, { bg: string; color: string }> = {
@@ -285,7 +286,7 @@ function EngagementPanel({
   );
 }
 
-export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert }: Props) {
+export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert, onCompanyUpdated }: Props) {
   const { isAdmin } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [dealContacts, setDealContacts] = useState<DealContact[]>([]);
@@ -312,6 +313,10 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   // Tag input
   const [tagInput, setTagInput] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [localPriorityTag, setLocalPriorityTag] = useState<"P0" | "P1" | "P2" | null>(() => {
+    const tag = companies.find((c) => c.id === deal.company_id)?.priority_tag ?? null;
+    return tag as "P0" | "P1" | "P2" | null;
+  });
 
   // Company searchable combobox
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
@@ -813,6 +818,48 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 <option value="cold_call">Cold Call</option>
                 <option value="linkedin">LinkedIn</option>
               </select>
+            </FieldRow>
+
+            {/* Account Priority Tag */}
+            {deal.company_id && (
+              <FieldRow label="Account Priority" icon={<Tag size={13} />}>
+                <select
+                  value={localPriorityTag ?? ""}
+                  onChange={(e) => {
+                    const prev = localPriorityTag;
+                    const next = (e.target.value || null) as "P0" | "P1" | "P2" | null;
+                    setLocalPriorityTag(next);
+                    console.log("[priority] patching company_id=", deal.company_id, "next=", next);
+                    companiesApi.patch(deal.company_id!, { priority_tag: next } as Partial<Company>)
+                      .then((updated) => { console.log("[priority] patch ok, tag=", updated.priority_tag); onCompanyUpdated?.(updated); })
+                      .catch((err) => { console.error("[priority] patch failed:", err?.message ?? err); setLocalPriorityTag(prev); });
+                  }}
+                  style={{
+                    ...fieldInputStyle,
+                    color: localPriorityTag === "P0" ? "#be123c" : localPriorityTag === "P1" ? "#c2410c" : localPriorityTag === "P2" ? "#15803d" : undefined,
+                    fontWeight: localPriorityTag ? 700 : undefined,
+                  }}
+                >
+                  <option value="">No priority</option>
+                  <option value="P0">P0</option>
+                  <option value="P1">P1</option>
+                  <option value="P2">P2</option>
+                </select>
+              </FieldRow>
+            )}
+            {/* Commit to Deal */}
+            <FieldRow label="Commit to Deal" icon={<span style={{ fontSize: 13 }}>✓</span>}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 36, padding: "0 10px", borderRadius: 8, border: deal.commit_to_deal ? "1.5px solid #bbf7d0" : "1px solid #dbe6f2", background: deal.commit_to_deal ? "#f0fdf4" : "#f8fafc" }}>
+                <input
+                  type="checkbox"
+                  checked={deal.commit_to_deal ?? false}
+                  onChange={(e) => patchDeal({ commit_to_deal: e.target.checked } as Partial<Deal>)}
+                  style={{ width: 14, height: 14, accentColor: "#22c55e", cursor: "pointer" }}
+                />
+                <span style={{ fontSize: 12, fontWeight: 600, color: deal.commit_to_deal ? "#15803d" : "#7a96b0" }}>
+                  {deal.commit_to_deal ? "Committed" : "Not committed"}
+                </span>
+              </label>
             </FieldRow>
           </div>
 
