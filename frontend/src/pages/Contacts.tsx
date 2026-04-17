@@ -8,14 +8,20 @@ import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
-  Mail, Clock, PhoneCall, Globe,
+  Mail, Clock, PhoneCall, Globe, X,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import {
   getProspectTrackingScore,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
-import { CALL_DISPOSITION_OPTIONS } from "../lib/prospectWorkflow";
+import {
+  CALL_DISPOSITION_OPTIONS,
+  LINKEDIN_STATUS_OPTIONS,
+  deriveSequenceStatusFromCallDisposition,
+  deriveSequenceStatusFromLinkedinStatus,
+  getNextAction,
+} from "../lib/prospectWorkflow";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
@@ -161,6 +167,10 @@ export default function Contacts() {
   const [callNotes, setCallNotes] = useState("");
   const [callStatus, setCallStatus] = useState("attempted");
   const [savingDisposition, setSavingDisposition] = useState(false);
+  const [linkedinContact, setLinkedinContact] = useState<Contact | null>(null);
+  const [linkedinStatus, setLinkedinStatus] = useState("sent");
+  const [linkedinNotes, setLinkedinNotes] = useState("");
+  const [savingLinkedin, setSavingLinkedin] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
@@ -452,19 +462,53 @@ export default function Contacts() {
     if (!callContact || !callDisposition) return;
     setSavingDisposition(true);
     try {
+      const derivedSeqStatus = deriveSequenceStatusFromCallDisposition(
+        callDisposition,
+        callContact.sequence_status,
+      );
       await contactsApi.update(callContact.id, {
         call_status: callStatus,
         call_disposition: callDisposition,
         call_notes: callNotes || undefined,
         call_last_at: new Date().toISOString(),
+        ...(derivedSeqStatus && derivedSeqStatus !== callContact.sequence_status
+          ? { sequence_status: derivedSeqStatus }
+          : {}),
       });
-      toast.success(`Call disposition saved for ${callContact.first_name}.`, "Call logged");
+      toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
       setCallContact(null);
       loadContacts();
     } catch {
       toast.error("Failed to save call disposition.", "Error");
     } finally {
       setSavingDisposition(false);
+    }
+  };
+
+  const saveLinkedinTouch = async () => {
+    if (!linkedinContact || !linkedinStatus) return;
+    setSavingLinkedin(true);
+    try {
+      const derivedSeqStatus = deriveSequenceStatusFromLinkedinStatus(
+        linkedinStatus,
+        linkedinContact.sequence_status,
+      );
+      await contactsApi.update(linkedinContact.id, {
+        linkedin_status: linkedinStatus,
+        linkedin_last_at: new Date().toISOString(),
+        ...(linkedinNotes ? { call_notes: linkedinNotes } : {}),
+        ...(derivedSeqStatus && derivedSeqStatus !== linkedinContact.sequence_status
+          ? { sequence_status: derivedSeqStatus }
+          : {}),
+      });
+      toast.success(`LinkedIn touch logged for ${linkedinContact.first_name}.`, "LinkedIn logged");
+      setLinkedinContact(null);
+      setLinkedinNotes("");
+      loadContacts();
+    } catch {
+      toast.error("Failed to log LinkedIn touch.", "Error");
+    } finally {
+      setSavingLinkedin(false);
     }
   };
 
@@ -891,6 +935,7 @@ export default function Contacts() {
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email Status</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Call</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>LinkedIn</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Next Action</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>AE</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>SDR</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Action</th>
@@ -1142,6 +1187,26 @@ export default function Contacts() {
                               );
                             })()}
                           </td>
+                          {/* Next Action */}
+                          <td>
+                            {(() => {
+                              const action = getNextAction(c);
+                              if (action.channel === "none" && action.priority === "low") {
+                                return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
+                              }
+                              const toneMap = {
+                                high: { bg: "#fff4ed", border: "#fed7aa", color: "#c2410c" },
+                                medium: { bg: "#f0f9ff", border: "#bae6fd", color: "#0369a1" },
+                                low: { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b" },
+                              };
+                              const tone = toneMap[action.priority];
+                              return (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: tone.color, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 8, padding: "3px 8px", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {action.label}
+                                </span>
+                              );
+                            })()}
+                          </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             <AssignDropdown
                               entityType="contact"
@@ -1223,6 +1288,33 @@ export default function Contacts() {
                                 <Link2 size={13} />
                                 LinkedIn
                               </a>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLinkedinContact(c);
+                                  setLinkedinStatus(c.linkedin_status && c.linkedin_status !== "none" ? c.linkedin_status : "sent");
+                                  setLinkedinNotes("");
+                                }}
+                                style={{
+                                  height: 38,
+                                  borderRadius: 10,
+                                  border: "1px solid #ddd6fe",
+                                  background: "#f5f3ff",
+                                  color: "#6d28d9",
+                                  padding: "0 10px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  cursor: "pointer",
+                                  fontSize: 12.5,
+                                  fontWeight: 700,
+                                }}
+                                title="Log LinkedIn touch"
+                              >
+                                <Link2 size={13} />
+                                Log
+                              </button>
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -2053,6 +2145,96 @@ export default function Contacts() {
                 {savingDisposition ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
                 {savingDisposition ? "Saving…" : "Save & close"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── LinkedIn Touch Logger ────────────────────────────────────── */}
+      {linkedinContact && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setLinkedinContact(null)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 420, maxWidth: "95vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0a66c2,#1e88e5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Link2 size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Log LinkedIn touch</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{linkedinContact.first_name} {linkedinContact.last_name}</div>
+                </div>
+              </div>
+              <button onClick={() => setLinkedinContact(null)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Form */}
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
+              {linkedinContact.linkedin_url && (
+                <a href={linkedinContact.linkedin_url} target="_blank" rel="noopener noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#0a66c2", fontWeight: 600, textDecoration: "none" }}>
+                  <ExternalLink size={13} /> Open LinkedIn profile
+                </a>
+              )}
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>What happened? *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                  {LINKEDIN_STATUS_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setLinkedinStatus(opt.value)}
+                      style={{
+                        padding: "10px 0", borderRadius: 10, border: `2px solid ${linkedinStatus === opt.value ? "#0a66c2" : "#dce8f4"}`,
+                        background: linkedinStatus === opt.value ? "#e8f2ff" : "#f7faff",
+                        color: linkedinStatus === opt.value ? "#0a66c2" : "#4a6580",
+                        fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: "#7a96b0" }}>
+                  {linkedinStatus === "sent" && "You sent a connection request or InMail."}
+                  {linkedinStatus === "accepted" && "They accepted your request — ready to message."}
+                  {linkedinStatus === "replied" && "They replied to your message. Follow up!"}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes (optional)</label>
+                <textarea
+                  value={linkedinNotes}
+                  onChange={(e) => setLinkedinNotes(e.target.value)}
+                  placeholder="What did you say or observe? Any signals…"
+                  rows={3}
+                  style={{ width: "100%", boxSizing: "border-box", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setLinkedinContact(null)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveLinkedinTouch()}
+                  disabled={savingLinkedin}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#0a66c2,#1e88e5)", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: savingLinkedin ? 0.7 : 1 }}
+                >
+                  {savingLinkedin ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                  {savingLinkedin ? "Saving…" : "Log touch"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

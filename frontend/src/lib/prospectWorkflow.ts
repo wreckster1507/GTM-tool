@@ -144,3 +144,44 @@ export function deriveSequenceStatusFromLinkedinStatus(
   if (linkedinStatus === "replied") return currentStatus === "meeting_booked" ? currentStatus : "replied";
   return currentStatus ?? undefined;
 }
+
+export type NextAction = {
+  label: string;
+  priority: "high" | "medium" | "low";
+  channel: "email" | "call" | "linkedin" | "deal" | "none";
+};
+
+export function getNextAction(contact: {
+  sequence_status?: string | null;
+  call_status?: string | null;
+  call_disposition?: string | null;
+  linkedin_status?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  linkedin_url?: string | null;
+}): NextAction {
+  const seq = contact.sequence_status ?? "";
+  const disp = contact.call_disposition ?? "";
+  const li = contact.linkedin_status ?? "";
+
+  if (seq === "meeting_booked") return { label: "Create deal", priority: "high", channel: "deal" };
+  if (disp === "demo_scheduled_booked" || disp === "meeting_confirmed") return { label: "Create deal / confirm calendar", priority: "high", channel: "deal" };
+  if (seq === "replied") return { label: "Reply & book call", priority: "high", channel: "email" };
+  if (disp === "interested_follow_up_required" || disp === "call_back_later_rescheduled") return { label: "Follow-up call", priority: "high", channel: "call" };
+  if (disp === "do_not_contact_dnc" || disp === "connected_not_interested" || disp === "contact_poor_fit") return { label: "Remove from sequence", priority: "low", channel: "none" };
+  if (seq === "not_interested") return { label: "Archive or find champion", priority: "low", channel: "none" };
+  if (seq === "queued_instantly" || seq === "sent") {
+    if (!contact.phone) return { label: "Wait for reply", priority: "low", channel: "email" };
+    return { label: "Call while email warms", priority: "medium", channel: "call" };
+  }
+  if (li === "accepted" && seq !== "replied") return { label: "Send LinkedIn message", priority: "medium", channel: "linkedin" };
+  if (li === "none" || !li) {
+    if (contact.linkedin_url) return { label: "Send LinkedIn request", priority: "medium", channel: "linkedin" };
+  }
+  if (seq === "ready" || seq === "") {
+    if (!contact.email) return { label: "Find email", priority: "high", channel: "none" };
+    return { label: "Launch email sequence", priority: "high", channel: "email" };
+  }
+  if (seq === "research_needed") return { label: "Enrich contact data", priority: "medium", channel: "none" };
+  return { label: "Review & action", priority: "low", channel: "none" };
+}
