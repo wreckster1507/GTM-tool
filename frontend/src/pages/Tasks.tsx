@@ -121,6 +121,90 @@ type TaskStatusFilter = "open" | "completed" | "dismissed" | "all";
 type TaskTypeFilter = "all" | "manual" | "system";
 type EntityFilter = "all" | "company" | "contact" | "deal";
 type QueueScope = "mine" | "team";
+type DueDateFilter = "all" | "overdue" | "today" | "tomorrow" | "this_week" | "upcoming" | "unscheduled";
+
+type DueBadge = {
+  label: string;
+  exactLabel: string;
+  tone: {
+    background: string;
+    border: string;
+    color: string;
+  };
+  bucket: Exclude<DueDateFilter, "all">;
+};
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function diffInDays(from: Date, to: Date) {
+  return Math.round((startOfLocalDay(to).getTime() - startOfLocalDay(from).getTime()) / 86_400_000);
+}
+
+function getDueBadge(dueAt?: string | null, status?: string): DueBadge | null {
+  if (!dueAt) return null;
+
+  const dueDate = new Date(dueAt);
+  if (Number.isNaN(dueDate.getTime())) return null;
+
+  const today = startOfLocalDay(new Date());
+  const daysUntilDue = diffInDays(today, dueDate);
+  const exactLabel = formatDate(dueAt);
+
+  if (status === "completed") {
+    return {
+      label: `Completed · was due ${exactLabel}`,
+      exactLabel,
+      bucket: "upcoming",
+      tone: { background: colors.greenSoft, border: "#cdeedc", color: colors.green },
+    };
+  }
+
+  if (daysUntilDue < 0) {
+    const overdueDays = Math.abs(daysUntilDue);
+    return {
+      label: overdueDays === 1 ? "Overdue by 1 day" : `Overdue by ${overdueDays} days`,
+      exactLabel,
+      bucket: "overdue",
+      tone: { background: colors.redSoft, border: "#ffd0d8", color: colors.red },
+    };
+  }
+
+  if (daysUntilDue === 0) {
+    return {
+      label: "Due today",
+      exactLabel,
+      bucket: "today",
+      tone: { background: colors.amberSoft, border: "#ffe3b3", color: colors.amber },
+    };
+  }
+
+  if (daysUntilDue === 1) {
+    return {
+      label: "Due tomorrow",
+      exactLabel,
+      bucket: "tomorrow",
+      tone: { background: "#eef5ff", border: "#d5e5ff", color: colors.primary },
+    };
+  }
+
+  if (daysUntilDue <= 7) {
+    return {
+      label: "Due this week",
+      exactLabel,
+      bucket: "this_week",
+      tone: { background: "#eef5ff", border: "#d5e5ff", color: colors.primary },
+    };
+  }
+
+  return {
+    label: "Upcoming",
+    exactLabel,
+    bucket: "upcoming",
+    tone: { background: "#f6f7fb", border: colors.border, color: colors.sub },
+  };
+}
 
 function TaskWorkspaceCard({
   task,
@@ -152,6 +236,7 @@ function TaskWorkspaceCard({
   const isOpen = task.status === "open";
   const [showReschedule, setShowReschedule] = useState(false);
   const systemGuidance = getSystemTaskGuidance(task);
+  const dueBadge = getDueBadge(task.due_at, task.status);
 
   return (
     <div className="crm-panel" style={{ padding: 18, borderRadius: 16, boxShadow: "none", display: "grid", gap: 12 }}>
@@ -199,7 +284,7 @@ function TaskWorkspaceCard({
         </div>
         <div style={{ display: "grid", gap: 4, justifyItems: "end", color: colors.faint, fontSize: 12 }}>
           <div>{formatDate(task.updated_at)}</div>
-          {task.due_at ? <div>Due {formatDate(task.due_at)}</div> : null}
+          {task.due_at ? <div>{dueBadge ? dueBadge.exactLabel : `Due ${formatDate(task.due_at)}`}</div> : null}
           {isOpen && (
             showReschedule ? (
               <input
@@ -304,6 +389,68 @@ function TaskWorkspaceCard({
           </div>
         </div>
       </div>
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+          paddingTop: 8,
+          borderTop: `1px solid ${colors.border}`,
+        }}
+      >
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {dueBadge ? (
+            <span
+              style={{
+                borderRadius: 999,
+                padding: "6px 10px",
+                background: dueBadge.tone.background,
+                border: `1px solid ${dueBadge.tone.border}`,
+                color: dueBadge.tone.color,
+                fontSize: 11.5,
+                fontWeight: 800,
+              }}
+            >
+              {dueBadge.label}
+            </span>
+          ) : (
+            <span
+              style={{
+                borderRadius: 999,
+                padding: "6px 10px",
+                background: "#f6f7fb",
+                border: `1px solid ${colors.border}`,
+                color: colors.faint,
+                fontSize: 11.5,
+                fontWeight: 700,
+              }}
+            >
+              No due date
+            </span>
+          )}
+          <span
+            style={{
+              borderRadius: 999,
+              padding: "6px 10px",
+              background: "#f8fbff",
+              border: `1px solid ${colors.border}`,
+              color: colors.sub,
+              fontSize: 11.5,
+              fontWeight: 700,
+            }}
+          >
+            {task.source || (task.task_type === "system" ? "Beacon system" : "Manual task")}
+          </span>
+        </div>
+        {task.due_at ? (
+          <div style={{ color: colors.faint, fontSize: 12.5 }}>
+            Due on {formatDate(task.due_at)}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -316,6 +463,7 @@ export default function TasksPage() {
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(() => (searchParams.get("status") as TaskStatusFilter) ?? "open");
   const [typeFilter, setTypeFilter] = useState<TaskTypeFilter>(() => (searchParams.get("type") as TaskTypeFilter) ?? "all");
   const [entityFilter, setEntityFilter] = useState<EntityFilter>(() => (searchParams.get("entity") as EntityFilter) ?? "all");
+  const [dueDateFilter, setDueDateFilter] = useState<DueDateFilter>(() => (searchParams.get("due") as DueDateFilter) ?? "all");
   const [queueScope, setQueueScope] = useState<QueueScope>(() => (searchParams.get("scope") as QueueScope) ?? "mine");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const isAdmin = user?.role === "admin";
@@ -327,10 +475,11 @@ export default function TasksPage() {
       statusFilter !== "open" ? next.set("status", statusFilter) : next.delete("status");
       typeFilter !== "all" ? next.set("type", typeFilter) : next.delete("type");
       entityFilter !== "all" ? next.set("entity", entityFilter) : next.delete("entity");
+      dueDateFilter !== "all" ? next.set("due", dueDateFilter) : next.delete("due");
       queueScope !== "mine" ? next.set("scope", queueScope) : next.delete("scope");
       return next;
     }, { replace: true });
-  }, [statusFilter, typeFilter, entityFilter, queueScope]);
+  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope]);
 
   const load = async () => {
     setLoading(true);
@@ -352,15 +501,24 @@ export default function TasksPage() {
   }, [typeFilter, entityFilter, queueScope, isAdmin]);
 
   const visibleTasks = useMemo(() => {
-    if (statusFilter === "all") return tasks;
-    return tasks.filter((task) => task.status === statusFilter);
-  }, [tasks, statusFilter]);
+    let filtered = statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter);
+
+    if (dueDateFilter === "all") return filtered;
+
+    return filtered.filter((task) => {
+      const dueBadge = getDueBadge(task.due_at, task.status);
+      if (dueDateFilter === "unscheduled") return !dueBadge;
+      return dueBadge?.bucket === dueDateFilter;
+    });
+  }, [tasks, statusFilter, dueDateFilter]);
 
   const summary = useMemo(() => ({
     open: tasks.filter((task) => task.status === "open").length,
     system: tasks.filter((task) => task.status === "open" && task.task_type === "system").length,
     manual: tasks.filter((task) => task.status === "open" && task.task_type === "manual").length,
     completed: tasks.filter((task) => task.status === "completed").length,
+    overdue: tasks.filter((task) => task.status === "open" && getDueBadge(task.due_at, task.status)?.bucket === "overdue").length,
+    dueToday: tasks.filter((task) => task.status === "open" && getDueBadge(task.due_at, task.status)?.bucket === "today").length,
   }), [tasks]);
 
   const patchTask = async (taskId: string, data: Parameters<typeof tasksApi.update>[1]) => {
@@ -429,12 +587,14 @@ export default function TasksPage() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12 }}>
           {[
             { label: "Open now", value: summary.open, tone: colors.primarySoft, color: colors.primary },
             { label: "Beacon recommendations", value: summary.system, tone: colors.violetSoft, color: colors.violet },
             { label: "Manual follow-ups", value: summary.manual, tone: "#eef7f1", color: colors.green },
             { label: "Completed", value: summary.completed, tone: "#f6f7fb", color: colors.sub },
+            { label: "Overdue", value: summary.overdue, tone: colors.redSoft, color: colors.red },
+            { label: "Due today", value: summary.dueToday, tone: colors.amberSoft, color: colors.amber },
           ].map((item) => (
             <div key={item.label} style={{ border: `1px solid ${colors.border}`, borderRadius: 16, padding: "16px 18px", background: "#fff" }}>
               <div style={{ color: colors.faint, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 8 }}>{item.label}</div>
@@ -477,7 +637,7 @@ export default function TasksPage() {
             </button>
           </div>
         ) : null}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 220px))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 220px))", gap: 12 }}>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as TaskStatusFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="open">Open only</option>
             <option value="completed">Completed</option>
@@ -494,6 +654,15 @@ export default function TasksPage() {
             <option value="deal">Deals</option>
             <option value="contact">Prospects</option>
             <option value="company">Companies</option>
+          </select>
+          <select value={dueDateFilter} onChange={(e) => setDueDateFilter(e.target.value as DueDateFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
+            <option value="all">All due dates</option>
+            <option value="overdue">Overdue</option>
+            <option value="today">Due today</option>
+            <option value="tomorrow">Due tomorrow</option>
+            <option value="this_week">Due this week</option>
+            <option value="upcoming">Upcoming later</option>
+            <option value="unscheduled">No due date</option>
           </select>
         </div>
       </section>
