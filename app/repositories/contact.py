@@ -29,6 +29,30 @@ FREE_EMAIL_PROVIDERS = frozenset({
     "live.com",
 })
 
+ROLE_EMAIL_PATTERNS = (
+    "%noreply%@%",
+    "%no-reply%@%",
+    "%donotreply%@%",
+    "%do-not-reply%@%",
+    "mailer-daemon@%",
+    "postmaster@%",
+    "notifications@%",
+    "notification@%",
+    "calendar@%",
+    "invite@%",
+    "invites@%",
+    "support@%",
+    "help@%",
+    "billing@%",
+    "admin@%",
+    "info@%",
+    "team@%",
+    "updates@%",
+    "alerts@%",
+)
+
+GENERIC_LAST_NAME_TOKENS = ("contact", "team", "support", "notifications", "notification")
+
 
 def _parse_multi_query(value: str | None) -> list[str]:
     if not value:
@@ -93,10 +117,23 @@ class ContactRepository(BaseRepository[Contact]):
                 ~email_domain.in_(tuple(FREE_EMAIL_PROVIDERS)),
                 email_domain != normalized_company_domain,
             )
+            lower_email = func.lower(Contact.email)
+            role_mailbox_filter = and_(
+                Contact.email.is_not(None),
+                or_(*[lower_email.like(pattern) for pattern in ROLE_EMAIL_PATTERNS]),
+            )
+            placeholder_name_filter = and_(
+                func.lower(func.coalesce(Contact.last_name, "")).in_(GENERIC_LAST_NAME_TOKENS),
+                or_(Contact.title.is_(None), Contact.title == ""),
+                or_(Contact.linkedin_url.is_(None), Contact.linkedin_url == ""),
+            )
             junk_filters = [
                 Contact.email.is_not(None),
                 ~func.lower(Contact.email).like("%@beacon.li"),
                 ~func.lower(Contact.email).like("zippy+%@beacon.li"),
+                ~role_mailbox_filter,
+                ~placeholder_name_filter,
+                ~Contact.enrichment_data.contains({"source": "clickup_import_placeholder"}),
                 ~business_domain_mismatch,
             ]
             base_stmt = base_stmt.where(*junk_filters)

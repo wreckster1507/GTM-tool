@@ -38,6 +38,7 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.sourcing_batch import SourcingBatch
 from app.services.icp_scorer import score_company
+from app.services.prospect_hygiene import is_valid_prospect_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -914,6 +915,14 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         first, last = _split_contact_name(contact_name)
 
     if not any([first, last, title, email, linkedin_url]):
+        return None
+    if not is_valid_prospect_candidate(
+        first_name=first,
+        last_name=last,
+        email=email or None,
+        title=title or None,
+        linkedin_url=linkedin_url,
+    ):
         return None
 
     import_block = company_fields.get("enrichment_sources", {}).get("import", {}) if isinstance(company_fields.get("enrichment_sources"), dict) else {}

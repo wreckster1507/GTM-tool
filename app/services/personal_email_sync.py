@@ -35,6 +35,7 @@ from app.models.meeting import Meeting
 from app.models.task import Task
 from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
+from app.services.prospect_hygiene import is_valid_prospect_candidate
 from app.services.tasks import refresh_system_tasks_for_entity
 
 logger = logging.getLogger(__name__)
@@ -332,7 +333,7 @@ async def _get_or_create_contact_by_email(
     display_name: str | None,
     company_id: UUID | None,
     sync_user_id: UUID,
-) -> Contact:
+) -> Contact | None:
     """Find or create a contact by email address."""
     result = await session.execute(
         select(Contact).where(Contact.email == email_addr)
@@ -346,6 +347,14 @@ async def _get_or_create_contact_by_email(
         parts = display_name.strip().split(" ", 1)
         first_name = parts[0]
         last_name = parts[1] if len(parts) > 1 else "Contact"
+
+    if not is_valid_prospect_candidate(
+        first_name=first_name,
+        last_name=last_name,
+        email=email_addr,
+    ):
+        logger.info("personal_email_sync: skipped non-prospect mailbox <%s>", email_addr)
+        return None
 
     contact = Contact(
         first_name=first_name,
@@ -783,6 +792,8 @@ async def process_personal_emails(
             contact = await _get_or_create_contact_by_email(
                 session, addr, display_name, company_id, sync_user.id,
             )
+            if not contact:
+                continue
             contact_email_map[addr] = contact.id
             matched_contact_ids.append(contact.id)
             stats["contacts_created"] += 1
@@ -921,5 +932,7 @@ async def _gap_fill_contacts(
         contact = await _get_or_create_contact_by_email(
             session, addr, display_name, company_id, sync_user_id,
         )
+        if not contact:
+            continue
         contact_email_map[addr] = contact.id
         stats["contacts_created"] += 1

@@ -22,6 +22,7 @@ from app.services.account_sourcing import (
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.permissions import require_workspace_permission
 from app.services.persona_classifier import classify_persona
+from app.services.prospect_hygiene import invalid_prospect_reason, is_valid_prospect_candidate
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -141,6 +142,16 @@ async def list_contacts(
 
 @router.post("/", response_model=ContactRead, status_code=201)
 async def create_contact(payload: ContactCreate, session: DBSession, _user: CurrentUser):
+    invalid_reason = invalid_prospect_reason(
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        email=payload.email,
+        title=payload.title,
+        linkedin_url=payload.linkedin_url,
+    )
+    if invalid_reason:
+        raise HTTPException(status_code=422, detail=invalid_reason)
+
     contact = Contact(**payload.model_dump())
     current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
     current_enrichment.setdefault("source", "manual_prospect")
@@ -265,6 +276,14 @@ async def discover_contacts(company_id: UUID, session: DBSession, _user: Current
             parts = prefix.replace(".", " ").replace("_", " ").split()
             first = parts[0].capitalize() if parts else prefix
             last = parts[1].capitalize() if len(parts) > 1 else ""
+        if not is_valid_prospect_candidate(
+            first_name=first,
+            last_name=last,
+            email=email,
+            title=c.get("title"),
+            linkedin_url=c.get("linkedin_url"),
+        ):
+            continue
         contact = Contact(
             first_name=first,
             last_name=last,
@@ -320,6 +339,15 @@ async def import_contacts_csv(
         }
         contact_fields = row_to_contact_fields(row, company_context)
         if not contact_fields:
+            skipped_count += 1
+            continue
+        if not is_valid_prospect_candidate(
+            first_name=contact_fields.get("first_name"),
+            last_name=contact_fields.get("last_name"),
+            email=contact_fields.get("email"),
+            title=contact_fields.get("title"),
+            linkedin_url=contact_fields.get("linkedin_url"),
+        ):
             skipped_count += 1
             continue
 
