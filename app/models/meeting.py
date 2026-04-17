@@ -22,6 +22,7 @@ class MeetingBase(SQLModel):
     title: str
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
     deal_id: Optional[UUID] = Field(default=None, foreign_key="deals.id", index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     scheduled_at: Optional[datetime] = None
 
     @field_validator("scheduled_at", mode="before")
@@ -95,6 +96,7 @@ class MeetingUpdate(SQLModel):
     title: Optional[str] = None
     company_id: Optional[UUID] = None
     deal_id: Optional[UUID] = None
+    owner_user_id: Optional[UUID] = None
     scheduled_at: Optional[datetime] = None
     status: Optional[str] = None
     meeting_type: Optional[str] = None

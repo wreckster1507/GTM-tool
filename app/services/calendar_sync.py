@@ -83,6 +83,7 @@ async def sync_calendar_events(
     session: AsyncSession,
     events: list[CalendarEvent],
     user_email: str,
+    owner_user_id: UUID | None = None,
 ) -> dict:
     """
     Process a list of CalendarEvents and upsert Meeting records.
@@ -249,6 +250,9 @@ async def sync_calendar_events(
                 if existing.meeting_type != meeting_type:
                     existing.meeting_type = meeting_type
                     changed = True
+                if existing.owner_user_id != owner_user_id:
+                    existing.owner_user_id = owner_user_id
+                    changed = True
                 if existing.company_id != matched_company_id:
                     existing.company_id = matched_company_id
                     changed = True
@@ -267,6 +271,7 @@ async def sync_calendar_events(
                     title=event.title[:200],
                     deal_id=matched_deal_id,
                     company_id=matched_company_id,
+                    owner_user_id=owner_user_id,
                     meeting_type=meeting_type,
                     status="scheduled",
                     scheduled_at=scheduled_at,

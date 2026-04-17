@@ -242,6 +242,7 @@ async def _async_sync_inbox(connection_id: str) -> dict:
                         session=session,
                         events=cal_events,
                         user_email=connection.email_address,
+                        owner_user_id=user.id,
                     )
                     stats["meetings_from_calendar"] = cal_stats["meetings_created"]
                     stats["meetings_updated_from_calendar"] = cal_stats["meetings_updated"]

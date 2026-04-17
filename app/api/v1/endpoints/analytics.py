@@ -434,6 +434,7 @@ async def sales_dashboard(
             select(
                 Meeting.deal_id,
                 Meeting.company_id,
+                Meeting.owner_user_id,
                 Meeting.scheduled_at,
                 Meeting.created_at,
                 Meeting.status,
@@ -447,7 +448,11 @@ async def sales_dashboard(
         )
     ).all()
     if filter_rep_ids:
-        meetings_rows = [row for row in meetings_rows if deal_owner.get(row.deal_id) in filter_rep_ids]
+        meetings_rows = [
+            row
+            for row in meetings_rows
+            if (deal_owner.get(row.deal_id) or row.owner_user_id) in filter_rep_ids
+        ]
     if filter_geographies:
         meetings_rows = [row for row in meetings_rows if row.deal_id in allowed_deal_ids]
 
@@ -621,7 +626,7 @@ async def sales_dashboard(
         source = str(row.external_source or "").strip().lower()
         if source not in REAL_MEETING_SOURCES:
             continue
-        row_rep_id = deal_owner.get(row.deal_id)
+        row_rep_id = deal_owner.get(row.deal_id) or row.owner_user_id
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         meeting_bucket = rep_activity.setdefault(
             rep_key,

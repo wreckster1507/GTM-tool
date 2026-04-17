@@ -56,8 +56,12 @@ async def list_meetings(
         count_stmt = count_stmt.where(Meeting.meeting_type.in_(meeting_type))
     if assignee_id:
         ensure_deal_join()
-        stmt = stmt.where(Deal.assigned_to_id.in_(assignee_id))
-        count_stmt = count_stmt.where(Deal.assigned_to_id.in_(assignee_id))
+        assignee_clause = or_(
+            Deal.assigned_to_id.in_(assignee_id),
+            Meeting.owner_user_id.in_(assignee_id),
+        )
+        stmt = stmt.where(assignee_clause)
+        count_stmt = count_stmt.where(assignee_clause)
     link_state_set = {value.strip().lower() for value in link_state if value}
     if link_state_set == {"needs_review"}:
         review_clause = or_(Meeting.company_id.is_(None), Meeting.deal_id.is_(None))
