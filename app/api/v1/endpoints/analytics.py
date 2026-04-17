@@ -43,6 +43,15 @@ HOT_MEETING_MARKERS = {"meeting_booked", "call booked", "demo booked"}
 REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 
 
+class MilestoneDealRow(BaseModel):
+    milestone_key: str
+    deal_name: Optional[str] = None
+    company_name: Optional[str] = None
+    reached_at: str
+    close_date_est: Optional[str] = None
+    deal_value: Optional[float] = None
+
+
 class SalesSummary(BaseModel):
     pipeline_amount: float
     weighted_pipeline_amount: float
@@ -58,6 +67,7 @@ class SalesSummary(BaseModel):
     poc_done_count: int = 0
     closed_won_count: int = 0
     closed_won_value: float = 0.0
+    milestone_deals: list[MilestoneDealRow] = []
 
 
 class RepActivityRow(BaseModel):
@@ -757,10 +767,14 @@ async def sales_dashboard(
         select(
             CompanyStageMilestone.milestone_key,
             CompanyStageMilestone.first_reached_at,
+            Deal.name.label("deal_name"),
             Deal.value.label("deal_value"),
+            Deal.close_date_est.label("close_date_est"),
             Deal.geography.label("deal_geography"),
+            Company.name.label("company_name"),
         )
         .outerjoin(Deal, CompanyStageMilestone.deal_id == Deal.id)
+        .outerjoin(Company, CompanyStageMilestone.company_id == Company.id)
         .where(
             CompanyStageMilestone.first_reached_at >= window_start,
             CompanyStageMilestone.first_reached_at <= window_end,
@@ -781,6 +795,17 @@ async def sales_dashboard(
     ms_poc_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_done")
     ms_closed_won = sum(1 for r in milestone_summary_rows if r.milestone_key == "closed_won")
     ms_closed_won_value = sum(_to_float(r.deal_value) for r in milestone_summary_rows if r.milestone_key == "closed_won")
+    ms_milestone_deals = [
+        MilestoneDealRow(
+            milestone_key=r.milestone_key,
+            deal_name=r.deal_name,
+            company_name=r.company_name,
+            reached_at=r.first_reached_at.strftime("%Y-%m-%d"),
+            close_date_est=r.close_date_est.strftime("%Y-%m-%d") if r.close_date_est else None,
+            deal_value=_to_float(r.deal_value) if r.deal_value else None,
+        )
+        for r in milestone_summary_rows
+    ]
 
     funnel_rows = [
         FunnelStep(key="lead", label="Lead", count=leads_count),
@@ -848,6 +873,7 @@ async def sales_dashboard(
             poc_done_count=ms_poc_done,
             closed_won_count=ms_closed_won,
             closed_won_value=round(ms_closed_won_value, 2),
+            milestone_deals=ms_milestone_deals,
         ),
         highlights=highlights[:5],
         rep_activity=rep_activity_rows,

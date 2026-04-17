@@ -1019,6 +1019,15 @@ export const workspaceApi = {
     request<StageStatus>(`/api/v1/workspace/stages/${stage}`),
 };
 
+export type MilestoneDealRow = {
+  milestone_key: string;
+  deal_name: string | null;
+  company_name: string | null;
+  reached_at: string;
+  close_date_est: string | null;
+  deal_value: number | null;
+};
+
 export type SalesDashboardSummary = {
   pipeline_amount: number;
   weighted_pipeline_amount: number;
@@ -1033,6 +1042,7 @@ export type SalesDashboardSummary = {
   poc_done_count: number;
   closed_won_count: number;
   closed_won_value: number;
+  milestone_deals: MilestoneDealRow[];
 };
 
 export type SalesRepActivityRow = {

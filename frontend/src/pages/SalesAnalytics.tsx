@@ -22,6 +22,7 @@ import {
   type SalesForecastRow,
   type SalesFunnelStep,
   type SalesPipelineOwnerRow,
+  type MilestoneDealRow,
   type SalesRepActivityRow,
   type SalesStageBucket,
   type SalesVelocityRow,
@@ -58,25 +59,37 @@ function formatSnapshotTime(value?: string) {
   }).format(date);
 }
 
+function formatCurrency(val: number | null | undefined): string {
+  if (!val) return "—";
+  if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(1)}M`;
+  if (val >= 1_000) return `$${(val / 1_000).toFixed(0)}K`;
+  return `$${val.toLocaleString()}`;
+}
+
 function MetricCard({
   label,
   value,
   hint,
   tone,
   icon: Icon,
+  deals,
 }: {
   label: string;
   value: string;
   hint: string;
   tone: "blue" | "green" | "amber" | "red";
   icon: LucideIcon;
+  deals?: MilestoneDealRow[];
 }) {
+  const [open, setOpen] = useState(false);
   const palette = {
     blue: { bg: "linear-gradient(135deg, #f7faff 0%, #eef4ff 100%)", border: "#d8e4fb", icon: "#4261d6", text: "#29446d" },
     green: { bg: "linear-gradient(135deg, #f7fff9 0%, #ecf9f1 100%)", border: "#cdecd9", icon: "#2b8a5d", text: "#25473a" },
     amber: { bg: "linear-gradient(135deg, #fffdf7 0%, #fff5de 100%)", border: "#efdcb1", icon: "#b7791f", text: "#5d4523" },
     red: { bg: "linear-gradient(135deg, #fff8f8 0%, #fff0f0 100%)", border: "#efcccc", icon: "#cc5d5d", text: "#6d3434" },
   }[tone];
+
+  const hasDeals = deals && deals.length > 0;
 
   return (
     <div
@@ -94,26 +107,50 @@ function MetricCard({
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <span style={{ fontSize: 11, fontWeight: 800, color: palette.text, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-        <div
+        <button
+          type="button"
+          onClick={() => hasDeals && setOpen((v) => !v)}
           style={{
             width: 38,
             height: 38,
             borderRadius: 12,
-            background: "#fff",
+            background: open ? palette.icon : "#fff",
             border: `1px solid ${palette.border}`,
             display: "grid",
             placeItems: "center",
-            color: palette.icon,
+            color: open ? "#fff" : palette.icon,
             flexShrink: 0,
+            cursor: hasDeals ? "pointer" : "default",
+            transition: "background 0.15s, color 0.15s",
           }}
+          title={hasDeals ? "View deals" : undefined}
         >
           <Icon size={17} />
-        </div>
+        </button>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#62748a" }}>{hint}</p>
       </div>
+      {open && hasDeals && (
+        <div style={{ borderTop: `1px solid ${palette.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          {deals.map((d, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, fontSize: 12 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                <span style={{ fontWeight: 700, color: "#1d2b3a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {d.deal_name || d.company_name || "Unknown deal"}
+                </span>
+                <span style={{ color: "#62748a" }}>
+                  {d.close_date_est ? `Close: ${d.close_date_est}` : `Reached: ${d.reached_at}`}
+                </span>
+              </div>
+              <span style={{ fontWeight: 700, color: palette.icon, flexShrink: 0 }}>
+                {formatCurrency(d.deal_value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -680,6 +717,7 @@ export default function SalesAnalytics() {
     hint: string;
     tone: "blue" | "green" | "amber" | "red";
     icon: LucideIcon;
+    deals?: MilestoneDealRow[];
   }> = data ? [
     {
       label: "Open Pipeline",
@@ -729,6 +767,7 @@ export default function SalesAnalytics() {
       hint: "Unique companies that reached Demo Done for the first time in this window",
       tone: "blue" as const,
       icon: Check,
+      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "demo_done"),
     },
     {
       label: "POC Agreed",
@@ -736,6 +775,7 @@ export default function SalesAnalytics() {
       hint: "Unique companies that agreed to a POC for the first time in this window",
       tone: "blue" as const,
       icon: ArrowUpRight,
+      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed"),
     },
     {
       label: "POC Done",
@@ -743,6 +783,7 @@ export default function SalesAnalytics() {
       hint: "Unique companies that completed a POC for the first time in this window",
       tone: "green" as const,
       icon: Check,
+      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_done"),
     },
     {
       label: "Closed Won",
@@ -750,6 +791,7 @@ export default function SalesAnalytics() {
       hint: `${formatShortCurrency(data.summary.closed_won_value)} in won deal value in this window`,
       tone: data.summary.closed_won_count > 0 ? "green" : "blue" as const,
       icon: Trophy,
+      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "closed_won"),
     },
     {
       label: "Won Value",
@@ -757,6 +799,7 @@ export default function SalesAnalytics() {
       hint: `${data.summary.closed_won_count} deals closed won in this window`,
       tone: data.summary.closed_won_value > 0 ? "green" : "blue" as const,
       icon: TrendingUp,
+      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "closed_won"),
     },
   ] : [];
 

@@ -176,6 +176,9 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     contact = await repo.get_or_raise(contact_id)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
+        # Strip timezone info so asyncpg doesn't mix aware/naive datetimes
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            value = value.replace(tzinfo=None)
         setattr(contact, key, value)
     if "title" in update_data or "seniority" in update_data:
         contact.persona = classify_persona(contact)
