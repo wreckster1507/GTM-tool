@@ -15,6 +15,7 @@ import {
   getProspectTrackingScore,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
+import { CALL_DISPOSITION_OPTIONS } from "../lib/prospectWorkflow";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
@@ -43,13 +44,7 @@ const SEQUENCE_FILTER_OPTIONS = [
 
 const CALL_DISPOSITION_FILTER_OPTIONS = [
   { value: "unreviewed", label: "Unreviewed" },
-  { value: "interested", label: "Interested" },
-  { value: "working", label: "Working" },
-  { value: "callback", label: "Callback" },
-  { value: "nurture", label: "Nurture" },
-  { value: "not_interested", label: "Not Interested" },
-  { value: "bad_fit", label: "Bad Fit" },
-  { value: "do_not_target", label: "Do Not Target" },
+  ...CALL_DISPOSITION_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
 ];
 
 const EMAIL_FILTER_OPTIONS = [
@@ -1123,7 +1118,7 @@ export default function Contacts() {
                                     <PhoneCall size={10} /> {cs.charAt(0).toUpperCase() + cs.slice(1)}
                                   </span>
                                   {disposition && (
-                                    <span style={{ fontSize: 11, color: "#7a8ea4" }}>{disposition.replace(/_/g, " ")}</span>
+                                    <span style={{ fontSize: 11, color: "#7a8ea4" }}>{CALL_DISPOSITION_OPTIONS.find((o) => o.value === disposition)?.label ?? disposition.replace(/_/g, " ")}</span>
                                   )}
                                 </div>
                               );
@@ -2022,11 +2017,9 @@ export default function Contacts() {
                   style={{ width: "100%", border: `1px solid ${callDisposition ? "#c8d9e8" : "#f87171"}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, color: callDisposition ? "#0f2744" : "#7a96b0", background: "#fff", outline: "none" }}
                 >
                   <option value="">— Select disposition —</option>
-                  <option value="interested">Interested — follow up</option>
-                  <option value="callback">Schedule callback</option>
-                  <option value="not_interested">Not interested</option>
-                  <option value="wrong_number">Wrong number / bad contact</option>
-                  <option value="no_answer">No answer — will retry</option>
+                  {CALL_DISPOSITION_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
                 </select>
                 {!callDisposition && (
                   <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>Required before closing</div>
