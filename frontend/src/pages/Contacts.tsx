@@ -1171,16 +1171,6 @@ export default function Contacts() {
                               compact
                             />
                           </td>
-                          <td>
-                            <div style={{ display: "grid", gap: 3 }}>
-                              <span style={{ fontSize: 12, fontWeight: 700, color: "#1e3a52" }}>
-                                {c.sdr_name || "Imported / synced"}
-                              </span>
-                              <span style={{ fontSize: 11.5, color: "#7a8ea4" }}>
-                                {new Date(c.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                              </span>
-                            </div>
-                          </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
                               <button
