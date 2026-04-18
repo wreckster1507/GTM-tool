@@ -584,9 +584,48 @@ def _role_focus_from_title(title: str) -> str:
     return "post-sales stakeholder"
 
 
+async def load_workspace_sequence_schedule(session) -> list[dict[str, Any]] | None:
+    """Fetch the workspace "Sequence Settings" as [{day_offset, channel}, ...]."""
+    from app.models.settings import WorkspaceSettings  # local import avoids cycle
+    ws = await session.get(WorkspaceSettings, 1)
+    if not ws:
+        return None
+    return _workspace_step_schedule(ws.outreach_step_delays, ws.outreach_content_settings)
+
+
+def _workspace_step_schedule(ws_step_delays, ws_content_settings) -> list[dict[str, Any]] | None:
+    """Return [{day_offset, channel}, ...] from workspace settings, or None if not usable.
+
+    Shape in the DB: `outreach_step_delays = [0, 3, 7]` and
+    `outreach_content_settings.step_templates[i].channel in {email, call, linkedin}`.
+    """
+    if not isinstance(ws_step_delays, list) or not ws_step_delays:
+        return None
+    templates = []
+    if isinstance(ws_content_settings, dict):
+        raw = ws_content_settings.get("step_templates")
+        if isinstance(raw, list):
+            templates = raw
+
+    schedule: list[dict[str, Any]] = []
+    for idx, delay in enumerate(ws_step_delays):
+        try:
+            day = int(delay)
+        except (TypeError, ValueError):
+            day = 0
+        channel = "email"
+        if idx < len(templates) and isinstance(templates[idx], dict):
+            raw_channel = str(templates[idx].get("channel") or "email").strip().lower()
+            if raw_channel in {"email", "call", "linkedin"}:
+                channel = raw_channel
+        schedule.append({"day_offset": day, "channel": channel})
+    return schedule
+
+
 def _build_contact_sequence_plan(
     contact_fields: dict[str, Any],
     company_fields: dict[str, Any],
+    workspace_schedule: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     prospecting = (
         company_fields.get("prospecting_profile")
@@ -784,6 +823,21 @@ def _build_contact_sequence_plan(
         family = "Implementation/operator"
         goal = "Start with the operator pain and convert it into an implementation efficiency conversation."
 
+    # Workspace "Sequence Settings" override: if the workspace has configured
+    # its own cadence (e.g. Email D0 -> LinkedIn D3 -> Call D7), reshape the
+    # lane's steps to match. We keep the lane-specific objective/angle/cta
+    # copy by index and only swap day_offset + channel so the prospect plan
+    # still feels personalized.
+    if workspace_schedule:
+        reshaped: list[dict[str, Any]] = []
+        for idx, slot in enumerate(workspace_schedule):
+            base = steps[idx] if idx < len(steps) else dict(steps[-1])
+            new_step = dict(base)
+            new_step["day_offset"] = slot.get("day_offset", new_step.get("day_offset", 0))
+            new_step["channel"] = slot.get("channel", new_step.get("channel", "email"))
+            reshaped.append(new_step)
+        steps = reshaped
+
     return {
         "lane": lane,
         "sequence_family": family,
@@ -794,7 +848,42 @@ def _build_contact_sequence_plan(
     }
 
 
-def refresh_contact_sequence_plan(contact: Contact, company: Company) -> Contact:
+# Any of these sequence_status values (or a non-null instantly_campaign_id)
+# means the contact has left the "ready / planned" phase — we must not
+# overwrite their in-flight or terminal progress by regenerating the plan.
+_LOCKED_SEQUENCE_STATUSES = frozenset({
+    "queued_instantly",
+    "sent",
+    "launched",
+    "completed",
+    "replied",
+    "meeting_booked",
+    "interested",
+    "not_interested",
+    "unsubscribed",
+    "bounced",
+})
+
+
+def _contact_has_started_sequence(contact: Contact) -> bool:
+    if getattr(contact, "instantly_campaign_id", None):
+        return True
+    status = (getattr(contact, "sequence_status", None) or "").strip().lower()
+    return status in _LOCKED_SEQUENCE_STATUSES
+
+
+def refresh_contact_sequence_plan(
+    contact: Contact,
+    company: Company,
+    *,
+    workspace_schedule: list[dict[str, Any]] | None = None,
+) -> Contact:
+    # Never overwrite a plan for a contact whose sequence is already in flight
+    # or has terminated — the workspace-settings change only shapes *future*
+    # prospects' progress, not existing ones.
+    if _contact_has_started_sequence(contact):
+        return contact
+
     contact_fields: dict[str, Any] = {
         "first_name": contact.first_name,
         "last_name": contact.last_name,
@@ -814,7 +903,11 @@ def refresh_contact_sequence_plan(contact: Contact, company: Company) -> Contact
         "beacon_angle": company.beacon_angle,
         "prospecting_profile": company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {},
     }
-    sequence_plan = _build_contact_sequence_plan(contact_fields, company_fields)
+    sequence_plan = _build_contact_sequence_plan(
+        contact_fields,
+        company_fields,
+        workspace_schedule=workspace_schedule,
+    )
     enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
     contact.enrichment_data = {
         **enrichment,

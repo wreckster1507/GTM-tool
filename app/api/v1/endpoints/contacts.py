@@ -13,6 +13,7 @@ from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdat
 from app.repositories.contact import ContactRepository
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
+    load_workspace_sequence_schedule,
     parse_prospect_upload_file,
     refresh_company_prospecting_fields,
     refresh_contact_sequence_plan,
@@ -186,6 +187,17 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     contact.enrichment_data = current_enrichment
     if not contact.persona:
         contact.persona = classify_persona(contact)
+
+    # Seed the prospect's progress tracker using the workspace's current
+    # Sequence Settings (Email D0 / LinkedIn D3 / Call D7 etc). This only
+    # runs for fresh prospects — the refresh helper refuses to overwrite
+    # the plan once the sequence has started.
+    if contact.company_id:
+        company = await session.get(Company, contact.company_id)
+        if company:
+            ws_schedule = await load_workspace_sequence_schedule(session)
+            refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+
     saved = await ContactRepository(session).save(contact)
     return await to_contact_read(session, saved)
 
@@ -351,6 +363,10 @@ async def import_contacts_csv(
     if not rows:
         raise HTTPException(status_code=400, detail="No rows found in the upload")
 
+    # Load the workspace sequence schedule once so every imported prospect's
+    # progress tracker reflects the current Email/Call/LinkedIn cadence.
+    ws_schedule = await load_workspace_sequence_schedule(session)
+
     created_count = 0
     updated_count = 0
     skipped_count = 0
@@ -465,7 +481,7 @@ async def import_contacts_csv(
             if changed or not existing.persona:
                 existing.persona = classify_persona(existing)
                 existing.updated_at = datetime.utcnow()
-                refresh_contact_sequence_plan(existing, company)
+                refresh_contact_sequence_plan(existing, company, workspace_schedule=ws_schedule)
                 session.add(existing)
                 updated_count += 1
             else:
@@ -473,7 +489,7 @@ async def import_contacts_csv(
         else:
             contact = Contact(**contact_fields)
             contact.persona = classify_persona(contact)
-            refresh_contact_sequence_plan(contact, company)
+            refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
             session.add(contact)
             created_count += 1
 
