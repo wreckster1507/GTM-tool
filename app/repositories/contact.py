@@ -107,6 +107,14 @@ class ContactRepository(BaseRepository[Contact]):
             count_stmt = count_stmt.where(Contact.company_id == company_id)
 
         if prospect_only:
+            # Always surface contacts that a rep explicitly added through the UI
+            # or the prospect CSV import — those are deliberate and must not be
+            # hidden by hygiene filters (e.g. a Test@beacon.li dogfood prospect).
+            manual_override = or_(
+                Contact.enrichment_data.contains({"source": "manual_prospect"}),
+                Contact.enrichment_data.contains({"source": "prospect_csv_upload"}),
+            )
+
             email_domain = func.lower(func.split_part(Contact.email, "@", 2))
             normalized_company_domain = func.lower(func.replace(Company.domain, "www.", ""))
             business_domain_mismatch = and_(
@@ -128,17 +136,20 @@ class ContactRepository(BaseRepository[Contact]):
                 or_(Contact.title.is_(None), Contact.title == ""),
                 or_(Contact.linkedin_url.is_(None), Contact.linkedin_url == ""),
             )
-            junk_filters = [
-                Contact.email.is_not(None),
-                ~func.lower(Contact.email).like("%@beacon.li"),
-                ~func.lower(Contact.email).like("zippy+%@beacon.li"),
+            # Junk filter: only exclude truly-automated noise (zippy+ test bot,
+            # clickup import placeholders, obvious role mailboxes, placeholder
+            # names, domain-mismatch enrichment misses). A rep-created contact
+            # passes via `manual_override` above.
+            junk_filter_combined = and_(
+                ~func.lower(func.coalesce(Contact.email, "")).like("zippy+%@beacon.li"),
                 ~role_mailbox_filter,
                 ~placeholder_name_filter,
                 ~Contact.enrichment_data.contains({"source": "clickup_import_placeholder"}),
                 ~business_domain_mismatch,
-            ]
-            base_stmt = base_stmt.where(*junk_filters)
-            count_stmt = count_stmt.where(*junk_filters)
+            )
+            combined_filter = or_(manual_override, junk_filter_combined)
+            base_stmt = base_stmt.where(combined_filter)
+            count_stmt = count_stmt.where(combined_filter)
 
         normalized_q = (q or "").strip()
         if normalized_q:

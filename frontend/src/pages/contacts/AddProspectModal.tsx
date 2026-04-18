@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { contactsApi } from "../../lib/api";
+import { useToast } from "../../lib/ToastContext";
 import SearchableCompanySelect from "../../components/SearchableCompanySelect";
 import type { Contact } from "../../types";
 import {
@@ -18,6 +19,7 @@ export default function AddProspectModal({
   onClose,
   onCreated,
 }: AddProspectModalProps) {
+  const toast = useToast();
   const [form, setForm] = useState<AddProspectFormState>(EMPTY_ADD_PROSPECT_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -53,7 +55,7 @@ export default function AddProspectModal({
     setSaving(true);
     setError("");
     try {
-      await contactsApi.create({
+      const created = await contactsApi.create({
         first_name: form.first_name.trim() || undefined,
         last_name: form.last_name.trim() || undefined,
         email: form.email.trim() || undefined,
@@ -62,11 +64,16 @@ export default function AddProspectModal({
         company_id: form.company_id || undefined,
         linkedin_url: form.linkedin_url.trim() || undefined,
       } as Partial<Contact>);
+      const displayName = `${form.first_name.trim()} ${form.last_name.trim()}`.trim() || form.email.trim() || "Prospect";
+      toast.success(`${displayName} added to Prospecting.`, "Prospect created");
       reset();
       onClose();
       onCreated();
+      void created;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create prospect");
+      const msg = err instanceof Error ? err.message : "Failed to create prospect";
+      setError(msg);
+      toast.error(msg, "Create failed");
       setSaving(false);
     }
   };
