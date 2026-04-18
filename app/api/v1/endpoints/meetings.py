@@ -45,7 +45,7 @@ async def list_meetings(
         joined_deal = True
 
     # Non-admins only see meetings they own or that are synced to them
-    if not current_user.is_admin:
+    if current_user.role != "admin":
         scope_clause = or_(
             Meeting.owner_user_id == current_user.id,
             Meeting.synced_by_user_id == current_user.id,

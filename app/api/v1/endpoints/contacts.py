@@ -125,9 +125,10 @@ async def list_contacts(
     Returns contacts with company_name populated via a single SQL JOIN.
     Non-admins are scoped to contacts assigned to them (AE or SDR).
     """
+    is_admin = current_user.role == "admin"
     effective_ae_id = ae_id
     effective_sdr_id = sdr_id
-    if not current_user.is_admin:
+    if not is_admin:
         user_id_str = str(current_user.id)
         effective_ae_id = user_id_str
         effective_sdr_id = user_id_str
@@ -142,7 +143,7 @@ async def list_contacts(
         email_state=email_state,
         ae_id=effective_ae_id,
         sdr_id=effective_sdr_id,
-        scope_any_match=not current_user.is_admin,
+        scope_any_match=not is_admin,
         prospect_only=prospect_only,
         skip=pagination.skip,
         limit=pagination.limit,
@@ -165,6 +166,19 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
         raise HTTPException(status_code=422, detail="Provide at least a name, email, title, or LinkedIn URL.")
 
     contact = Contact(**payload.model_dump())
+
+    # Auto-assign to the creator (unless already set) so a rep who manually
+    # adds a prospect actually sees it in their scoped list. Admins creating
+    # contacts on behalf of someone else can leave it unassigned.
+    if _user.role != "admin":
+        if not contact.assigned_to_id and not contact.sdr_id:
+            if _user.role == "sdr":
+                contact.sdr_id = _user.id
+                contact.sdr_name = getattr(_user, "name", None) or _user.email
+            else:
+                contact.assigned_to_id = _user.id
+                contact.assigned_rep_email = _user.email
+
     current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
     current_enrichment.setdefault("source", "manual_prospect")
     current_enrichment.setdefault("uploaded_by", _user.email)
