@@ -151,15 +151,17 @@ async def list_contacts(
 
 @router.post("/", response_model=ContactRead, status_code=201)
 async def create_contact(payload: ContactCreate, session: DBSession, _user: CurrentUser):
-    invalid_reason = invalid_prospect_reason(
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        email=payload.email,
-        title=payload.title,
-        linkedin_url=payload.linkedin_url,
-    )
-    if invalid_reason:
-        raise HTTPException(status_code=422, detail=invalid_reason)
+    # No hygiene gate on manual adds — when a rep explicitly types a prospect
+    # into the form, that's intent. We still need *something* to identify the
+    # row, so we only reject truly empty submissions.
+    if not any([
+        (payload.first_name or "").strip(),
+        (payload.last_name or "").strip(),
+        (payload.email or "").strip(),
+        (payload.title or "").strip(),
+        (payload.linkedin_url or "").strip(),
+    ]):
+        raise HTTPException(status_code=422, detail="Provide at least a name, email, title, or LinkedIn URL.")
 
     contact = Contact(**payload.model_dump())
     current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
