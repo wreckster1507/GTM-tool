@@ -1964,19 +1964,31 @@ export default function Contacts() {
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginTop: 18 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, marginTop: 18 }}>
               {[
-                ["Rows", importSummary.imported_rows],
-                ["Created", importSummary.created_count],
-                ["Updated", importSummary.updated_count],
-                ["Skipped", importSummary.skipped_count],
-              ].map(([label, value]) => (
+                ["Rows", importSummary.imported_rows, "#1d2b3c"],
+                ["Created", importSummary.created_count, "#1d2b3c"],
+                ["Updated", importSummary.updated_count, "#1d2b3c"],
+                ["Warnings", importSummary.warning_count ?? 0, (importSummary.warning_count ?? 0) > 0 ? "#b45309" : "#1d2b3c"],
+                ["Skipped", importSummary.skipped_count, "#1d2b3c"],
+              ].map(([label, value, color]) => (
                 <div key={String(label)} style={{ border: "1px solid #dce8f4", borderRadius: 14, background: "#fbfdff", padding: "12px 14px" }}>
                   <div style={{ color: "#7f91ab", fontSize: 11, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>{label}</div>
-                  <div style={{ color: "#1d2b3c", fontSize: 24, fontWeight: 800, marginTop: 6 }}>{value}</div>
+                  <div style={{ color: color as string, fontSize: 24, fontWeight: 800, marginTop: 6 }}>{value}</div>
                 </div>
               ))}
             </div>
+
+            {(importSummary.warning_count ?? 0) > 0 && (
+              <div style={{ marginTop: 14, border: "1px solid #f5ddaa", background: "#fff8e8", borderRadius: 14, padding: "12px 14px" }}>
+                <div style={{ color: "#8a5b00", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 6 }}>
+                  Hygiene warning
+                </div>
+                <div style={{ color: "#6b4a00", fontSize: 13, lineHeight: 1.5 }}>
+                  {importSummary.warning_count} row{importSummary.warning_count === 1 ? "" : "s"} look{importSummary.warning_count === 1 ? "s" : ""} like a role mailbox (e.g. support@, info@) or placeholder name. We imported them anyway — review and clean them up in Prospecting if needed.
+                </div>
+              </div>
+            )}
 
             {importSummary.missing_company_count > 0 && (
               <div style={{ marginTop: 18, border: "1px solid #f5ddaa", background: "#fff8e8", borderRadius: 14, padding: "14px 16px" }}>

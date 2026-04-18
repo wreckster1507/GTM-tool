@@ -11,6 +11,7 @@ export type ProspectImportSummary = {
   created_count: number;
   updated_count: number;
   skipped_count: number;
+  warning_count?: number;
   missing_company_count: number;
   missing_companies: ProspectImportMissingCompany[];
   message: string;

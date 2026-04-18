@@ -22,7 +22,7 @@ from app.services.account_sourcing import (
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.permissions import require_workspace_permission
 from app.services.persona_classifier import classify_persona
-from app.services.prospect_hygiene import invalid_prospect_reason, is_valid_prospect_candidate
+from app.services.prospect_hygiene import is_valid_prospect_candidate
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -38,6 +38,7 @@ class ProspectImportResponse(SQLModel):
     created_count: int
     updated_count: int
     skipped_count: int
+    warning_count: int = 0
     missing_company_count: int
     missing_companies: list[ProspectImportMissingCompany]
     message: str
@@ -339,6 +340,7 @@ async def import_contacts_csv(
     created_count = 0
     updated_count = 0
     skipped_count = 0
+    warning_count = 0
     touched_company_ids: set[UUID] = set()
     missing_companies: dict[str, ProspectImportMissingCompany] = {}
 
@@ -353,8 +355,12 @@ async def import_contacts_csv(
         }
         contact_fields = row_to_contact_fields(row, company_context)
         if not contact_fields:
+            # Row has zero identifying data (no name, email, title, or LinkedIn).
+            # These are genuinely empty and cannot be imported.
             skipped_count += 1
             continue
+        # Hygiene is a warning, not a block — reps can fix suspicious rows
+        # in-app after import rather than lose them at the upload step.
         if not is_valid_prospect_candidate(
             first_name=contact_fields.get("first_name"),
             last_name=contact_fields.get("last_name"),
@@ -362,8 +368,7 @@ async def import_contacts_csv(
             title=contact_fields.get("title"),
             linkedin_url=contact_fields.get("linkedin_url"),
         ):
-            skipped_count += 1
-            continue
+            warning_count += 1
 
         if not company:
             key = f"{(company_fields.get('domain') or '').strip().lower()}::{(company_fields.get('name') or '').strip().lower()}"
@@ -472,18 +477,23 @@ async def import_contacts_csv(
     await session.commit()
 
     missing_rows = sorted(missing_companies.values(), key=lambda item: (item.name.lower(), item.domain or ""))
+    message_parts = ["Prospects imported successfully."]
+    if warning_count:
+        message_parts.append(
+            f"{warning_count} row{'s' if warning_count != 1 else ''} look{'s' if warning_count == 1 else ''} like a role mailbox or placeholder — review them in Prospecting."
+        )
+    if missing_rows:
+        message_parts.append("Placeholder companies were created for rows that still need enrichment.")
+
     return ProspectImportResponse(
         imported_rows=len(rows),
         created_count=created_count,
         updated_count=updated_count,
         skipped_count=skipped_count,
+        warning_count=warning_count,
         missing_company_count=len(missing_rows),
         missing_companies=missing_rows,
-        message=(
-            "Prospects imported successfully."
-            if not missing_rows
-            else "Prospects imported successfully. Placeholder companies were created for rows that still need enrichment."
-        ),
+        message=" ".join(message_parts),
     )
 
 

@@ -916,14 +916,8 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
 
     if not any([first, last, title, email, linkedin_url]):
         return None
-    if not is_valid_prospect_candidate(
-        first_name=first,
-        last_name=last,
-        email=email or None,
-        title=title or None,
-        linkedin_url=linkedin_url,
-    ):
-        return None
+    # Hygiene filter is applied as a *warning* at the endpoint level — rows are
+    # still imported so the rep can correct them in-app rather than losing data.
 
     import_block = company_fields.get("enrichment_sources", {}).get("import", {}) if isinstance(company_fields.get("enrichment_sources"), dict) else {}
     prospecting = company_fields.get("prospecting_profile") if isinstance(company_fields.get("prospecting_profile"), dict) else {}
