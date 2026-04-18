@@ -35,6 +35,7 @@ import {
 import type { Company, Contact, DealStageSetting } from "../types";
 import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
+import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 
 const colors = {
@@ -1016,6 +1017,27 @@ export default function AccountSourcingCompanyDetail() {
                   </>
                 ) : null}
               </div>
+              <ProvenanceBar
+                source={(() => {
+                  const es = company.enrichment_sources as Record<string, unknown> | null | undefined;
+                  if (!es) return null;
+                  // Prefer a top-level "source" marker; fall back to known import keys.
+                  if (typeof es.source === "string") return es.source;
+                  if (es.prospect_import_placeholder) return "prospect_csv_upload";
+                  if (es.clickup_import) return "clickup_import";
+                  if (es.account_sourcing) return "account_sourcing";
+                  if (es.import) return "upload";
+                  return null;
+                })()}
+                uploadedBy={(() => {
+                  const es = company.enrichment_sources as Record<string, unknown> | null | undefined;
+                  const placeholder = es?.prospect_import_placeholder as Record<string, unknown> | undefined;
+                  return (placeholder?.uploaded_by as string | undefined) ?? null;
+                })()}
+                createdAt={company.created_at}
+                updatedAt={company.updated_at}
+                enrichedAt={company.enriched_at}
+              />
 
               <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {detailMetaItems.map((item) => (

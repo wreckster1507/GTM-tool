@@ -19,6 +19,7 @@ import { accountSourcingApi, activitiesApi, companiesApi, contactsApi, dealsApi 
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AssignDropdown from "../components/AssignDropdown";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
+import ProvenanceBar from "../components/ProvenanceBar";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
@@ -538,6 +539,12 @@ export default function AccountSourcingContactDetail() {
                   <div style={{ marginTop: 10, color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 840 }}>
                     {contact.title || "No title yet"} {company ? `at ${company.name}` : ""}. This view combines uploaded prospecting context, company research, and the saved prospect-level outreach sequence.
                   </div>
+                  <ProvenanceBar
+                    source={(contact.enrichment_data as Record<string, unknown> | null | undefined)?.source as string | null | undefined}
+                    uploadedBy={(contact.enrichment_data as Record<string, unknown> | null | undefined)?.uploaded_by as string | null | undefined}
+                    createdAt={contact.created_at}
+                    updatedAt={contact.updated_at}
+                  />
                   <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Chip label={prettify(contact.outreach_lane || company?.recommended_outreach_lane)} tone={toneForLane(contact.outreach_lane || company?.recommended_outreach_lane)} />
                     <span

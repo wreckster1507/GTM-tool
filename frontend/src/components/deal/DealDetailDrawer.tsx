@@ -11,6 +11,7 @@ import type { Activity, Company, Contact, Deal, DealContact, DealQualification, 
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
+import ProvenanceBar from "../ProvenanceBar";
 
 interface Props {
   deal: Deal;
@@ -575,6 +576,12 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               <X size={20} />
             </button>
           </div>
+
+          <ProvenanceBar
+            source={deal.source}
+            createdAt={deal.created_at}
+            updatedAt={deal.updated_at}
+          />
 
           {/* Stage + engagement badges */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
