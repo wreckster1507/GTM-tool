@@ -162,12 +162,42 @@ async def generate_sequence(
     )
     system_prompt = _build_system_prompt(persona, content_settings["general_prompt"])
 
+    # Hand-crafted outreach from the "The 100" workbook: if the contact has
+    # pre_written_emails populated, use them verbatim and skip AI generation.
+    # The rep can still regenerate via the OutreachDrawer's "Generate" button
+    # later; this just gives them a non-AI starting point that matches the
+    # research copy the analyst hand-wrote.
+    pre_written: list[dict] = []
+    ed = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+    raw_pre = ed.get("pre_written_emails") if isinstance(ed, dict) else None
+    if isinstance(raw_pre, list):
+        for entry in raw_pre:
+            if isinstance(entry, dict) and (entry.get("body") or entry.get("subject")):
+                pre_written.append(entry)
+
     generated_bodies: list[str] = []
     generated_subjects: list[str] = []
     generated_steps: list[dict] = []
     generated_linkedin_message: Optional[str] = None
 
     for index, delay in enumerate(step_delays, start=1):
+        # Pre-written email for this step index? Use it verbatim on email steps.
+        pw_entry = None
+        if index - 1 < len(pre_written):
+            pw_entry = pre_written[index - 1]
+
+        step_template_check = _template_for_step(content_settings["step_templates"], index)
+        step_channel_check = str(step_template_check.get("channel") or "email").strip().lower() or "email"
+        if pw_entry and step_channel_check == "email":
+            body = (pw_entry.get("body") or "").strip() or ""
+            subject = (pw_entry.get("subject") or "").strip() or _fallback_subject(
+                index, context, step_template_check, generated_subjects
+            )
+            generated_bodies.append(body)
+            generated_subjects.append(subject)
+            generated_steps.append({"channel": "email", "subject": subject, "body": body, "delay": delay})
+            continue
+
         step_template = _template_for_step(content_settings["step_templates"], index)
         channel = str(step_template.get("channel") or "email").strip().lower() or "email"
         if channel == "linkedin":

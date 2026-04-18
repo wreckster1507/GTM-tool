@@ -145,6 +145,35 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "conversation_starter": ["conversation starter"],
     "what_they_do":   ["what they do"],
     "who_they_are":   ["who they are"],
+    # Rich columns from the Beacon "The 100" workbook
+    "tier":           ["tier", "account tier"],
+    "email_confidence": ["email confidence"],
+    "direct_mobile":  ["direct mobile personal", "direct mobile", "direct  mobile personal"],
+    "hq_direct_line": ["hq direct line"],
+    "hq_switchboard": ["hq switchboard toll free", "hq switchboard", "hq switchboard  toll free"],
+    "tenure_role":    ["tenure role"],
+    "tenure_company": ["tenure company"],
+    "contact_location": ["location"],
+    "contact_icp_score": ["icp score"],
+    "contact_intent_score": ["intent score"],
+    "contact_source": ["source"],
+    "apollo_id":      ["apollo id"],
+    "career_arc":     ["career arc"],
+    "linkedin_activity": ["linkedin activity posts", "linkedin activity"],
+    "intent_signals": ["intent signals"],
+    "primary_messaging_angle": ["primary messaging angle"],
+    "personalization_hook": ["personalization hook"],
+    "research_confidence": ["research confidence"],
+    "outreach_priority": ["outreach priority"],
+    "email1_subject": ["email 1 subject"],
+    "email1_body":    ["email 1 body"],
+    "email1_when":    ["email 1 when to use", "email 1  when to use"],
+    "email2_subject": ["email 2 subject"],
+    "email2_body":    ["email 2 body"],
+    "email2_when":    ["email 2 when to use", "email 2  when to use"],
+    "email3_subject": ["email 3 subject"],
+    "email3_body":    ["email 3 body"],
+    "email3_when":    ["email 3 when to use", "email 3  when to use"],
 }
 
 _ALIASES: dict[str, list[str]] = {
@@ -1002,7 +1031,14 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     title = _find(row, "contact_title")
     email = _clean_email(_find(row, "contact_email"))
     linkedin_url = _find(row, "linkedin_url") or None
-    phone = _find(row, "contact_phone") or None
+    # Prefer "Direct / Mobile (Personal)" if present; else generic contact phone;
+    # else HQ direct line as a fallback.
+    phone = (
+        _find(row, "direct_mobile")
+        or _find(row, "contact_phone")
+        or _find(row, "hq_direct_line")
+        or None
+    )
 
     if not first and not last and contact_name:
         first, last = _split_contact_name(contact_name)
@@ -1017,8 +1053,43 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     connectors = prospecting.get("warm_paths") if isinstance(prospecting, dict) else []
     best_connector = connectors[0] if isinstance(connectors, list) and connectors else {}
 
-    talking_points = []
+    # Rich intelligence columns from the Beacon "The 100" workbook.
+    email_confidence = (_find(row, "email_confidence") or "").strip().upper()
+    career_arc = _find(row, "career_arc") or None
+    linkedin_activity = _find(row, "linkedin_activity") or None
+    intent_signals = _find(row, "intent_signals") or None
+    messaging_angle = _find(row, "primary_messaging_angle") or None
+    personalization_hook = _find(row, "personalization_hook") or None
+    research_confidence = _find(row, "research_confidence") or None
+    outreach_priority = _find(row, "outreach_priority") or None
+    contact_location = _find(row, "contact_location") or None
+    tenure_role = _find(row, "tenure_role") or None
+    tenure_company = _find(row, "tenure_company") or None
+    tier = _find(row, "tier") or None
+    contact_source = _find(row, "contact_source") or None
+    apollo_id = _find(row, "apollo_id") or None
+
+    # Pre-written email cadence — each step becomes the actual outreach body so
+    # Instantly sends the hand-crafted copy instead of AI-generated placeholders.
+    pre_written_emails = []
+    for idx in (1, 2, 3):
+        subject = _find(row, f"email{idx}_subject")
+        body = _find(row, f"email{idx}_body")
+        when = _find(row, f"email{idx}_when")
+        if subject or body:
+            pre_written_emails.append({
+                "step": idx,
+                "subject": subject or None,
+                "body": body or None,
+                "when_to_use": when or None,
+            })
+
+    # Talking points: prefer the workbook's messaging angle + hook over the
+    # company-level defaults when both exist (per-prospect research wins).
+    talking_points: list[str] = []
     for candidate in [
+        messaging_angle,
+        personalization_hook,
         prospecting.get("recommended_outreach_strategy") if isinstance(prospecting, dict) else None,
         prospecting.get("conversation_starter") if isinstance(prospecting, dict) else None,
         import_block.get("analyst", {}).get("intent_why") if isinstance(import_block, dict) and isinstance(import_block.get("analyst"), dict) else None,
@@ -1026,10 +1097,27 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         if candidate:
             talking_points.append(str(candidate).strip())
 
+    # Prefer the workbook's per-prospect hooks for conversation_starter +
+    # personalization_notes so the Prospecting drawer surfaces them first.
+    conversation_starter = (
+        personalization_hook
+        or messaging_angle
+        or (prospecting.get("conversation_starter") if isinstance(prospecting, dict) else None)
+    )
+    personalization_notes = (
+        career_arc
+        or intent_signals
+        or (prospecting.get("why_now") if isinstance(prospecting, dict) else None)
+    )
+
     base_fields = {
         "first_name": first[:120],
         "last_name": last[:160],
         "email": email or None,
+        # If the workbook explicitly flags the email as HIGH confidence, seed
+        # email_verified so the rep doesn't have to re-verify. Other values
+        # (MEDIUM/LOW/blank) leave email_verified unset for normal verification.
+        "email_verified": True if email and email_confidence == "HIGH" else None,
         "phone": phone,
         "title": title or None,
         "linkedin_url": linkedin_url,
@@ -1039,12 +1127,37 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         "instantly_status": "ready" if email else "missing_email",
         "warm_intro_strength": _parse_int(str(best_connector.get("strength") or "")) if best_connector else None,
         "warm_intro_path": best_connector or None,
-        "conversation_starter": prospecting.get("conversation_starter") if isinstance(prospecting, dict) else None,
-        "personalization_notes": prospecting.get("why_now") if isinstance(prospecting, dict) else None,
+        "conversation_starter": conversation_starter,
+        "personalization_notes": personalization_notes,
         "talking_points": talking_points or None,
         "enrichment_data": {
             "source": "upload",
             "raw_row": {key: value for key, value in row.items() if _has_nonempty_text(value)},
+            # Structured per-prospect research from the workbook. Lives in
+            # enrichment_data so the rep sees it in the drawer and so later
+            # enrichment passes can layer on top without losing this content.
+            "workbook": {
+                "tier": tier,
+                "email_confidence": email_confidence or None,
+                "source": contact_source,
+                "apollo_id": apollo_id,
+                "location": contact_location,
+                "tenure_role": tenure_role,
+                "tenure_company": tenure_company,
+                "career_arc": career_arc,
+                "linkedin_activity": linkedin_activity,
+                "intent_signals": intent_signals,
+                "primary_messaging_angle": messaging_angle,
+                "personalization_hook": personalization_hook,
+                "research_confidence": research_confidence,
+                "outreach_priority": outreach_priority,
+                "icp_score": _find(row, "contact_icp_score") or None,
+                "intent_score": _find(row, "contact_intent_score") or None,
+            },
+            # Hand-crafted outreach copy — the OutreachDrawer prefers these
+            # over AI-generated text when present, and Instantly pushes them
+            # verbatim on Launch.
+            "pre_written_emails": pre_written_emails or None,
         },
     }
     enrichment_data = base_fields["enrichment_data"] if isinstance(base_fields.get("enrichment_data"), dict) else {}

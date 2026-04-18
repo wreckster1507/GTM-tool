@@ -152,6 +152,62 @@ async def list_contacts(
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 
 
+@router.post("/admin/purge-all")
+async def purge_all_prospects(
+    session: DBSession,
+    current_user: CurrentUser,
+    confirm: str = Query(default="", description="Must equal 'DELETE ALL PROSPECTS' to proceed"),
+):
+    """Admin-only: delete every contact and their FK dependents.
+
+    Explicitly hard-to-invoke: caller must be an admin AND supply the exact
+    confirmation phrase. Intended for migration resets, not day-to-day use.
+    Deals themselves survive; only deal_contacts (stakeholder links) go away.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    if confirm != "DELETE ALL PROSPECTS":
+        raise HTTPException(
+            status_code=400,
+            detail="Pass ?confirm=DELETE+ALL+PROSPECTS to confirm. This is irreversible.",
+        )
+
+    # Count for reporting
+    pre_count = (
+        await session.execute(select(func.count(Contact.id)))
+    ).scalar_one()
+
+    # Order matters: dependents first. Use raw DELETE for speed on large tables.
+    from sqlalchemy import delete as _sql_delete
+    from app.models.outreach import OutreachSequence, OutreachStep
+    from app.models.deal import DealContact
+    from app.models.reminder import Reminder
+    from app.models.angel import AngelMapping
+    from app.models.activity import Activity
+
+    # Null-out activity links (keep activity history)
+    await session.execute(
+        Activity.__table__.update().values(contact_id=None).where(Activity.contact_id.is_not(None))
+    )
+    # Delete outreach steps via their parent sequences
+    seq_ids_subq = select(OutreachSequence.id)
+    await session.execute(_sql_delete(OutreachStep).where(OutreachStep.sequence_id.in_(seq_ids_subq)))
+    await session.execute(_sql_delete(OutreachSequence))
+    # Delete deal_contacts (stakeholder links) — deals themselves stay
+    await session.execute(_sql_delete(DealContact))
+    # Delete reminders + angel mappings
+    await session.execute(_sql_delete(Reminder))
+    await session.execute(_sql_delete(AngelMapping))
+    # Finally the contacts
+    await session.execute(_sql_delete(Contact))
+    await session.commit()
+
+    return {
+        "deleted_contacts": pre_count,
+        "message": f"Purged {pre_count} prospects and their sequences, stakeholder links, reminders, and angel mappings. Deals and activity history retained.",
+    }
+
+
 @router.post("/", response_model=ContactRead, status_code=201)
 async def create_contact(payload: ContactCreate, session: DBSession, _user: CurrentUser):
     # No hygiene gate on manual adds — when a rep explicitly types a prospect
