@@ -236,6 +236,7 @@ async def sync_calendar_events(
                 )
             )).scalar_one_or_none()
 
+            now = datetime.utcnow()
             if existing:
                 changed = False
                 if scheduled_at and existing.scheduled_at != scheduled_at:
@@ -263,7 +264,9 @@ async def sync_calendar_events(
                     existing.attendees = attendees_payload
                     changed = True
                 if changed:
-                    existing.updated_at = datetime.utcnow()
+                    existing.updated_at = now
+                    existing.synced_by_user_id = owner_user_id
+                    existing.synced_at = now
                     session.add(existing)
                     stats["meetings_updated"] += 1
             else:
@@ -279,8 +282,10 @@ async def sync_calendar_events(
                     external_source="google_calendar",
                     external_source_id=source_id,
                     attendees=attendees_payload or None,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
+                    synced_by_user_id=owner_user_id,
+                    synced_at=now,
+                    created_at=now,
+                    updated_at=now,
                 )
                 session.add(meeting)
                 stats["meetings_created"] += 1

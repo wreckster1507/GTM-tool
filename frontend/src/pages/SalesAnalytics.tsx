@@ -20,7 +20,6 @@ import {
   type MonthlyUniqueFunnelRow,
   type SalesDashboard,
   type SalesForecastRow,
-  type SalesFunnelStep,
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
   type SalesRepActivityRow,
@@ -284,7 +283,7 @@ function PipelineStageView({ rows }: { rows: SalesStageBucket[] }) {
         <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(160px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
           <div style={{ minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#75869a" }}>{row.deal_count} deals</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#75869a" }}>{row.deal_count} deals · {formatShortCurrency(row.amount)}</p>
           </div>
           <div style={{ height: 14, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
             <div style={{ width: `${Math.max((row.amount / maxAmount) * 100, row.amount > 0 ? 8 : 0)}%`, height: "100%", borderRadius: 999, background: row.color }} />
@@ -381,28 +380,6 @@ function ForecastView({ rows }: { rows: SalesForecastRow[] }) {
   );
 }
 
-function FunnelView({ steps }: { steps: SalesFunnelStep[] }) {
-  const maxCount = useMemo(() => Math.max(...steps.map((step) => step.count), 1), [steps]);
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14 }}>
-      {steps.map((step, index) => (
-        <div key={step.key} style={{ borderRadius: 16, border: "1px solid #e7edf6", background: "#fff", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ height: 110, display: "flex", alignItems: "flex-end" }}>
-            <div style={{ width: "100%", height: `${Math.max((step.count / maxCount) * 100, step.count > 0 ? 18 : 0)}%`, borderRadius: 16, background: index === steps.length - 1 ? "linear-gradient(180deg, #58c18a 0%, #2f995f 100%)" : "linear-gradient(180deg, #6983ec 0%, #435ed8 100%)" }} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#223547", textTransform: "uppercase", letterSpacing: "0.06em" }}>{step.label}</p>
-            <p style={{ margin: 0, fontSize: 28, lineHeight: 1, fontWeight: 800, color: "#1e2f41" }}>{step.count}</p>
-            <p style={{ margin: 0, fontSize: 12, color: "#718196" }}>
-              {step.conversion_from_previous == null ? "Base stage" : `${step.conversion_from_previous}% from previous`}
-            </p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
   const maxCount = useMemo(
@@ -1027,25 +1004,16 @@ export default function SalesAnalytics() {
             </SectionCard>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 0.9fr)", gap: 18 }}>
-            <SectionCard
-              title="Forecast View"
-              subtitle="Raw versus weighted pipeline by expected close month so the team can separate ambition from statistically healthier forecast coverage."
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
-              </div>
-              <ForecastView rows={data.forecast_by_month} />
-            </SectionCard>
-
-            <SectionCard
-              title="Conversion Funnel"
-              subtitle="A volume-based funnel for the current reporting window: lead creation, meetings, proposal-stage deals, and recent closed won outcomes."
-            >
-              <FunnelView steps={data.conversion_funnel} />
-            </SectionCard>
-          </div>
+          <SectionCard
+            title="Forecast View"
+            subtitle="Raw versus weighted pipeline by expected close month so the team can separate ambition from statistically healthier forecast coverage."
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
+            </div>
+            <ForecastView rows={data.forecast_by_month} />
+          </SectionCard>
 
           <SectionCard
             title="Monthly Unique Funnel Counts"

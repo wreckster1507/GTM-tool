@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi, companiesApi, contactsApi, dealsApi } from "../lib/api";
+import { accountSourcingApi, companiesApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
@@ -32,7 +32,7 @@ import {
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
-import type { Company, Contact } from "../types";
+import type { Company, Contact, DealStageSetting } from "../types";
 import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
@@ -119,6 +119,17 @@ const OUTREACH_LANE_OPTIONS = [
   { value: "cold_operator", label: "Cold Operator" },
   { value: "cold_strategic", label: "Cold Strategic" },
 ];
+
+const FALLBACK_DEAL_STAGES: DealStageSetting[] = [
+  { id: "discovery", label: "discovery", group: "active", color: "#3b82f6" },
+  { id: "evaluation", label: "evaluation", group: "active", color: "#6366f1" },
+  { id: "proposal", label: "proposal", group: "active", color: "#8b5cf6" },
+  { id: "negotiation", label: "negotiation", group: "active", color: "#f59e0b" },
+];
+
+function defaultDealStage(stages: DealStageSetting[]): string {
+  return stages.find((stage) => stage.group === "active")?.id ?? stages[0]?.id ?? "discovery";
+}
 
 const pageStyle: CSSProperties = {
   background: colors.bg,
@@ -599,12 +610,17 @@ export default function AccountSourcingCompanyDetail() {
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
   const [existingCompanyDeals, setExistingCompanyDeals] = useState<Array<{ id: string; name: string; stage?: string }>>([]);
+  const [dealStages, setDealStages] = useState<DealStageSetting[]>([]);
   const [dealForm, setDealForm] = useState({
     name: "",
     value: "",
     stage: "discovery",
     close_date_est: "",
   });
+  const availableDealStages = useMemo(
+    () => (dealStages.length ? dealStages : FALLBACK_DEAL_STAGES),
+    [dealStages]
+  );
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -825,17 +841,50 @@ export default function AccountSourcingCompanyDetail() {
   ].filter(Boolean) as string[];
 
   useEffect(() => {
+    settingsApi
+      .getDealStages()
+      .then((config) => setDealStages(config.stages ?? []))
+      .catch(() => setDealStages([]));
+  }, []);
+
+  useEffect(() => {
+    setDealForm((current) => {
+      if (availableDealStages.some((stage) => stage.id === current.stage)) return current;
+      return { ...current, stage: defaultDealStage(availableDealStages) };
+    });
+  }, [availableDealStages]);
+
+  useEffect(() => {
     if (!showDealModal || !company) return;
     setDealError("");
-    setDealForm((current) => ({
-      ...current,
-      name: current.name.trim() ? current.name : `${company.name} - Discovery`,
-    }));
     dealsApi
       .list(0, 25, company.id)
-      .then((rows) => setExistingCompanyDeals(rows.map((deal) => ({ id: deal.id, name: deal.name, stage: deal.stage }))))
-      .catch(() => setExistingCompanyDeals([]));
-  }, [showDealModal, company]);
+      .then((rows) => {
+        const deals = rows.map((deal) => ({ id: deal.id, name: deal.name, stage: deal.stage }));
+        setExistingCompanyDeals(deals);
+        setDealForm((current) => {
+          if (current.name.trim()) return current;
+          const suffix = deals.length === 0 ? "" : String(deals.length + 1);
+          return {
+            ...current,
+            name: `${company.name}${suffix}`,
+            stage: availableDealStages.some((stage) => stage.id === current.stage)
+              ? current.stage
+              : defaultDealStage(availableDealStages),
+          };
+        });
+      })
+      .catch(() => {
+        setExistingCompanyDeals([]);
+        setDealForm((current) => ({
+          ...current,
+          name: current.name.trim() ? current.name : company.name,
+          stage: availableDealStages.some((stage) => stage.id === current.stage)
+            ? current.stage
+            : defaultDealStage(availableDealStages),
+        }));
+      });
+  }, [showDealModal, company, availableDealStages]);
 
   if (loading) {
     return (
@@ -884,7 +933,7 @@ export default function AccountSourcingCompanyDetail() {
         close_date_est: dealForm.close_date_est || undefined,
       });
       setShowDealModal(false);
-      setDealForm({ name: "", value: "", stage: "discovery", close_date_est: "" });
+      setDealForm({ name: "", value: "", stage: defaultDealStage(availableDealStages), close_date_est: "" });
       toast.success(`${createdDeal.name} was created and linked to ${company.name}.`, "Deal created");
       nav(`/deals/${createdDeal.id}`);
     } catch (error) {
@@ -1946,8 +1995,8 @@ export default function AccountSourcingCompanyDetail() {
               onChange={(e) => setDealForm((current) => ({ ...current, stage: e.target.value }))}
               style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
             >
-              {["discovery", "evaluation", "proposal", "negotiation"].map((stage) => (
-                <option key={stage} value={stage}>{stage.replace(/_/g, " ")}</option>
+              {availableDealStages.map((stage) => (
+                <option key={stage.id} value={stage.id}>{stage.label}</option>
               ))}
             </select>
             {dealError ? <div style={{ color: colors.red, fontSize: 12, fontWeight: 700 }}>{dealError}</div> : null}

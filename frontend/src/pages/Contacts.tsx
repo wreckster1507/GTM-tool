@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, angelMappingApi, authApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
-import type { Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
+import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
+import type { Activity, Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import {
@@ -20,6 +20,7 @@ import {
   LINKEDIN_STATUS_OPTIONS,
   deriveSequenceStatusFromCallDisposition,
   deriveSequenceStatusFromLinkedinStatus,
+  formatCallDisposition,
   getNextAction,
 } from "../lib/prospectWorkflow";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
@@ -70,13 +71,56 @@ const PROSPECT_PROGRESS_STAGES = [
 ] as const;
 
 type ProspectProgressStep = {
-  key: (typeof PROSPECT_PROGRESS_STAGES)[number]["key"];
+  key: string;
   label: string;
   state: "done" | "current" | "pending";
   detail: string;
 };
 
+const CHANNEL_LABEL: Record<string, string> = {
+  email: "Email",
+  call: "Call",
+  linkedin: "LinkedIn",
+  connector_request: "Connect",
+  connector_follow_up: "Follow-up",
+};
+
+function getSequencePlanSteps(contact: Contact): ProspectProgressStep[] | null {
+  // Only for pre-launch contacts (no campaign ID = not yet pushed to Instantly)
+  if (contact.instantly_campaign_id) return null;
+  if (!["ready", "research_needed", null, undefined, ""].includes(contact.sequence_status ?? "")) return null;
+
+  const ed = contact.enrichment_data as Record<string, unknown> | null | undefined;
+  const plan = ed?.sequence_plan as Record<string, unknown> | null | undefined;
+  const rawSteps = plan?.steps;
+  if (!Array.isArray(rawSteps) || rawSteps.length === 0) return null;
+
+  const steps = rawSteps as Array<{ day_offset?: number; channel?: string; objective?: string }>;
+  return steps.slice(0, 6).map((step, i) => {
+    const ch = CHANNEL_LABEL[step.channel ?? ""] ?? (step.channel ?? "Touch");
+    const day = step.day_offset ?? i;
+    const label = `${ch} D${day}`;
+    return {
+      key: `step-${i}`,
+      label,
+      state: "pending" as const,
+      detail: step.objective ? step.objective.slice(0, 80) : `${ch} on day ${day}`,
+    };
+  });
+}
+
 function getProspectProgressSteps(contact: Contact): ProspectProgressStep[] {
+  // Pre-launch: show planned sequence step timeline if available
+  const plannedSteps = getSequencePlanSteps(contact);
+  if (plannedSteps) {
+    // Mark first step as "current" to give a visual anchor
+    return plannedSteps.map((step, i) => ({
+      ...step,
+      state: i === 0 ? "current" : "pending",
+    }));
+  }
+
+  // Live tracking: existing logic for initiated/active sequences
   const sequence = contact.sequence_status || "";
   const callStatus = contact.call_status || "";
   const callDisposition = contact.call_disposition || "";
@@ -88,7 +132,7 @@ function getProspectProgressSteps(contact: Contact): ProspectProgressStep[] {
   const replied = sequence === "replied" || sequence === "meeting_booked" || linkedin === "replied" || ["interested", "working", "callback"].includes(callDisposition);
   const meetingBooked = sequence === "meeting_booked";
 
-  const currentKey: ProspectProgressStep["key"] =
+  const currentKey =
     meetingBooked ? "meeting" :
     replied ? "reply" :
     linkedinTouched ? "linkedin" :
@@ -96,14 +140,14 @@ function getProspectProgressSteps(contact: Contact): ProspectProgressStep[] {
     emailSent ? "email" :
     "ready";
 
-  const reached = new Set<ProspectProgressStep["key"]>(["ready"]);
+  const reached = new Set<string>(["ready"]);
   if (emailSent) reached.add("email");
   if (callTouched) reached.add("call");
   if (linkedinTouched) reached.add("linkedin");
   if (replied) reached.add("reply");
   if (meetingBooked) reached.add("meeting");
 
-  const detailByKey: Record<ProspectProgressStep["key"], string> = {
+  const detailByKey: Record<string, string> = {
     ready: contact.tracking_stage || "Ready for first touch",
     email: emailOpened
       ? `Opened ${contact.email_open_count} time${(contact.email_open_count ?? 0) === 1 ? "" : "s"}`
@@ -187,6 +231,13 @@ export default function Contacts() {
   const [showAddInvestor, setShowAddInvestor] = useState(false);
   const [newInvestor, setNewInvestor] = useState({ name: "", current_role: "", current_company: "" });
   const [showAddProspect, setShowAddProspect] = useState(false);
+  const [aircallEnabled, setAircallEnabled] = useState<boolean>(() => localStorage.getItem("crm.aircall.enabled") !== "false");
+  const toggleAircall = () => {
+    const next = !aircallEnabled;
+    setAircallEnabled(next);
+    localStorage.setItem("crm.aircall.enabled", next ? "true" : "false");
+    window.dispatchEvent(new Event("crm:aircall:toggle"));
+  };
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
 
@@ -466,15 +517,40 @@ export default function Contacts() {
         callDisposition,
         callContact.sequence_status,
       );
+      const nowIso = new Date().toISOString();
       await contactsApi.update(callContact.id, {
         call_status: callStatus,
         call_disposition: callDisposition,
         call_notes: callNotes || undefined,
-        call_last_at: new Date().toISOString(),
+        call_last_at: nowIso,
         ...(derivedSeqStatus && derivedSeqStatus !== callContact.sequence_status
           ? { sequence_status: derivedSeqStatus }
           : {}),
       });
+
+      // Also write an Activity row so the call lands in the timeline, the
+      // tracking score reflects it, and reactive tasks can fire. Without this,
+      // any call not made via the AirCall webhook is invisible to the audit
+      // trail.
+      const dispositionLabel = formatCallDisposition(callDisposition);
+      const contactLabel = `${callContact.first_name ?? ""} ${callContact.last_name ?? ""}`.trim();
+      const activityContent = callNotes
+        ? `${dispositionLabel} call with ${contactLabel}: ${callNotes}`
+        : `${dispositionLabel} call with ${contactLabel}`;
+      try {
+        await activitiesApi.create({
+          type: "call",
+          source: "manual",
+          content: activityContent,
+          contact_id: callContact.id,
+          call_outcome: callStatus || undefined,
+        } as Partial<Activity>);
+      } catch {
+        // Non-fatal — contact state already saved above; warn the rep so they
+        // know to check the timeline manually.
+        toast.error("Call logged but timeline write failed — check activity feed.", "Partial save");
+      }
+
       toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
       setCallContact(null);
       loadContacts();
@@ -501,6 +577,31 @@ export default function Contacts() {
           ? { sequence_status: derivedSeqStatus }
           : {}),
       });
+
+      // Write an Activity row so LinkedIn touches appear in the timeline with
+      // rep attribution. Sub-state (request sent / accepted / replied) is
+      // captured via the `content` string; the sequence_status transition is
+      // already handled by `deriveSequenceStatusFromLinkedinStatus`.
+      const linkedinLabel = ({
+        sent: "Sent LinkedIn connect request",
+        accepted: "LinkedIn connect accepted",
+        replied: "Replied on LinkedIn",
+      } as Record<string, string>)[linkedinStatus] ?? `LinkedIn: ${linkedinStatus}`;
+      const contactLabel = `${linkedinContact.first_name ?? ""} ${linkedinContact.last_name ?? ""}`.trim();
+      const activityContent = linkedinNotes
+        ? `${linkedinLabel} — ${contactLabel}: ${linkedinNotes}`
+        : `${linkedinLabel} — ${contactLabel}`;
+      try {
+        await activitiesApi.create({
+          type: "linkedin",
+          source: "manual",
+          content: activityContent,
+          contact_id: linkedinContact.id,
+        } as Partial<Activity>);
+      } catch {
+        toast.error("LinkedIn saved but timeline write failed — check activity feed.", "Partial save");
+      }
+
       toast.success(`LinkedIn touch logged for ${linkedinContact.first_name}.`, "LinkedIn logged");
       setLinkedinContact(null);
       setLinkedinNotes("");
@@ -734,6 +835,22 @@ export default function Contacts() {
                     Clear
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={toggleAircall}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: aircallEnabled ? "1px solid #d4edda" : "1px solid #f5c6cb",
+                    background: aircallEnabled ? "#eafbf0" : "#fff5f5",
+                    color: aircallEnabled ? "#1f8f5f" : "#b42336",
+                    fontSize: 13, fontWeight: 700,
+                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  <PhoneCall size={14} />
+                  {aircallEnabled ? "AirCall On" : "AirCall Off"}
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowAddProspect(true)}
@@ -2034,9 +2151,30 @@ export default function Contacts() {
                     <div style={{ fontSize: 12, color: "#7a96b0" }}>{callContact.first_name} {callContact.last_name}</div>
                   </div>
                 </div>
-                <span style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
-                  Disposition required
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
+                    Disposition required
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCallContact(null)}
+                    aria-label="Close call sidebar"
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 8,
+                      border: "1px solid #d5e3ef",
+                      background: "#fff",
+                      color: "#546679",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
               </div>
             </div>
 

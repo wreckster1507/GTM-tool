@@ -948,8 +948,19 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
                         <p style={{ margin: 0, color: "#b42336", fontSize: 13 }}>{launchError}</p>
                       )}
 
+                      {!contact?.email?.trim() && (
+                        <p style={{ margin: 0, color: "#b42336", fontSize: 13 }}>
+                          This contact has no email on file — add one before launching the sequence.
+                        </p>
+                      )}
+
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                        <button onClick={handleLaunch} disabled={launching || !sendingAccount.trim()} style={launchBtn}>
+                        <button
+                          onClick={handleLaunch}
+                          disabled={launching || !sendingAccount.trim() || !contact?.email?.trim()}
+                          style={launchBtn}
+                          title={!contact?.email?.trim() ? "Add an email to this contact before launching" : undefined}
+                        >
                           {launching ? <RefreshCw size={13} className="animate-spin" /> : <Rocket size={13} />}
                           {launching ? "Launching..." : "Launch Sequence"}
                         </button>

@@ -563,7 +563,14 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
     else:
         await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_convert_to_deal")
 
-    if not has_deal and has_recent_missed_call:
+    # Reactive call/voicemail tasks should clear automatically once the
+    # sequence has moved past the point of cold follow-up — otherwise reps
+    # keep getting nagged to "retry the missed call" after the meeting is
+    # already booked, the prospect unsubscribed, or the email bounced.
+    terminal_sequence_states = {"meeting_booked", "interested", "not_interested", "unsubscribed", "bounced"}
+    is_terminal_seq = seq_status in terminal_sequence_states
+
+    if not has_deal and not is_terminal_seq and has_recent_missed_call:
         await _upsert_system_task(
             session,
             entity_type="contact",
@@ -580,7 +587,7 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
     else:
         await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_retry_call", status="dismissed")
 
-    if not has_deal and has_recent_voicemail:
+    if not has_deal and not is_terminal_seq and has_recent_voicemail:
         await _upsert_system_task(
             session,
             entity_type="contact",

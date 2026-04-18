@@ -84,6 +84,7 @@ class ContactRepository(BaseRepository[Contact]):
         email_state: Optional[str] = None,
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
+        scope_any_match: bool = False,
         prospect_only: bool = False,
         skip: int = 0,
         limit: int = 50,
@@ -207,16 +208,27 @@ class ContactRepository(BaseRepository[Contact]):
             count_stmt = count_stmt.where(email_filter)
 
         ae_ids = _parse_uuid_values(ae_id)
-        if ae_ids:
-            ae_filter = Contact.assigned_to_id.in_(ae_ids)
-            base_stmt = base_stmt.where(ae_filter)
-            count_stmt = count_stmt.where(ae_filter)
-
         sdr_ids = _parse_uuid_values(sdr_id)
-        if sdr_ids:
-            sdr_filter = Contact.sdr_id.in_(sdr_ids)
-            base_stmt = base_stmt.where(sdr_filter)
-            count_stmt = count_stmt.where(sdr_filter)
+
+        if scope_any_match and (ae_ids or sdr_ids):
+            clauses = []
+            if ae_ids:
+                clauses.append(Contact.assigned_to_id.in_(ae_ids))
+            if sdr_ids:
+                clauses.append(Contact.sdr_id.in_(sdr_ids))
+            scope_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
+            base_stmt = base_stmt.where(scope_filter)
+            count_stmt = count_stmt.where(scope_filter)
+        else:
+            if ae_ids:
+                ae_filter = Contact.assigned_to_id.in_(ae_ids)
+                base_stmt = base_stmt.where(ae_filter)
+                count_stmt = count_stmt.where(ae_filter)
+
+            if sdr_ids:
+                sdr_filter = Contact.sdr_id.in_(sdr_ids)
+                base_stmt = base_stmt.where(sdr_filter)
+                count_stmt = count_stmt.where(sdr_filter)
 
         total = (await self.session.execute(count_stmt)).scalar_one()
 

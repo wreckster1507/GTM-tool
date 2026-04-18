@@ -16,6 +16,47 @@ from app.models.deal import Deal, DealContact
 BLOCKED_SEQUENCE_STATUSES = {"bounced", "unsubscribed", "not_interested"}
 LIVE_SEQUENCE_STATUSES = {"queued_instantly", "sent", "completed"}
 
+_CHANNEL_LABEL: dict[str, str] = {
+    "email": "Email",
+    "call": "Call",
+    "linkedin": "LinkedIn",
+    "connector_request": "LinkedIn connect",
+    "connector_follow_up": "LinkedIn follow-up",
+}
+
+
+def _extract_sequence_plan(contact) -> dict | None:
+    """Return enrichment_data.sequence_plan if it contains valid steps, else None."""
+    ed = contact.enrichment_data
+    if not isinstance(ed, dict):
+        return None
+    plan = ed.get("sequence_plan")
+    if not isinstance(plan, dict):
+        return None
+    steps = plan.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return None
+    return plan
+
+
+def _summarise_sequence_plan(plan: dict) -> str:
+    """Return a human-readable one-liner describing the planned sequence steps."""
+    steps = plan.get("steps", [])
+    lane = (plan.get("lane") or "").replace("_", " ").title()
+    parts: list[str] = []
+    for step in steps[:5]:
+        if not isinstance(step, dict):
+            continue
+        day = step.get("day_offset")
+        ch = _CHANNEL_LABEL.get(step.get("channel", ""), step.get("channel", "touch"))
+        if day is not None:
+            parts.append(f"{ch} D{day}")
+    if not parts:
+        return "Sequence plan ready — awaiting launch."
+    step_str = " → ".join(parts)
+    prefix = f"{lane} plan: " if lane else "Planned: "
+    return f"{prefix}{step_str}"
+
 
 @dataclass
 class ActivitySignal:
@@ -185,6 +226,15 @@ def compute_contact_tracking(
             summary = f"{score}/100 Contact is reachable by phone, but email coverage is still thin."
         else:
             summary = f"{score}/100 Contact data is usable and this prospect is ready for launch."
+
+        # If a sequence plan exists and the contact is NOT yet launched, surface step timing
+        # in the summary so the tracker shows what's planned rather than a generic message.
+        if not contact.instantly_campaign_id:
+            seq_plan = _extract_sequence_plan(contact)
+            if seq_plan:
+                stage = "Sequence Planned"
+                plan_summary = _summarise_sequence_plan(seq_plan)
+                summary = f"{score}/100 {plan_summary}"
 
     if stale_days is not None and stage in {"In Sequence", "Engaging", "Ready"}:
         if stale_days >= 14:

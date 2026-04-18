@@ -14,18 +14,18 @@ This file is the single source of truth for how Beacon GTM is deployed today, wh
 - Namespace: `gtm`
 - Public URL: `https://gtm.staging2.beacon.li/`
 - Helm release: `gtm`
-- Latest known staging Helm revision: `56`
-- Backend image: `beacon.azurecr.io/gtm-be:v0.12-bf5e1a3`
-- Frontend image: `beacon.azurecr.io/gtm-fe:v0.12-0643a84`
+- Latest known staging Helm revision: `69`
+- Backend image: `beacon.azurecr.io/gtm-be:v0.12-7965ed2`
+- Frontend image: `beacon.azurecr.io/gtm-fe:v0.12-7965ed2`
 
 ### Production
 
 - Namespace: `gtm-prod`
 - Public URL: `https://gtm.beacon.li/`
 - Helm release: `gtm`
-- Latest known production Helm revision: `21`
-- Backend image: `beacon.azurecr.io/gtm-be:v0.12-e1bfdb4`
-- Frontend image: `beacon.azurecr.io/gtm-fe:v0.12-0643a84`
+- Latest known production Helm revision: `41`
+- Backend image: `beacon.azurecr.io/gtm-be:v0.13-49cee30`
+- Frontend image: `beacon.azurecr.io/gtm-fe:v0.14-490dae8`
 
 ## Cluster Access
 
@@ -340,10 +340,12 @@ Relevant production Google client:
 
 ## Recent Commits Relevant To Deployment
 
+- `49cee30` — analytics: milestone summary cards, poc_agreed milestone, calendar date range filter
+- `7965ed2` — pipeline funnel to board header, deal source required, prospect contact gaps + TS fixes
+- `53ed9a0` — tighten prospect hygiene filters
+- `b20810c` — stabilize company select search
 - `e1bfdb4` — fallback to real Calendar API auth checks
 - `0643a84` — inline domain editing for sourced accounts
-- `bf5e1a3` — stabilize async worker loops for sync tasks
-- `b9eb7bb` — meeting linking and pre-meeting workflow improvements
 
 ## Safe Handoff Summary For Another AI
 

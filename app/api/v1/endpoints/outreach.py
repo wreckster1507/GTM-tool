@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from app.clients.instantly import InstantlyClient, InstantlyError
 from app.config import settings
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.contact import Contact
 from app.models.outreach import (
@@ -54,7 +54,7 @@ def _sequence_started(seq: OutreachSequence) -> bool:
 # ── Sequence generation ────────────────────────────────────────────────────────
 
 @router.post("/generate/{contact_id}", response_model=OutreachSequenceRead)
-async def generate_contact_sequence(contact_id: UUID, session: DBSession):
+async def generate_contact_sequence(contact_id: UUID, session: DBSession, _user: CurrentUser):
     """Generate a multi-step email cadence + LinkedIn message for a contact."""
     seq = await generate_sequence(contact_id, session)
     if not seq:
@@ -66,6 +66,7 @@ async def generate_contact_sequence(contact_id: UUID, session: DBSession):
 async def generate_bulk_sequences(
     company_id: UUID,
     session: DBSession,
+    _user: CurrentUser,
     persona_filter: Optional[str] = None,
 ):
     """Generate sequences for all contacts at a company (skips existing)."""
@@ -109,7 +110,7 @@ async def generate_bulk_sequences(
 # ── Sequence read / update ─────────────────────────────────────────────────────
 
 @router.get("/sequences/{contact_id}", response_model=OutreachSequenceRead)
-async def get_contact_sequence(contact_id: UUID, session: DBSession):
+async def get_contact_sequence(contact_id: UUID, session: DBSession, _user: CurrentUser):
     seq = await OutreachRepository(session).get_by_contact(contact_id)
     if not seq:
         raise NotFoundError(
@@ -119,7 +120,7 @@ async def get_contact_sequence(contact_id: UUID, session: DBSession):
 
 
 @router.patch("/sequences/{sequence_id}", response_model=OutreachSequenceRead)
-async def update_sequence(sequence_id: UUID, updates: dict, session: DBSession):
+async def update_sequence(sequence_id: UUID, updates: dict, session: DBSession, _user: CurrentUser):
     repo = OutreachRepository(session)
     seq = await repo.get_or_raise(sequence_id)
 
@@ -132,7 +133,7 @@ async def update_sequence(sequence_id: UUID, updates: dict, session: DBSession):
 
 
 @router.get("/company/{company_id}")
-async def get_company_sequences(company_id: UUID, session: DBSession):
+async def get_company_sequences(company_id: UUID, session: DBSession, _user: CurrentUser):
     rows = (
         await session.execute(
             select(OutreachSequence, Contact)
@@ -163,7 +164,7 @@ async def get_company_sequences(company_id: UUID, session: DBSession):
 # ── Steps CRUD ────────────────────────────────────────────────────────────────
 
 @router.get("/sequences/{sequence_id}/steps", response_model=list[OutreachStepRead])
-async def get_steps(sequence_id: UUID, session: DBSession):
+async def get_steps(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Get all steps for a sequence, ordered by step_number."""
     seq = await session.get(OutreachSequence, sequence_id)
     if not seq:
@@ -178,7 +179,7 @@ async def get_steps(sequence_id: UUID, session: DBSession):
 
 
 @router.post("/sequences/{sequence_id}/steps", response_model=OutreachStepRead)
-async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSession):
+async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSession, _user: CurrentUser):
     """Add a new step to a sequence (before it's launched to Instantly)."""
     seq = await session.get(OutreachSequence, sequence_id)
     if not seq:
@@ -203,7 +204,7 @@ async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSe
 
 
 @router.patch("/steps/{step_id}", response_model=OutreachStepRead)
-async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSession):
+async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSession, _user: CurrentUser):
     """Edit a step's content, delay, or variants."""
     step = await session.get(OutreachStep, step_id)
     if not step:
@@ -230,7 +231,7 @@ async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSes
 
 
 @router.delete("/steps/{step_id}")
-async def delete_step(step_id: UUID, session: DBSession):
+async def delete_step(step_id: UUID, session: DBSession, _user: CurrentUser):
     """Remove a step from a sequence (before launch only)."""
     step = await session.get(OutreachStep, step_id)
     if not step:
@@ -251,6 +252,7 @@ async def delete_step(step_id: UUID, session: DBSession):
 async def launch_sequence(
     sequence_id: UUID,
     session: DBSession,
+    _user: CurrentUser,
     sending_account: str = Body(..., embed=True),
     campaign_name: Optional[str] = Body(None, embed=True),
 ):
@@ -413,7 +415,7 @@ async def launch_sequence(
 
 
 @router.get("/launch-status/{sequence_id}")
-async def get_launch_status(sequence_id: UUID, session: DBSession):
+async def get_launch_status(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Fetch live campaign stats from Instantly for a launched sequence."""
     seq = await session.get(OutreachSequence, sequence_id)
     if not seq:
@@ -438,7 +440,7 @@ async def get_launch_status(sequence_id: UUID, session: DBSession):
 # ── Replies ───────────────────────────────────────────────────────────────────
 
 @router.get("/replies/{sequence_id}")
-async def get_replies(sequence_id: UUID, session: DBSession):
+async def get_replies(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Fetch reply emails from Instantly Unibox for a launched sequence."""
     seq = await session.get(OutreachSequence, sequence_id)
     if not seq:

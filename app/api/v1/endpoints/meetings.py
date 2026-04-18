@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
+from app.models.user import User
 from app.repositories.meeting import MeetingRepository
 from app.services.permissions import require_workspace_permission
 from app.schemas.common import PaginatedResponse
@@ -20,6 +21,7 @@ router = APIRouter(prefix="/meetings", tags=["meetings"])
 @router.get("/", response_model=PaginatedResponse[MeetingRead])
 async def list_meetings(
     session: DBSession,
+    current_user: CurrentUser,
     pagination: Pagination,
     company_id: Optional[UUID] = Query(default=None),
     deal_id: Optional[UUID] = Query(default=None),
@@ -41,6 +43,15 @@ async def list_meetings(
         stmt = stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
         count_stmt = count_stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
         joined_deal = True
+
+    # Non-admins only see meetings they own or that are synced to them
+    if not current_user.is_admin:
+        scope_clause = or_(
+            Meeting.owner_user_id == current_user.id,
+            Meeting.synced_by_user_id == current_user.id,
+        )
+        stmt = stmt.where(scope_clause)
+        count_stmt = count_stmt.where(scope_clause)
 
     if company_id:
         stmt = stmt.where(Meeting.company_id == company_id)
@@ -85,9 +96,49 @@ async def list_meetings(
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 
 
+def _attendees_key(attendees) -> frozenset:
+    """Canonical frozenset of attendee emails for dedup comparison."""
+    if not attendees:
+        return frozenset()
+    if isinstance(attendees, list):
+        return frozenset(
+            str(a.get("email", "")).lower().strip()
+            for a in attendees
+            if isinstance(a, dict) and a.get("email")
+        )
+    return frozenset()
+
+
 @router.post("/", response_model=MeetingRead, status_code=201)
-async def create_meeting(payload: MeetingCreate, session: DBSession):
-    return await MeetingRepository(session).create(payload.model_dump())
+async def create_meeting(payload: MeetingCreate, session: DBSession, current_user: CurrentUser):
+    data = payload.model_dump()
+
+    # Dedup: reject if a meeting with same title + overlapping attendees already exists
+    # within a 2-hour window around the scheduled_at (same name on different days is fine)
+    scheduled_at = data.get("scheduled_at")
+    title = (data.get("title") or "").strip()
+    if scheduled_at and title:
+        window_start = scheduled_at - timedelta(hours=1)
+        window_end = scheduled_at + timedelta(hours=1)
+        existing_candidates = list((await session.execute(
+            select(Meeting).where(
+                Meeting.title == title,
+                Meeting.scheduled_at >= window_start,
+                Meeting.scheduled_at <= window_end,
+            )
+        )).scalars().all())
+
+        incoming_attendees = _attendees_key(data.get("attendees"))
+        for candidate in existing_candidates:
+            existing_attendees = _attendees_key(candidate.attendees)
+            # Same title + same time window + overlapping attendees = duplicate
+            if not incoming_attendees or not existing_attendees or incoming_attendees & existing_attendees:
+                return candidate  # return existing instead of creating duplicate
+
+    data.setdefault("synced_by_user_id", str(current_user.id))
+    data.setdefault("synced_at", datetime.utcnow().isoformat())
+    data.setdefault("external_source", "manual")
+    return await MeetingRepository(session).create(data)
 
 
 @router.get("/{meeting_id}", response_model=MeetingRead)

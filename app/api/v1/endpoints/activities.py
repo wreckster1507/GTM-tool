@@ -18,6 +18,7 @@ router = APIRouter(prefix="/activities", tags=["activities"])
 async def list_activities(
     session: DBSession,
     pagination: Pagination,
+    _user: CurrentUser,
     deal_id: Optional[UUID] = Query(default=None),
     contact_id: Optional[UUID] = Query(default=None),
     company_id: Optional[UUID] = Query(default=None),
@@ -54,24 +55,31 @@ async def list_activities(
 
 
 @router.post("/", response_model=ActivityRead, status_code=201)
-async def create_activity(payload: ActivityCreate, session: DBSession):
-    return await ActivityRepository(session).create(payload.model_dump())
+async def create_activity(payload: ActivityCreate, session: DBSession, current_user: CurrentUser):
+    # Stamp the creator so manual call / LinkedIn / note activities have rep
+    # attribution, without requiring the frontend to send it.
+    data = payload.model_dump()
+    if not data.get("created_by_id"):
+        data["created_by_id"] = current_user.id
+    if not data.get("source"):
+        data["source"] = "manual"
+    return await ActivityRepository(session).create(data)
 
 
 @router.get("/{activity_id}", response_model=ActivityRead)
-async def get_activity(activity_id: UUID, session: DBSession):
+async def get_activity(activity_id: UUID, session: DBSession, _user: CurrentUser):
     return await ActivityRepository(session).get_or_raise(activity_id)
 
 
 @router.put("/{activity_id}", response_model=ActivityRead)
-async def update_activity(activity_id: UUID, payload: ActivityUpdate, session: DBSession):
+async def update_activity(activity_id: UUID, payload: ActivityUpdate, session: DBSession, _user: CurrentUser):
     repo = ActivityRepository(session)
     activity = await repo.get_or_raise(activity_id)
     return await repo.update(activity, payload.model_dump(exclude_unset=True))
 
 
 @router.delete("/{activity_id}", status_code=204)
-async def delete_activity(activity_id: UUID, session: DBSession):
+async def delete_activity(activity_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ActivityRepository(session)
     activity = await repo.get_or_raise(activity_id)
     await repo.delete(activity)

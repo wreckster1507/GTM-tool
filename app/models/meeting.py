@@ -46,6 +46,8 @@ class Meeting(MeetingBase, table=True):
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     external_source: Optional[str] = Field(default=None, index=True)
     external_source_id: Optional[str] = Field(default=None, index=True)
+    synced_by_user_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    synced_at: Optional[datetime] = None
     meeting_url: Optional[str] = Field(default=None, sa_column=Column(Text))
     recording_url: Optional[str] = Field(default=None, sa_column=Column(Text))
     # Pre-meeting
@@ -74,6 +76,8 @@ class MeetingRead(MeetingBase):
     id: UUID
     external_source: Optional[str] = None
     external_source_id: Optional[str] = None
+    synced_by_user_id: Optional[UUID] = None
+    synced_at: Optional[datetime] = None
     meeting_url: Optional[str] = None
     recording_url: Optional[str] = None
     pre_brief: Optional[str] = None

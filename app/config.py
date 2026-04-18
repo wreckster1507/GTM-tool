@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     BUILTWITH_API_KEY: str = ""
     INSTANTLY_API_KEY: str = ""
     INSTANTLY_WEBHOOK_URL: str = ""  # e.g. https://yourdomain.com/api/v1/webhooks/instantly
+    INSTANTLY_WEBHOOK_SECRET: str = ""  # Shared secret sent as X-Beacon-Webhook-Secret header
     FIREFLIES_API_KEY: str = ""
     NEWS_API_KEY: str = ""  # No longer required — news client uses Google News RSS
 
@@ -105,6 +106,7 @@ class Settings(BaseSettings):
     AIRCALL_API_ID: str = ""
     AIRCALL_API_TOKEN: str = ""
     AIRCALL_WEBHOOK_URL: str = ""
+    AIRCALL_WEBHOOK_SECRET: str = ""  # Shared secret sent as X-Beacon-Webhook-Secret header
     AIRCALL_DEFAULT_NUMBER: str = ""  # E.164 digits of the default outbound number
 
     # tl;dv meeting intelligence

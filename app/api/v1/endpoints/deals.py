@@ -143,6 +143,9 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         changes.append(f"Priority changed to {update_data['priority']}")
     if "assigned_to_id" in update_data and str(update_data.get("assigned_to_id")) != str(deal.assigned_to_id):
         changes.append("Assignee changed")
+    if "commit_to_deal" in update_data and update_data["commit_to_deal"] != deal.commit_to_deal:
+        label = "committed" if update_data["commit_to_deal"] else "uncommitted"
+        changes.append(f"Deal {label}")
 
     update_data["updated_at"] = datetime.utcnow()
     updated = await repo.update(deal, update_data)

@@ -16,12 +16,13 @@ Instantly webhook events handled:
 """
 import asyncio
 import hashlib
+import hmac
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,42 @@ from app.services.tasks import refresh_system_tasks_for_entity
 from app.services.tldv_sync import sync_tldv_meeting
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+
+# ── Auth / idempotency helpers ────────────────────────────────────────────────
+
+_WEBHOOK_SECRET_HEADER = "x-beacon-webhook-secret"
+
+
+def _verify_webhook_secret(request: Request, expected: str) -> None:
+    """Constant-time compare of the shared-secret header.
+
+    If `expected` is empty (e.g. dev / mock mode with no secret configured),
+    verification is skipped so local testing keeps working. Production must
+    set INSTANTLY_WEBHOOK_SECRET and AIRCALL_WEBHOOK_SECRET.
+    """
+    if not expected:
+        return
+    provided = request.headers.get(_WEBHOOK_SECRET_HEADER, "") or ""
+    if not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+
+async def _already_processed_external_event(
+    session, *, source: str, external_id: str | None
+) -> bool:
+    """Return True if an Activity with this (source, external_source_id) already exists."""
+    if not external_id:
+        return False
+    existing = (
+        await session.execute(
+            select(Activity.id).where(
+                Activity.source == source,
+                Activity.external_source_id == external_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    return existing is not None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -85,6 +122,8 @@ async def _create_activity(
     payload: dict,
     deal_id: Optional[UUID] = None,
     contact_id: Optional[UUID] = None,
+    external_source: Optional[str] = None,
+    external_source_id: Optional[str] = None,
 ) -> Activity:
     activity = Activity(
         type=type_,
@@ -93,6 +132,8 @@ async def _create_activity(
         event_metadata=payload,
         deal_id=deal_id,
         contact_id=contact_id,
+        external_source=external_source or source,
+        external_source_id=external_source_id,
     )
     session.add(activity)
 
@@ -540,6 +581,7 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     the matching Contact and OutreachSequence, then update statuses and
     log an Activity.
     """
+    _verify_webhook_secret(request, settings.INSTANTLY_WEBHOOK_SECRET)
     payload: Dict[str, Any] = await request.json()
 
     # ── Parse common fields from Instantly payload ─────────────────────────────
@@ -565,6 +607,25 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     reply_body = payload.get("reply_text") or payload.get("body") or ""
     step_number = payload.get("step") or payload.get("step_number")
 
+    # Instantly payloads include a unique event/message identifier; we use it
+    # for idempotency so retried deliveries don't duplicate activities.
+    event_external_id = str(
+        payload.get("event_id")
+        or payload.get("eventId")
+        or payload.get("message_id")
+        or payload.get("messageId")
+        or ""
+    ).strip() or None
+
+    if event_external_id and await _already_processed_external_event(
+        session, source="instantly", external_id=event_external_id
+    ):
+        return {
+            "status": "duplicate",
+            "event_type": event_type,
+            "event_id": event_external_id,
+        }
+
     # ── Find contact by email ──────────────────────────────────────────────────
     contact = await _find_contact_by_email(session, lead_email)
     contact_id = contact.id if contact else None
@@ -572,11 +633,11 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     # ── Find linked outreach sequence ──────────────────────────────────────────
     sequence = await _find_sequence_by_campaign(session, campaign_id, contact_id)
 
-    # ── Find a deal to attach the activity to (best-effort) ───────────────────
-    deal_id = None
-    if not deal_id:
-        deal = await _most_recent_active_deal(session)
-        deal_id = deal.id if deal else None
+    # Only attach the activity to a deal if that deal actually links to this
+    # contact. Previously we fell back to "most-recent-active-deal" workspace-wide,
+    # which polluted unrelated deal timelines with every Instantly event.
+    deal = await _find_best_deal_for_contact(session, contact_id) if contact_id else None
+    deal_id = deal.id if deal else None
 
     now = datetime.utcnow()
 
@@ -586,6 +647,18 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         step_note = f" (step {step_number})" if step_number else ""
         content = f"Email sent{step_note}: {subject} → {lead_email}"
         activity_type = "email"
+        # Move the contact from "queued_instantly" to "sent" so the pipeline
+        # board, progress tracker, and follow-up tasks see live sequence state.
+        # Only advance if we haven't already moved past "sent" (reply, bounce, etc.)
+        if contact and (contact.sequence_status or "") in {"queued_instantly", "ready", "", None}:
+            contact.sequence_status = "sent"
+            contact.instantly_status = "pushed"
+            contact.updated_at = now
+            session.add(contact)
+        if sequence and (sequence.status or "") in {"launched", "", None}:
+            sequence.status = "sent"
+            sequence.updated_at = now
+            session.add(sequence)
 
     elif event_type == "email_opened":
         content = f"Email opened: {subject} by {lead_email}"
@@ -696,6 +769,8 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         payload=payload,
         deal_id=deal_id,
         contact_id=contact_id,
+        external_source="instantly",
+        external_source_id=event_external_id,
     )
 
     # ── Refresh system tasks based on new email signal ─────────────────────────
@@ -787,6 +862,7 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
       call.commented     → sync agent note to CRM activity
       call.missed        → log missed call
     """
+    _verify_webhook_secret(request, settings.AIRCALL_WEBHOOK_SECRET)
     payload: Dict[str, Any] = await request.json()
 
     event = str(payload.get("event", "") or "")

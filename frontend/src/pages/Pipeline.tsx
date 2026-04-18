@@ -1006,16 +1006,25 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
 function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; dropActive: boolean; onAdd?: () => void; onDrop: () => void; children: ReactNode }) {
   return (
     <div style={{ width: 286, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, padding: "0 4px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: stage.color || STAGE_COLOR[stage.id] || "#94a3b8" }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: stage.group === "closed" ? "#7a8ca1" : "#2d4258" }}>{stage.label}</span>
-          <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#ecf1f7", color: "#48607b" }}>{count}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10, padding: "0 4px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: stage.color || STAGE_COLOR[stage.id] || "#94a3b8", flexShrink: 0 }} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: stage.group === "closed" ? "#7a8ca1" : "#2d4258", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage.label}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#ecf1f7", color: "#48607b", flexShrink: 0 }}>{count}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            {onAdd && <button onClick={onAdd} style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #dbe6f2", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#7a96b0" }}><Plus size={12} /></button>}
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {typeof totalValue === "number" && <span style={{ fontSize: 10, fontWeight: 600, color: totalValue > 0 ? "#3b6ea5" : "#b4c3d4" }}>{formatCurrency(totalValue)}</span>}
-          {onAdd && <button onClick={onAdd} style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #dbe6f2", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#7a96b0" }}><Plus size={12} /></button>}
-        </div>
+        {typeof totalValue === "number" && Number.isFinite(totalValue) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 14 }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: totalValue > 0 ? "#1d4ed8" : "#94a3b8", letterSpacing: "0.01em" }}>
+              {formatCurrency(totalValue)}
+            </span>
+          </div>
+        )}
       </div>
       <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} style={{ flex: 1, minHeight: 0, maxHeight: "100%", borderRadius: 14, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: dropActive ? "#eef6ff" : stage.group === "closed" ? "#f4f6f9" : "#f9fbfe", border: dropActive ? "1px solid #93c5fd" : "1px solid #e8eef5", overflowY: "auto", transition: "all 0.15s ease", scrollbarGutter: "stable" }}>
         {children}
@@ -2247,63 +2256,6 @@ export default function Pipeline() {
             </div>
           </div>
 
-          {tab === "deal" && (() => {
-            const maxCount = Math.max(...stageForecast.map((s) => s.count), 1);
-            const totalDeals = stageForecast.reduce((s, st) => s + st.count, 0);
-            const totalValue = stageForecast.reduce((s, st) => s + st.value, 0);
-            return (
-              <div style={{ borderBottom: "1px solid #e8eef5", background: "linear-gradient(180deg,#f8fafc 0%,#fff 100%)" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px 0" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <TrendingUp size={13} style={{ color: "#3b6ea5" }} />
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#1e3a5f", letterSpacing: "0.02em" }}>Pipeline Funnel</span>
-                    <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500 }}>{totalDeals} deals · {formatCurrency(totalValue)}</span>
-                  </div>
-                  <button type="button" onClick={() => setShowForecast((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", display: "flex", alignItems: "center", gap: 3, padding: "2px 4px", borderRadius: 6, fontSize: 11 }}>
-                    <ChevronDown size={13} style={{ transform: showForecast ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
-                    {showForecast ? "hide" : "show"}
-                  </button>
-                </div>
-                {showForecast && (
-                  <div style={{ padding: "12px 20px 14px", overflowX: "auto" }}>
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: 0, minWidth: "max-content" }}>
-                      {stageForecast.map((stage, index) => {
-                        const barH = Math.max(6, Math.round((stage.count / maxCount) * 60));
-                        const convPct = stage.conversionPct;
-                        const convColor = convPct == null ? "#cbd5e1" : convPct >= 60 ? "#16a34a" : convPct >= 30 ? "#d97706" : "#dc2626";
-                        const convBg = convPct == null ? "#f1f5f9" : convPct >= 60 ? "#dcfce7" : convPct >= 30 ? "#fef3c7" : "#fee2e2";
-                        const isLast = index === stageForecast.length - 1;
-                        const isWon = stage.id === "closed_won";
-                        const barColor = isWon
-                          ? "linear-gradient(180deg,#4ade80,#16a34a)"
-                          : "linear-gradient(180deg,#93c5fd,#3b82f6)";
-                        return (
-                          <div key={stage.id} style={{ display: "flex", alignItems: "flex-end", gap: 0 }}>
-                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, width: 90 }}>
-                              <span style={{ fontSize: 20, fontWeight: 800, color: stage.count > 0 ? "#0f2744" : "#cbd5e1", lineHeight: 1 }}>{stage.count}</span>
-                              <div style={{ width: "100%", height: 60, display: "flex", alignItems: "flex-end", padding: "0 8px" }}>
-                                <div style={{ width: "100%", height: barH, borderRadius: "5px 5px 0 0", background: stage.count > 0 ? barColor : "#e2e8f0", transition: "height 0.3s ease" }} />
-                              </div>
-                              <span style={{ fontSize: 10, fontWeight: 700, color: "#475569", textAlign: "center", lineHeight: 1.3, maxWidth: 86, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage.label}</span>
-                              <span style={{ fontSize: 10, fontWeight: 600, color: stage.value > 0 ? "#2563eb" : "#cbd5e1" }}>{stage.value > 0 ? formatCurrency(stage.value) : "—"}</span>
-                            </div>
-                            {!isLast && (
-                              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: 44, paddingBottom: 32, gap: 3, flexShrink: 0 }}>
-                                <div style={{ background: convBg, borderRadius: 6, padding: "2px 6px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                                  <ArrowRight size={10} style={{ color: convColor }} />
-                                  <span style={{ fontSize: 9, fontWeight: 800, color: convColor, lineHeight: 1 }}>{convPct != null ? `${convPct}%` : "—"}</span>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
 
           <div
             className="pipeline-board-scroll"
@@ -2318,7 +2270,7 @@ export default function Pipeline() {
                 return (
                   <div key={stage.id} style={{ display: "flex", gap: 12, height: "100%" }}>
                     {divider && <div style={{ width: 1, background: "linear-gradient(180deg, #dbe6f2 0%, transparent 100%)", margin: "28px 2px 0", alignSelf: "stretch" }} />}
-                    <BoardColumn stage={stage} count={currentBoardLoading ? 0 : tab === "deal" ? dealItems.length : prospectItems.length} totalValue={currentBoardLoading || tab !== "deal" ? undefined : dealItems.reduce((sum, deal) => sum + (deal.value ?? 0), 0)} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
+                    <BoardColumn stage={stage} count={currentBoardLoading ? 0 : tab === "deal" ? dealItems.length : prospectItems.length} totalValue={currentBoardLoading || tab !== "deal" ? undefined : dealItems.reduce((sum, deal) => { const n = Number(deal.value); return sum + (Number.isFinite(n) ? n : 0); }, 0)} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
                       {currentBoardLoading ? (
                         Array.from({ length: stage.group === "active" ? 3 : 1 }).map((_, skeletonIndex) => (
                           <LoadingCard key={`${stage.id}-skeleton-${skeletonIndex}`} kind={tab === "deal" ? "deal" : "prospect"} />

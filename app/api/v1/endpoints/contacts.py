@@ -109,6 +109,7 @@ async def _get_or_create_uploaded_placeholder_company(
 async def list_contacts(
     session: DBSession,
     pagination: Pagination,
+    current_user: CurrentUser,
     company_id: Optional[UUID] = Query(default=None),
     q: Optional[str] = Query(default=None, description="Search by name, email, title, or company"),
     persona: Optional[str] = Query(default=None),
@@ -121,8 +122,15 @@ async def list_contacts(
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
-    No second API call to /companies needed on the frontend.
+    Non-admins are scoped to contacts assigned to them (AE or SDR).
     """
+    effective_ae_id = ae_id
+    effective_sdr_id = sdr_id
+    if not current_user.is_admin:
+        user_id_str = str(current_user.id)
+        effective_ae_id = user_id_str
+        effective_sdr_id = user_id_str
+
     repo = ContactRepository(session)
     items, total = await repo.list_with_company_name(
         company_id=company_id,
@@ -131,8 +139,9 @@ async def list_contacts(
         sequence_status=sequence_status,
         call_disposition=call_disposition,
         email_state=email_state,
-        ae_id=ae_id,
-        sdr_id=sdr_id,
+        ae_id=effective_ae_id,
+        sdr_id=effective_sdr_id,
+        scope_any_match=not current_user.is_admin,
         prospect_only=prospect_only,
         skip=pagination.skip,
         limit=pagination.limit,

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigationType } from "react-router-dom";
 import { AuthProvider } from "./lib/AuthContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
@@ -43,7 +43,22 @@ function ScrollToTop() {
   return null;
 }
 
-function RouteScopedAircallPhone() {
+const AIRCALL_STORAGE_KEY = "crm.aircall.enabled";
+
+function AircallToggleListener() {
+  const [enabled, setEnabled] = useState<boolean>(() => {
+    return localStorage.getItem(AIRCALL_STORAGE_KEY) !== "false";
+  });
+
+  useEffect(() => {
+    function handleToggle() {
+      setEnabled(localStorage.getItem(AIRCALL_STORAGE_KEY) !== "false");
+    }
+    window.addEventListener("crm:aircall:toggle", handleToggle);
+    return () => window.removeEventListener("crm:aircall:toggle", handleToggle);
+  }, []);
+
+  if (!enabled) return null;
   return <AircallPhonePanel />;
 }
 
@@ -53,8 +68,7 @@ export default function App() {
       <AuthProvider>
         <ToastProvider>
           <ScrollToTop />
-          {/* Aircall phone widget — only on prospecting/contact routes */}
-          <RouteScopedAircallPhone />
+          <AircallToggleListener />
           <Routes>
             {/* Public routes */}
             <Route path="/login" element={<Login />} />
