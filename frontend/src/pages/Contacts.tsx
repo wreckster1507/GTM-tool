@@ -110,14 +110,19 @@ function getSequencePlanSteps(contact: Contact): ProspectProgressStep[] | null {
 }
 
 function getProspectProgressSteps(contact: Contact): ProspectProgressStep[] {
-  // Pre-launch: show planned sequence step timeline if available
+  // Pre-launch: show planned sequence step timeline if available, prefixed
+  // with a Ready anchor so the track reads "Ready - Email D0 - Email D3 - ..."
   const plannedSteps = getSequencePlanSteps(contact);
   if (plannedSteps) {
-    // Mark first step as "current" to give a visual anchor
-    return plannedSteps.map((step, i) => ({
-      ...step,
-      state: i === 0 ? "current" : "pending",
-    }));
+    return [
+      {
+        key: "ready",
+        label: "Ready",
+        state: "current" as const,
+        detail: contact.tracking_stage || "Ready for first touch",
+      },
+      ...plannedSteps.map((step) => ({ ...step, state: "pending" as const })),
+    ];
   }
 
   // Live tracking: existing logic for initiated/active sequences

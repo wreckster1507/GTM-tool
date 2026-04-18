@@ -546,6 +546,44 @@ async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSess
     await session.commit()
     await session.refresh(row)
 
+    # Propagate the new cadence to every prospect that hasn't started a
+    # sequence yet — their progress tracker renders from sequence_plan.steps,
+    # so without this refresh they'd still show the old channel labels.
+    # Contacts already in flight (launched / replied / meeting_booked / etc.)
+    # are protected by the guard inside refresh_contact_sequence_plan.
+    from app.models.contact import Contact
+    from app.models.company import Company
+    from app.services.account_sourcing import (
+        _workspace_step_schedule,
+        refresh_contact_sequence_plan,
+    )
+
+    ws_schedule = _workspace_step_schedule(
+        row.outreach_step_delays, row.outreach_content_settings
+    )
+    refreshed_count = 0
+    if ws_schedule:
+        stmt = sm_select(Contact).where(
+            Contact.instantly_campaign_id.is_(None),
+            (Contact.sequence_status.is_(None) | Contact.sequence_status.in_(["ready", "research_needed", ""])),
+        )
+        contacts_to_refresh = (await session.execute(stmt)).scalars().all()
+        company_cache: dict = {}
+        for contact in contacts_to_refresh:
+            if not contact.company_id:
+                continue
+            company = company_cache.get(contact.company_id)
+            if company is None:
+                company = await session.get(Company, contact.company_id)
+                company_cache[contact.company_id] = company
+            if not company:
+                continue
+            refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+            session.add(contact)
+            refreshed_count += 1
+        if refreshed_count:
+            await session.commit()
+
     delays = row.outreach_step_delays
     return OutreachSettingsRead(step_delays=delays, steps_count=len(delays), steps=normalized_steps)
 
