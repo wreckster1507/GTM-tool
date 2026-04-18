@@ -3,7 +3,7 @@ from typing import AsyncGenerator
 from sqlalchemy import event
 from sqlalchemy.dialects.postgresql import JSON, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlmodel import SQLModel
 
 from app.config import settings
@@ -61,5 +61,6 @@ def _sanitize_on_flush(sess, flush_context, instances):
                     setattr(obj, column.key, cleaned)
 
 
-# Register the listener on the sync Session class that async sessions delegate to.
-event.listen(AsyncSessionLocal.sync_session_class, "before_flush", _sanitize_on_flush)
+# Register on the base Session class so it fires for both sync sessions and the
+# sync Session that AsyncSession delegates to under the hood.
+event.listen(Session, "before_flush", _sanitize_on_flush)
