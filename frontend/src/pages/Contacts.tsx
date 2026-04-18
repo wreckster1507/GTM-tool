@@ -1083,7 +1083,7 @@ export default function Contacts() {
                           <td>
                             {c.company_name ? (
                               <button
-                                onClick={(e) => { e.stopPropagation(); navigate(`/companies/${c.company_id}`); }}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/account-sourcing/${c.company_id}`); }}
                                 className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
                               >
                                 {c.company_name}

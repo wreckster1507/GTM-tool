@@ -378,7 +378,7 @@ export default function Companies() {
                           {getInitials(c.name)}
                         </div>
                         <div className="min-w-0">
-                          <Link to={`/companies/${c.id}`} className="font-bold text-[#24364b] hover:text-[#ff6b35] transition-colors">
+                          <Link to={`/account-sourcing/${c.id}`} className="font-bold text-[#24364b] hover:text-[#ff6b35] transition-colors">
                             {c.name}
                           </Link>
                           <p className="text-[13px] text-[#7a8ea4] truncate mt-0.5">{c.domain}</p>

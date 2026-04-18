@@ -150,7 +150,7 @@ export default function ContactDetail() {
               </div>
               <div className="flex items-center gap-3 mt-3 text-[13px] text-[#4d6178] flex-wrap" style={{ marginTop: 14, rowGap: 10, columnGap: 12 }}>
                 {company && (
-                  <Link to={`/companies/${company.id}`} className="hover:text-[#ff6b35] font-semibold">
+                  <Link to={`/account-sourcing/${company.id}`} className="hover:text-[#ff6b35] font-semibold">
                     {company.name}
                   </Link>
                 )}
