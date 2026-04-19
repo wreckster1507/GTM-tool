@@ -1176,7 +1176,6 @@ export default function Contacts() {
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Title</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Progress</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Cadence</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Timezone</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email Status</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Call</th>
@@ -1234,132 +1233,21 @@ export default function Contacts() {
                               </div>
                             </div>
                           </td>
-                          <td>
-                            {(() => {
-                              const tone = getProspectTrackingTone(c);
-                              const progressSteps = getProspectProgressSteps(c);
-                              const currentStep = progressSteps.find((step) => step.state === "current") ?? progressSteps[0];
-                              return (
-                                <div
-                                  style={{
-                                    minWidth: 300,
-                                    padding: "12px 14px",
-                                    borderRadius: 16,
-                                    background: "#ffffff",
-                                    border: "1px solid #e5edf5",
-                                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.9)",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      alignItems: "center",
-                                      justifyContent: "space-between",
-                                      gap: 10,
-                                      marginBottom: 10,
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 6,
-                                        padding: "4px 9px",
-                                        borderRadius: 999,
-                                        background: tone.soft,
-                                        border: `1px solid ${tone.border}`,
-                                        color: tone.color,
-                                        fontWeight: 800,
-                                        fontSize: 11.5,
-                                      }}
-                                    >
-                                      {getProspectTrackingScore(c)}
-                                    </span>
-                                    <span style={{ color: "#7a8ea4", fontSize: 11, fontWeight: 700 }}>
-                                      {currentStep.label}
-                                    </span>
-                                  </div>
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 0,
-                                    }}
-                                  >
-                                    {progressSteps.map((step, index) => {
-                                      const stateStyle =
-                                        step.state === "done"
-                                          ? { fill: tone.color, border: tone.border, text: tone.color, line: tone.border, ring: "transparent" }
-                                          : step.state === "current"
-                                            ? { fill: "#ffffff", border: "#175089", text: "#175089", line: "#bfd7fb", ring: "rgba(23,80,137,0.12)" }
-                                            : { fill: "#ffffff", border: "#d6e0ea", text: "#8aa0b5", line: "#dbe5ef", ring: "transparent" };
-                                      return (
-                                        <div key={step.key} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
-                                          <div
-                                            title={`${step.label}: ${step.detail}`}
-                                            style={{
-                                              display: "flex",
-                                              flexDirection: "column",
-                                              alignItems: "center",
-                                              gap: 6,
-                                              minWidth: 0,
-                                            }}
-                                          >
-                                            <div
-                                              style={{
-                                                width: 16,
-                                                height: 16,
-                                                borderRadius: 999,
-                                                border: `2px solid ${stateStyle.border}`,
-                                                background: stateStyle.fill,
-                                                boxShadow: step.state === "current" ? `0 0 0 5px ${stateStyle.ring}` : "none",
-                                                flexShrink: 0,
-                                              }}
-                                            />
-                                            <div
-                                              style={{
-                                                maxWidth: "100%",
-                                                color: stateStyle.text,
-                                                fontSize: 10,
-                                                fontWeight: step.state === "current" ? 800 : 700,
-                                                letterSpacing: 0.15,
-                                                whiteSpace: "nowrap",
-                                                overflow: "hidden",
-                                                textOverflow: "ellipsis",
-                                              }}
-                                            >
-                                              {step.label}
-                                            </div>
-                                          </div>
-                                          {index < progressSteps.length - 1 ? (
-                                            <div
-                                              style={{
-                                                flex: 1,
-                                                height: 2,
-                                                borderRadius: 999,
-                                                background: stateStyle.line,
-                                                margin: "0 4px 18px",
-                                              }}
-                                            />
-                                          ) : null}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                  {c.tracking_last_activity_at ? (
-                                    <div style={{ marginTop: 10, color: "#8aa0b5", fontSize: 10.5, fontWeight: 700, textAlign: "right" }}>
-                                      Updated {new Date(c.tracking_last_activity_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })()}
-                          </td>
-                          {/* Cadence lifecycle — compact status bar showing
-                              actual step-by-step cadence state (not stage).
-                              Click opens the full lifecycle drawer. */}
-                          <td onClick={(e) => { e.stopPropagation(); setLifecycleContactId(c.id); }}>
-                            <CadenceMiniBar summary={lifecycleSummaries[c.id]} />
+                          {/* Progress — single source of truth. When the
+                              contact has a live outreach sequence we render
+                              cadence step dots with real state (done / current
+                              / overdue / upcoming). When there's no sequence
+                              yet we keep the funnel-stage template so reps
+                              still see something actionable. Click opens the
+                              full lifecycle drawer either way. */}
+                          <td
+                            onClick={(e) => { e.stopPropagation(); setLifecycleContactId(c.id); }}
+                            style={{ cursor: "pointer" }}
+                          >
+                            <ProgressCell
+                              contact={c}
+                              lifecycle={lifecycleSummaries[c.id]}
+                            />
                           </td>
                           {/* Timezone */}
                           <td>
@@ -2538,111 +2426,253 @@ export default function Contacts() {
   );
 }
 
-// ── Cadence mini bar (compact per-row progress) ─────────────────────────
-// Visual goal: at-a-glance truth about where the prospect sits in their
-// sequence and whether anything is stuck. The bar encodes step state with
-// color + fill pattern, and the text line tells the rep "day 7 · 2/5 done"
-// plus any stall/overdue signal. Full detail is in the drawer.
-const LIFECYCLE_DOT_STYLE: Record<LifecycleStepState, { bg: string; ring: string; border: string }> = {
-  sent:     { bg: "#22c55e", ring: "#dcfce7", border: "#16a34a" },
-  opened:   { bg: "#14b8a6", ring: "#ccfbf1", border: "#0d9488" },
-  clicked:  { bg: "#0ea5e9", ring: "#e0f2fe", border: "#0284c7" },
-  replied:  { bg: "#7c3aed", ring: "#ede9fe", border: "#6d28d9" },
-  done:     { bg: "#16a34a", ring: "#dcfce7", border: "#15803d" },
-  overdue:  { bg: "#ef4444", ring: "#fee2e2", border: "#dc2626" },
-  upcoming: { bg: "#ffffff", ring: "transparent", border: "#cbd5e1" },
-  skipped:  { bg: "#f1f5f9", ring: "transparent", border: "#cbd5e1" },
-  failed:   { bg: "#f97316", ring: "#ffedd5", border: "#ea580c" },
+// ── Progress cell — unified progress visualization ──────────────────────
+// One component, two modes, visually consistent:
+//   (1) Lifecycle mode — fires when the contact has an in-flight sequence.
+//       Shows real cadence step dots (step 1..N) with actual reconciled
+//       state from webhooks (sent/opened/replied/overdue/etc).
+//   (2) Stage-fallback mode — fires when there's no sequence yet. Shows
+//       the generic funnel stages (Ready → Email → Call → LinkedIn →
+//       Reply → Meeting) so the row is never visually empty.
+// Both modes open the same lifecycle drawer on click.
+
+const LIFECYCLE_DOT_STYLE: Record<LifecycleStepState, { bg: string; ring: string; border: string; text: string }> = {
+  sent:     { bg: "#22c55e", ring: "#dcfce7", border: "#16a34a", text: "#15803d" },
+  opened:   { bg: "#14b8a6", ring: "#ccfbf1", border: "#0d9488", text: "#0f766e" },
+  clicked:  { bg: "#0ea5e9", ring: "#e0f2fe", border: "#0284c7", text: "#0369a1" },
+  replied:  { bg: "#7c3aed", ring: "#ede9fe", border: "#6d28d9", text: "#6d28d9" },
+  done:     { bg: "#16a34a", ring: "#dcfce7", border: "#15803d", text: "#15803d" },
+  overdue:  { bg: "#ef4444", ring: "#fee2e2", border: "#dc2626", text: "#b91c1c" },
+  upcoming: { bg: "#ffffff", ring: "transparent", border: "#d6e0ea", text: "#8aa0b5" },
+  skipped:  { bg: "#f1f5f9", ring: "transparent", border: "#cbd5e1", text: "#94a3b8" },
+  failed:   { bg: "#f97316", ring: "#ffedd5", border: "#ea580c", text: "#c2410c" },
 };
 
-function CadenceMiniBar({ summary }: { summary: LifecycleSummary | undefined }) {
-  if (!summary) {
-    return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
-  }
-  if (summary.status === "never_launched") {
+function ProgressCell({
+  contact,
+  lifecycle,
+}: {
+  contact: Contact;
+  lifecycle: LifecycleSummary | undefined;
+}) {
+  const tone = getProspectTrackingTone(contact);
+  const score = getProspectTrackingScore(contact);
+
+  // Decide which mode to render.
+  // Lifecycle mode when we have a real running sequence with steps.
+  const hasLiveSequence =
+    lifecycle &&
+    lifecycle.total_steps > 0 &&
+    !["never_launched"].includes(lifecycle.status);
+
+  // ── Render path A: lifecycle mode ──────────────────────────────────────
+  if (hasLiveSequence) {
+    const total = lifecycle!.total_steps;
+    const done = lifecycle!.done_count;
+    const current = lifecycle!.current_step_index ?? -1;
+    const overdueCount = lifecycle!.overdue_count;
+
+    // Turn summary into per-step state for the rail.
+    const stepStates: LifecycleStepState[] = [];
+    for (let i = 0; i < total; i++) {
+      if (i < done) stepStates.push("done");
+      else if (i === current && overdueCount > 0) stepStates.push("overdue");
+      else if (i === current) stepStates.push("upcoming");
+      else stepStates.push("upcoming");
+    }
+    // Replied/booked → mark the current as its terminal color for clarity.
+    if (lifecycle!.status === "replied" && current >= 0) stepStates[current] = "replied";
+    if (lifecycle!.status === "booked" && current >= 0) stepStates[current] = "done";
+
+    const statusLabel = (() => {
+      switch (lifecycle!.status) {
+        case "in_progress": return overdueCount > 0 ? "Overdue" : "In progress";
+        case "replied":     return "Replied";
+        case "booked":      return "Booked";
+        case "stopped":     return "Stopped";
+        case "stalled":     return "Stalled";
+        case "completed":   return "Completed";
+        case "ready":       return "Ready · Not launched";
+        default:            return lifecycle!.status;
+      }
+    })();
+    const statusColor = (() => {
+      switch (lifecycle!.status) {
+        case "replied":    return "#7c3aed";
+        case "booked":     return "#16a34a";
+        case "stalled":    return "#dc2626";
+        case "stopped":    return "#64748b";
+        case "completed":  return "#475569";
+        case "ready":      return "#92400e";
+        default:           return overdueCount > 0 ? "#dc2626" : "#175089";
+      }
+    })();
+
     return (
-      <div style={{ fontSize: 11, color: "#94a3b8" }}>
-        <span style={{ fontWeight: 700 }}>Not generated</span>
-      </div>
-    );
-  }
-  if (summary.status === "ready") {
-    return (
-      <div style={{ fontSize: 11, color: "#64748b" }}>
-        <span style={{ fontWeight: 700, color: "#475569" }}>Ready</span>
-        <div style={{ color: "#94a3b8" }}>Not launched</div>
+      <div
+        style={{
+          minWidth: 300,
+          padding: "12px 14px",
+          borderRadius: 16,
+          background: "#ffffff",
+          border: "1px solid #e5edf5",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.9)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 9px", borderRadius: 999, background: tone.soft, border: `1px solid ${tone.border}`, color: tone.color, fontWeight: 800, fontSize: 11.5 }}>
+            {score}
+          </span>
+          <span style={{ color: statusColor, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            {statusLabel}
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+          {stepStates.map((state, index) => {
+            const s = LIFECYCLE_DOT_STYLE[state];
+            const isCurrent = index === current;
+            const label = state === "done" ? `Step ${index + 1}` :
+                          state === "overdue" ? "Overdue" :
+                          state === "replied" ? "Replied" :
+                          isCurrent ? `Step ${index + 1}` : "";
+            return (
+              <div key={index} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
+                <div
+                  title={`Step ${index + 1}: ${state}`}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0 }}
+                >
+                  <div
+                    style={{
+                      width: 16, height: 16, borderRadius: 999,
+                      border: `2px solid ${s.border}`,
+                      background: s.bg,
+                      boxShadow: isCurrent && s.ring !== "transparent" ? `0 0 0 5px ${s.ring}` : "none",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <div
+                    style={{
+                      maxWidth: "100%",
+                      color: s.text,
+                      fontSize: 10,
+                      fontWeight: isCurrent ? 800 : 700,
+                      letterSpacing: 0.15,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {label}
+                  </div>
+                </div>
+                {index < stepStates.length - 1 ? (
+                  <div
+                    style={{
+                      flex: 1, height: 2, borderRadius: 999,
+                      background: index < done ? s.border : "#dbe5ef",
+                      margin: "0 4px 18px",
+                    }}
+                  />
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 10, color: "#8aa0b5", fontSize: 10.5, fontWeight: 700, textAlign: "right" }}>
+          {lifecycle!.days_since_launch != null ? `Day ${lifecycle!.days_since_launch} · ` : ""}
+          {done}/{total} done
+          {overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
+        </div>
       </div>
     );
   }
 
-  const statusLabel = (() => {
-    switch (summary.status) {
-      case "in_progress": return summary.overdue_count > 0 ? "Overdue" : "On track";
-      case "replied":     return "Replied";
-      case "booked":      return "Booked";
-      case "stopped":     return "Stopped";
-      case "stalled":     return "Stalled";
-      case "completed":   return "Completed";
-      default:            return summary.status;
-    }
-  })();
-  const statusColor = (() => {
-    switch (summary.status) {
-      case "replied":    return "#7c3aed";
-      case "booked":     return "#16a34a";
-      case "stalled":    return "#dc2626";
-      case "stopped":    return "#64748b";
-      case "completed":  return "#475569";
-      default:           return summary.overdue_count > 0 ? "#dc2626" : "#175089";
-    }
-  })();
-
-  // Bar: render up to total_steps dots, colored by done/current/overdue/upcoming.
-  const total = summary.total_steps;
-  const done = summary.done_count;
-  const current = summary.current_step_index ?? -1;
-  const dots: Array<{ state: LifecycleStepState }> = [];
-  for (let i = 0; i < total; i++) {
-    let state: LifecycleStepState = "upcoming";
-    if (i < done) state = "done";
-    if (i === current) state = summary.overdue_count > 0 && i === current ? "overdue" : "upcoming";
-    dots.push({ state });
-  }
+  // ── Render path B: stage-fallback mode ─────────────────────────────────
+  // No generated sequence yet — show the generic funnel template so the
+  // row isn't empty. Same visual grammar as lifecycle mode for continuity.
+  const progressSteps = getProspectProgressSteps(contact);
+  const currentStep = progressSteps.find((step) => step.state === "current") ?? progressSteps[0];
+  const notGeneratedHint = lifecycle?.status === "never_launched"
+    ? "No sequence yet — Generate to start"
+    : lifecycle?.status === "ready"
+      ? "Ready · Not launched"
+      : currentStep.label;
 
   return (
-    <div style={{ cursor: "pointer", minWidth: 150 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 3, marginBottom: 4 }}>
-        {dots.map((dot, i) => {
-          const style = LIFECYCLE_DOT_STYLE[dot.state];
+    <div
+      style={{
+        minWidth: 300,
+        padding: "12px 14px",
+        borderRadius: 16,
+        background: "#ffffff",
+        border: "1px solid #e5edf5",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.9)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 9px", borderRadius: 999, background: tone.soft, border: `1px solid ${tone.border}`, color: tone.color, fontWeight: 800, fontSize: 11.5 }}>
+          {score}
+        </span>
+        <span style={{ color: "#7a8ea4", fontSize: 11, fontWeight: 700 }}>
+          {notGeneratedHint}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+        {progressSteps.map((step, index) => {
+          const stateStyle =
+            step.state === "done"
+              ? { fill: tone.color, border: tone.border, text: tone.color, line: tone.border, ring: "transparent" }
+              : step.state === "current"
+                ? { fill: "#ffffff", border: "#175089", text: "#175089", line: "#bfd7fb", ring: "rgba(23,80,137,0.12)" }
+                : { fill: "#ffffff", border: "#d6e0ea", text: "#8aa0b5", line: "#dbe5ef", ring: "transparent" };
           return (
-            <div key={i} style={{ display: "flex", alignItems: "center" }}>
+            <div key={step.key} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
               <div
-                style={{
-                  width: 10, height: 10, borderRadius: 999,
-                  background: style.bg, border: `1.5px solid ${style.border}`,
-                  boxShadow: style.ring !== "transparent" ? `0 0 0 2px ${style.ring}` : "none",
-                  flexShrink: 0,
-                }}
-              />
-              {i < dots.length - 1 && (
-                <div style={{ width: 8, height: 2, background: i < done ? "#cbd5e1" : "#e2e8f0", margin: "0 1px" }} />
-              )}
+                title={`${step.label}: ${step.detail}`}
+                style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0 }}
+              >
+                <div
+                  style={{
+                    width: 16, height: 16, borderRadius: 999,
+                    border: `2px solid ${stateStyle.border}`,
+                    background: stateStyle.fill,
+                    boxShadow: step.state === "current" ? `0 0 0 5px ${stateStyle.ring}` : "none",
+                    flexShrink: 0,
+                  }}
+                />
+                <div
+                  style={{
+                    maxWidth: "100%",
+                    color: stateStyle.text,
+                    fontSize: 10,
+                    fontWeight: step.state === "current" ? 800 : 700,
+                    letterSpacing: 0.15,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {step.label}
+                </div>
+              </div>
+              {index < progressSteps.length - 1 ? (
+                <div
+                  style={{
+                    flex: 1, height: 2, borderRadius: 999,
+                    background: stateStyle.line,
+                    margin: "0 4px 18px",
+                  }}
+                />
+              ) : null}
             </div>
           );
         })}
-        {total === 0 && (
-          <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>No steps</span>
-        )}
       </div>
-      <div style={{ fontSize: 10.5, color: statusColor, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-        {statusLabel}
-      </div>
-      <div style={{ fontSize: 10.5, color: "#64748b" }}>
-        {summary.days_since_launch != null ? `Day ${summary.days_since_launch} · ` : ""}
-        {done}/{total} done
-        {summary.overdue_count > 0 ? ` · ${summary.overdue_count} overdue` : ""}
-        {summary.has_issues && summary.status !== "in_progress" ? " · issues" : ""}
-      </div>
+      {contact.tracking_last_activity_at ? (
+        <div style={{ marginTop: 10, color: "#8aa0b5", fontSize: 10.5, fontWeight: 700, textAlign: "right" }}>
+          Updated {new Date(contact.tracking_last_activity_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+        </div>
+      ) : null}
     </div>
   );
 }
