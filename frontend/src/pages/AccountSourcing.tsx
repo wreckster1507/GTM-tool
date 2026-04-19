@@ -193,6 +193,7 @@ function SummaryCard({
   hint,
   tone = "neutral",
   onClick,
+  active = false,
 }: {
   icon: ReactNode;
   label: string;
@@ -200,12 +201,13 @@ function SummaryCard({
   hint: string;
   tone?: "neutral" | "primary" | "warm" | "green";
   onClick?: () => void;
+  active?: boolean;
 }) {
   const toneStyle = {
-    neutral: { bg: "#f8fbff", border: colors.border, accent: colors.sub },
-    primary: { bg: "#eef5ff", border: "#cfe0fb", accent: colors.primary },
-    warm: { bg: "#fff7eb", border: "#ffe0b2", accent: colors.amber },
-    green: { bg: "#eefcf5", border: "#cdeedc", accent: colors.green },
+    neutral: { bg: "#f8fbff", border: colors.border, accent: colors.sub, activeBorder: "#94a3b8" },
+    primary: { bg: "#eef5ff", border: "#cfe0fb", accent: colors.primary, activeBorder: colors.primary },
+    warm: { bg: "#fff7eb", border: "#ffe0b2", accent: colors.amber, activeBorder: colors.amber },
+    green: { bg: "#eefcf5", border: "#cdeedc", accent: colors.green, activeBorder: colors.green },
   }[tone];
 
   return (
@@ -214,11 +216,28 @@ function SummaryCard({
         ...cardStyle,
         padding: "18px 18px 16px",
         background: toneStyle.bg,
-        borderColor: toneStyle.border,
+        // Thicker colored border + subtle ring when the card's filter is active,
+        // so the rep sees which card is "on".
+        borderColor: active ? toneStyle.activeBorder : toneStyle.border,
+        borderWidth: active ? 2 : 1,
+        boxShadow: active ? `0 0 0 3px ${toneStyle.bg}` : undefined,
         cursor: onClick ? "pointer" : "default",
+        position: "relative",
       }}
       onClick={onClick}
     >
+      {active && (
+        <span
+          style={{
+            position: "absolute", top: 10, right: 12,
+            fontSize: 10, fontWeight: 800, letterSpacing: 0.4,
+            color: toneStyle.activeBorder, textTransform: "uppercase",
+          }}
+          title="Click again to clear filter"
+        >
+          FILTERED · CLICK TO CLEAR
+        </span>
+      )}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div style={{ color: toneStyle.accent }}>{icon}</div>
         <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.5 }}>{label.toUpperCase()}</div>
@@ -1010,87 +1029,135 @@ export default function AccountSourcing() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
-          <SummaryCard
-            icon={<Building2 size={18} />}
-            label="Sourced Accounts"
-            value={String(totalCompanies)}
-            hint="Total accounts currently available for enrichment and prospecting."
-            tone="neutral"
-            onClick={() => setActiveTab("accounts")}
-          />
-          <SummaryCard
-            icon={<Flame size={18} />}
-            label="Hot Accounts"
-            value={String(hotCount)}
-            hint="Accounts with the strongest ICP fit and highest near-term potential."
-            tone="warm"
-            onClick={() => {
-              setActiveTab("accounts");
-              setTierFilter(["hot"]);
-            }}
-          />
-          <SummaryCard
-            icon={<TrendingUp size={18} />}
-            label="Warm Accounts"
-            value={String(warmCount)}
-            hint="Good-fit accounts that still need stronger proof, timing, or persona clarity."
-            tone="primary"
-            onClick={() => {
-              setActiveTab("accounts");
-              setTierFilter(["warm"]);
-            }}
-          />
-          <SummaryCard
-            icon={<Target size={18} />}
-            label="High Priority"
-            value={String(highPriorityCount)}
-            hint="Accounts worth the fastest follow-up based on fit, intent, and sales feedback."
-            tone="green"
-            onClick={() => {
-              setActiveTab("accounts");
-              setDispositionFilter(["working"]);
-            }}
-          />
-        </div>
+        {(() => {
+          // Toggle helpers — each card clears its own filter on a second click so
+          // "click again to see all companies" works as the user expects.
+          const isTierActive = (t: string) => tierFilter.length === 1 && tierFilter[0] === t;
+          const isDispositionActive = (d: string) => dispositionFilter.length === 1 && dispositionFilter[0] === d;
+          const clearAllFilters = () => {
+            setTierFilter([]);
+            setDispositionFilter([]);
+            setLaneFilter([]);
+          };
+          const toggleTier = (t: string) => {
+            setActiveTab("accounts");
+            if (isTierActive(t)) {
+              clearAllFilters();
+            } else {
+              setTierFilter([t]);
+              setDispositionFilter([]);
+              setLaneFilter([]);
+            }
+          };
+          const toggleDisposition = (d: string) => {
+            setActiveTab("accounts");
+            if (isDispositionActive(d)) {
+              clearAllFilters();
+            } else {
+              setDispositionFilter([d]);
+              setTierFilter([]);
+              setLaneFilter([]);
+            }
+          };
+          const toggleSourced = () => {
+            // "Sourced Accounts" = show everything. Active when no filters are on
+            // AND we're already on accounts tab.
+            if (activeTab === "accounts" && tierFilter.length === 0 && dispositionFilter.length === 0 && laneFilter.length === 0) {
+              // no-op — already showing all; clicking again leaves it as-is.
+              return;
+            }
+            setActiveTab("accounts");
+            clearAllFilters();
+          };
+          const toggleImportsTab = () => {
+            setActiveTab(activeTab === "imports" ? "accounts" : "imports");
+          };
+          const sourcedActive =
+            activeTab === "accounts" && tierFilter.length === 0 && dispositionFilter.length === 0 && laneFilter.length === 0;
+          const importsActive = activeTab === "imports";
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
-          <SummaryCard
-            icon={<Users size={18} />}
-            label="Engaged Accounts"
-            value={String(engagedCount)}
-            hint="Accounts where reps have logged active motion or positive interest."
-            tone="primary"
-            onClick={() => {
-              setActiveTab("accounts");
-              setDispositionFilter(["interested"]);
-            }}
-          />
-          <SummaryCard
-            icon={<Target size={18} />}
-            label="Research Complete"
-            value={String(researchedCount)}
-            hint="Accounts with a generated Beacon research brief already available."
-            tone="green"
-            onClick={() => setActiveTab("imports")}
-          />
-          <SummaryCard
-            icon={<Sparkles size={18} />}
-            label="Target Verdicts"
-            value={String(targetVerdictCount)}
-            hint={`${watchVerdictCount} more accounts are currently in Watch.`}
-            tone="warm"
-            onClick={() => setActiveTab("imports")}
-          />
-          <SummaryCard
-            icon={<AlertCircle size={18} />}
-            label="Needs Review"
-            value={String(unresolvedCount + unenrichedCount)}
-            hint={`${unresolvedCount} unresolved domains, ${unenrichedCount} accounts without completed enrichment.`}
-            tone="warm"
-            onClick={() => setActiveTab("imports")}
-          />
-        </div>
+          return (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+                <SummaryCard
+                  icon={<Building2 size={18} />}
+                  label="Sourced Accounts"
+                  value={String(totalCompanies)}
+                  hint="Total accounts currently available for enrichment and prospecting."
+                  tone="neutral"
+                  onClick={toggleSourced}
+                  active={sourcedActive}
+                />
+                <SummaryCard
+                  icon={<Flame size={18} />}
+                  label="Hot Accounts"
+                  value={String(hotCount)}
+                  hint="Accounts with the strongest ICP fit and highest near-term potential."
+                  tone="warm"
+                  onClick={() => toggleTier("hot")}
+                  active={isTierActive("hot")}
+                />
+                <SummaryCard
+                  icon={<TrendingUp size={18} />}
+                  label="Warm Accounts"
+                  value={String(warmCount)}
+                  hint="Good-fit accounts that still need stronger proof, timing, or persona clarity."
+                  tone="primary"
+                  onClick={() => toggleTier("warm")}
+                  active={isTierActive("warm")}
+                />
+                <SummaryCard
+                  icon={<Target size={18} />}
+                  label="High Priority"
+                  value={String(highPriorityCount)}
+                  hint="Accounts worth the fastest follow-up based on fit, intent, and sales feedback."
+                  tone="green"
+                  onClick={() => toggleDisposition("working")}
+                  active={isDispositionActive("working")}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+                <SummaryCard
+                  icon={<Users size={18} />}
+                  label="Engaged Accounts"
+                  value={String(engagedCount)}
+                  hint="Accounts where reps have logged active motion or positive interest."
+                  tone="primary"
+                  onClick={() => toggleDisposition("interested")}
+                  active={isDispositionActive("interested")}
+                />
+                <SummaryCard
+                  icon={<Target size={18} />}
+                  label="Research Complete"
+                  value={String(researchedCount)}
+                  hint="Accounts with a generated Beacon research brief already available."
+                  tone="green"
+                  onClick={toggleImportsTab}
+                  active={importsActive}
+                />
+                <SummaryCard
+                  icon={<Sparkles size={18} />}
+                  label="Target Verdicts"
+                  value={String(targetVerdictCount)}
+                  hint={`${watchVerdictCount} more accounts are currently in Watch.`}
+                  tone="warm"
+                  onClick={toggleImportsTab}
+                  active={importsActive}
+                />
+                <SummaryCard
+                  icon={<AlertCircle size={18} />}
+                  label="Needs Review"
+                  value={String(unresolvedCount + unenrichedCount)}
+                  hint={`${unresolvedCount} unresolved domains, ${unenrichedCount} accounts without completed enrichment.`}
+                  tone="warm"
+                  onClick={toggleImportsTab}
+                  active={importsActive}
+                />
+              </div>
+            </>
+          );
+        })()}
 
         {isAdmin && activeTab === "accounts" ? (
           <UploadPanel onUploaded={handleBatchUploaded} onDownloadTemplate={downloadTemplate} />
