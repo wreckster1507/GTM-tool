@@ -676,7 +676,7 @@ async def run_pre_meeting_intelligence(
     from app.repositories.contact import ContactRepository
     from app.repositories.battlecard import BattlecardRepository
     from app.clients.web_search import WebSearchClient
-    from app.clients.azure_openai import AzureOpenAIClient
+    from app.clients.claude import ClaudeClient
     from app.clients.hunter import HunterClient
 
     meeting = await session.get(Meeting, meeting_id)
@@ -688,7 +688,7 @@ async def run_pre_meeting_intelligence(
         company = await session.get(Company, meeting.company_id)
 
     web = WebSearchClient()
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
     hunter = HunterClient()
 
     domain = (company.domain or "") if company else ""
@@ -1037,13 +1037,13 @@ async def generate_meeting_demo_strategy(
     """
     from app.models.meeting import Meeting
     from app.models.company import Company
-    from app.clients.azure_openai import AzureOpenAIClient
+    from app.clients.claude import ClaudeClient
 
     meeting = await session.get(Meeting, meeting_id)
     if not meeting:
         return {"error": "Meeting not found"}
 
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
 
     # Prefer cached research_data so we don't re-run web searches
     research: dict = (meeting.research_data or {}) if isinstance(meeting.research_data, dict) else {}
@@ -1211,7 +1211,7 @@ async def run_research_more(
     from app.models.company import Company
     from app.clients.hunter import HunterClient
     from app.clients.web_search import WebSearchClient
-    from app.clients.azure_openai import AzureOpenAIClient
+    from app.clients.claude import ClaudeClient
 
     meeting = await session.get(Meeting, meeting_id)
     if not meeting:
@@ -1264,7 +1264,7 @@ async def run_research_more(
 
     hunter = HunterClient()
     web = WebSearchClient()
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
 
     tasks_to_run: list[tuple[str, Any]] = []
 

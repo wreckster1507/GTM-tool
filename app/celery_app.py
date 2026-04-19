@@ -14,6 +14,7 @@ celery_app = Celery(
         "app.tasks.tldv_sync",
         "app.tasks.crm_import",
         "app.tasks.personal_email_sync",
+        "app.tasks.cadence_scheduler",
     ],
 )
 
@@ -47,6 +48,14 @@ celery_app.conf.update(
         "sync-all-personal-inboxes": {
             "task": "app.tasks.personal_email_sync.sync_all_personal_inboxes",
             "schedule": 600,  # every 10 minutes — enqueues one task per connected user
+        },
+        # Walk each contact's multichannel sequence plan and create tasks for
+        # non-email steps when their day_offset has arrived. Runs once every
+        # 30 min — tight enough for a call step to appear the same day, loose
+        # enough to avoid thrashing the task table.
+        "advance-multichannel-cadence": {
+            "task": "app.tasks.cadence_scheduler.advance_multichannel_cadence",
+            "schedule": 1800,  # every 30 minutes
         },
     },
 )

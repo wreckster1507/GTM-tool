@@ -377,10 +377,10 @@ async def generate_post_score(meeting_id: UUID, payload: dict, session: DBSessio
             detail="raw_notes required in body or already saved on meeting",
         )
 
-    from app.clients.azure_openai import AzureOpenAIClient
+    from app.clients.claude import ClaudeClient
     from app.models.company import Company
 
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
     company_name = "the company"
     if meeting.company_id:
         co = await session.get(Company, meeting.company_id)

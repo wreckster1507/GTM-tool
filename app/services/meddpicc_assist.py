@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.clients.azure_openai import AzureOpenAIClient
+from app.clients.claude import ClaudeClient
 from app.config import settings
 from app.models.activity import Activity
 from app.models.company import Company
@@ -240,7 +240,7 @@ async def _recommend_with_ai(
     if not settings.claude_api_key:
         return None
 
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
     if ai.mock:
         return None
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
+import type { PreCallBrief, RepQueueItem } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
@@ -216,10 +217,18 @@ export default function Contacts() {
   const [callNotes, setCallNotes] = useState("");
   const [callStatus, setCallStatus] = useState("attempted");
   const [savingDisposition, setSavingDisposition] = useState(false);
+  const [precallBrief, setPrecallBrief] = useState<PreCallBrief | null>(null);
+  const [precallLoading, setPrecallLoading] = useState(false);
+  const [myQueue, setMyQueue] = useState<RepQueueItem[]>([]);
+  const [myQueueLoading, setMyQueueLoading] = useState(false);
+  const [myQueueCollapsed, setMyQueueCollapsed] = useState(false);
   const [linkedinContact, setLinkedinContact] = useState<Contact | null>(null);
   const [linkedinStatus, setLinkedinStatus] = useState("sent");
   const [linkedinNotes, setLinkedinNotes] = useState("");
   const [savingLinkedin, setSavingLinkedin] = useState(false);
+  const [linkedinSuggestion, setLinkedinSuggestion] = useState<string | null>(null);
+  const [linkedinSuggestionLoading, setLinkedinSuggestionLoading] = useState(false);
+  const [linkedinSuggestionCopied, setLinkedinSuggestionCopied] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
@@ -417,11 +426,94 @@ export default function Contacts() {
     loadContacts();
   }, [tab, page, debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter]);
 
+  // Pull the rep's next-best-action queue whenever the tab opens. Cheap call
+  // (<300ms) and only shown on the Contacts tab, so no background poll needed.
+  useEffect(() => {
+    if (tab !== "contacts") return;
+    let cancelled = false;
+    setMyQueueLoading(true);
+    contactsApi
+      .getMyQueue(8)
+      .then((res) => {
+        if (!cancelled) setMyQueue(res.items || []);
+      })
+      .catch(() => {
+        if (!cancelled) setMyQueue([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMyQueueLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, sequenceFilter, callDispositionFilter]);
+
   useEffect(() => {
     const dismiss = () => setOpenActionsId(null);
     window.addEventListener("click", dismiss);
     return () => window.removeEventListener("click", dismiss);
   }, []);
+
+  // When the call sidebar opens, fetch the full pre-call brief: last email
+  // sent & whether it was opened, recent signals, talking points, objection
+  // playbook, and the AI sequence context. No network or AI in the brief
+  // assembly — it's pure DB reads so it comes back in < 300ms.
+  useEffect(() => {
+    if (!callContact) {
+      setPrecallBrief(null);
+      setPrecallLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPrecallLoading(true);
+    contactsApi
+      .getPrecallBrief(callContact.id)
+      .then((brief) => {
+        if (!cancelled) setPrecallBrief(brief);
+      })
+      .catch(() => {
+        if (!cancelled) setPrecallBrief(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPrecallLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [callContact]);
+
+  // When the LinkedIn logger opens, fetch the contact's AI-generated
+  // connect-note so the rep doesn't have to rewrite it from scratch.
+  // We intentionally *suggest* (not auto-fill the notes field) so the rep
+  // copy-pastes deliberately — the notes field captures what actually
+  // happened on LinkedIn, which is different from what we generated.
+  useEffect(() => {
+    if (!linkedinContact) {
+      setLinkedinSuggestion(null);
+      setLinkedinSuggestionLoading(false);
+      setLinkedinSuggestionCopied(false);
+      return;
+    }
+    let cancelled = false;
+    setLinkedinSuggestionLoading(true);
+    setLinkedinSuggestionCopied(false);
+    outreachApi
+      .getSequence(linkedinContact.id)
+      .then((seq) => {
+        if (cancelled) return;
+        setLinkedinSuggestion((seq.linkedin_message || "").trim() || null);
+      })
+      .catch(() => {
+        // No sequence yet — we just don't show the suggestion panel.
+        if (!cancelled) setLinkedinSuggestion(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLinkedinSuggestionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [linkedinContact]);
 
   // ── Angel mapping grouping ──────────────────────────────────────────
   const filteredMappings = filterAngelMappings(mappings, angelSearch, filterStrength);
@@ -934,6 +1026,31 @@ export default function Contacts() {
                 </div>
               </div>
             </div>
+
+            {/* Your Queue: rule-ranked next-best-actions for the rep */}
+            <RepQueueWidget
+              items={myQueue}
+              loading={myQueueLoading}
+              collapsed={myQueueCollapsed}
+              onToggle={() => setMyQueueCollapsed((prev) => !prev)}
+              onCall={(item) => {
+                const match = contacts.find((c) => c.id === item.contact_id);
+                if (match) {
+                  setCallContact(match);
+                  setCallDisposition("");
+                  setCallNotes("");
+                  setCallStatus("attempted");
+                }
+              }}
+              onLinkedin={(item) => {
+                const match = contacts.find((c) => c.id === item.contact_id);
+                if (match) {
+                  setLinkedinContact(match);
+                  setLinkedinStatus("sent");
+                  setLinkedinNotes("");
+                }
+              }}
+            />
 
             {/* Filters */}
             {(() => {
@@ -2195,48 +2312,15 @@ export default function Contacts() {
               </div>
             </div>
 
-            {/* Pre-call intel */}
-            <div style={{ padding: "16px 22px", borderBottom: "1px solid #e8eef5" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Pre-call intel</div>
-              <div style={{ display: "grid", gap: 8 }}>
-                {callContact.title && (
-                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
-                    <span style={{ fontWeight: 600 }}>Title:</span> {callContact.title}
-                  </div>
-                )}
-                {callContact.phone && (
-                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
-                    <span style={{ fontWeight: 600 }}>Phone:</span>{" "}
-                    <a href={`tel:${callContact.phone}`} style={{ color: "#175089" }}>{callContact.phone}</a>
-                  </div>
-                )}
-                {callContact.timezone && (
-                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
-                    <span style={{ fontWeight: 600 }}>Timezone:</span> {callContact.timezone}
-                  </div>
-                )}
-                {callContact.outreach_lane && (
-                  <div style={{ fontSize: 13, color: "#2c4a63" }}>
-                    <span style={{ fontWeight: 600 }}>Lane:</span> {callContact.outreach_lane.replace(/_/g, " ")}
-                  </div>
-                )}
-                {callContact.conversation_starter && (
-                  <div style={{ fontSize: 13, color: "#2c4a63", background: "#f0f6ff", border: "1px solid #c8daf0", borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 11, textTransform: "uppercase", color: "#546679", letterSpacing: "0.05em" }}>Conversation starter</div>
-                    {callContact.conversation_starter}
-                  </div>
-                )}
-                {callContact.personalization_notes && (
-                  <div style={{ fontSize: 13, color: "#2c4a63", background: "#f7fbff", border: "1px solid #dbe6f2", borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 11, textTransform: "uppercase", color: "#546679", letterSpacing: "0.05em" }}>Personalization notes</div>
-                    {callContact.personalization_notes}
-                  </div>
-                )}
-                {!callContact.conversation_starter && !callContact.personalization_notes && !callContact.title && (
-                  <div style={{ fontSize: 13, color: "#7a96b0", fontStyle: "italic" }}>No pre-call intel available for this prospect.</div>
-                )}
-              </div>
-            </div>
+            {/* Pre-call intel — rich, data-driven panel fetched from
+                /contacts/:id/precall-brief. Gives the rep everything they
+                need before the prospect picks up: last email opened? recent
+                signals? talking points? objection handles? in ~300ms. */}
+            <PreCallIntelPanel
+              contact={callContact}
+              brief={precallBrief}
+              loading={precallLoading}
+            />
 
             {/* Disposition form */}
             <div style={{ padding: "16px 22px", flex: 1 }}>
@@ -2366,6 +2450,41 @@ export default function Contacts() {
                 </div>
               </div>
 
+              {/* ── AI-generated suggested message (if a sequence exists) ── */}
+              {(linkedinSuggestionLoading || linkedinSuggestion) && (
+                <div style={{ padding: "12px 14px", borderRadius: 10, background: "#f4f9ff", border: "1px solid #cfe2ff" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#1a56db", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Suggested message (from sequence)
+                    </div>
+                    {linkedinSuggestion && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(linkedinSuggestion);
+                            setLinkedinSuggestionCopied(true);
+                            setTimeout(() => setLinkedinSuggestionCopied(false), 1800);
+                          } catch {
+                            toast.error("Copy failed — select and copy manually.", "Clipboard");
+                          }
+                        }}
+                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #b6d0ff", background: "#fff", color: "#1a56db", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        {linkedinSuggestionCopied ? "Copied" : "Copy"}
+                      </button>
+                    )}
+                  </div>
+                  {linkedinSuggestionLoading ? (
+                    <div style={{ fontSize: 12, color: "#7a96b0" }}>Loading…</div>
+                  ) : (
+                    <div style={{ fontSize: 12.5, color: "#1f3a5f", whiteSpace: "pre-wrap", lineHeight: 1.55 }}>
+                      {linkedinSuggestion}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes (optional)</label>
                 <textarea
@@ -2395,6 +2514,338 @@ export default function Contacts() {
         </div>
       )}
     </>
+  );
+}
+
+// ── Your Queue widget ────────────────────────────────────────────────────
+// Shows the rep which prospects to act on next, ranked by a backend
+// rule-based scorer. Each card has a one-click "call" / "linkedin" button so
+// the rep never has to hunt through filters to find the next action. Reasons
+// are shown inline so the rep knows *why* each prospect surfaced.
+function RepQueueWidget({
+  items,
+  loading,
+  collapsed,
+  onToggle,
+  onCall,
+  onLinkedin,
+}: {
+  items: RepQueueItem[];
+  loading: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  onCall: (item: RepQueueItem) => void;
+  onLinkedin: (item: RepQueueItem) => void;
+}) {
+  const channelTone = (ch: string) => {
+    switch (ch) {
+      case "call":     return { bg: "#eef7ff", color: "#175089", border: "#c8daf0" };
+      case "email":    return { bg: "#f5f3ff", color: "#5b21b6", border: "#ddd6fe" };
+      case "linkedin": return { bg: "#e8f4ff", color: "#0a66c2", border: "#b8dbff" };
+      default:         return { bg: "#f1f5f9", color: "#334155", border: "#cbd5e1" };
+    }
+  };
+
+  return (
+    <div style={{ background: "linear-gradient(180deg,#ffffff,#f7fafd)", border: "1px solid #dbe6f2", borderRadius: 16, padding: collapsed ? "12px 16px" : "16px 18px 18px", boxShadow: "0 1px 2px rgba(14,38,66,0.03)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: collapsed ? 0 : 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg,#0f2744,#175089)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Target size={14} color="#fff" />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#0f2744" }}>
+              Your queue
+              {!loading && items.length > 0 && (
+                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#546679", background: "#eef2f7", padding: "1px 8px", borderRadius: 999 }}>
+                  {items.length}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: "#7a96b0" }}>
+              Next-best prospects for you — ranked automatically
+            </div>
+          </div>
+        </div>
+        <button onClick={onToggle} style={{ border: "1px solid #d5e3ef", background: "#fff", color: "#546679", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+          {collapsed ? "Show" : "Hide"}
+        </button>
+      </div>
+
+      {!collapsed && (
+        <>
+          {loading && (
+            <div style={{ fontSize: 12, color: "#7a96b0", fontStyle: "italic" }}>Scoring your portfolio…</div>
+          )}
+          {!loading && items.length === 0 && (
+            <div style={{ fontSize: 13, color: "#64748b", padding: "10px 0" }}>
+              No urgent prospects right now. You're caught up — good time to load new leads or review deals.
+            </div>
+          )}
+          {!loading && items.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 10 }}>
+              {items.map((item) => {
+                const tone = channelTone(item.suggested_channel);
+                const canCall = !!item.phone;
+                const canLinkedin = item.suggested_channel === "linkedin";
+                return (
+                  <div key={item.contact_id} style={{ background: "#fff", border: "1px solid #e3ecf4", borderRadius: 12, padding: "12px 13px", display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#0f2744", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {item.first_name} {item.last_name}
+                        </div>
+                        {item.title && (
+                          <div style={{ fontSize: 11.5, color: "#546679", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {item.title}
+                          </div>
+                        )}
+                      </div>
+                      <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: tone.bg, color: tone.color, border: `1px solid ${tone.border}`, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        {item.suggested_channel}
+                      </span>
+                    </div>
+
+                    {item.reasons.length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "#3d5268", lineHeight: 1.45, background: "#fafbfd", borderRadius: 8, padding: "6px 8px" }}>
+                        • {item.reasons[0]}
+                      </div>
+                    )}
+
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        type="button"
+                        disabled={!canCall}
+                        onClick={() => onCall(item)}
+                        style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "1px solid #c8daf0", background: canCall ? "#fff" : "#f3f4f6", color: canCall ? "#175089" : "#94a3b8", fontSize: 11.5, fontWeight: 700, cursor: canCall ? "pointer" : "not-allowed", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}
+                      >
+                        <PhoneCall size={12} /> Call
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canLinkedin}
+                        onClick={() => onLinkedin(item)}
+                        style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "1px solid #b8dbff", background: canLinkedin ? "#fff" : "#f3f4f6", color: canLinkedin ? "#0a66c2" : "#94a3b8", fontSize: 11.5, fontWeight: 700, cursor: canLinkedin ? "pointer" : "not-allowed", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}
+                      >
+                        <Link2 size={12} /> LinkedIn
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Pre-call intel panel ─────────────────────────────────────────────────
+// The most important rep surface in Prospecting: this is what they look at
+// while the phone is ringing. Organized so the eye falls on the freshest
+// signals first (last email + whether it was opened, then recent signals),
+// then talking points, then objection handles, then deep context.
+function PreCallIntelPanel({
+  contact,
+  brief,
+  loading,
+}: {
+  contact: Contact;
+  brief: PreCallBrief | null;
+  loading: boolean;
+}) {
+  const SectionHeader = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ fontSize: 10, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+      {children}
+    </div>
+  );
+
+  const emailAgeLabel = (iso: string) => {
+    const sent = new Date(iso).getTime();
+    const hrs = (Date.now() - sent) / 3_600_000;
+    if (hrs < 1) return "just now";
+    if (hrs < 24) return `${Math.round(hrs)}h ago`;
+    const days = Math.round(hrs / 24);
+    return `${days}d ago`;
+  };
+
+  const signalDotColor = (type: string) => {
+    switch (type) {
+      case "funding": return "#f59e0b";
+      case "jobs": return "#10b981";
+      case "pr": return "#3b82f6";
+      case "news": return "#64748b";
+      case "review": return "#8b5cf6";
+      case "linkedin": return "#ec4899";
+      default: return "#94a3b8";
+    }
+  };
+
+  const titleLine = [
+    contact.title,
+    brief?.company?.name,
+    brief?.company?.industry,
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <div style={{ padding: "16px 22px", borderBottom: "1px solid #e8eef5", display: "grid", gap: 16 }}>
+      {/* Identity strip: who are we calling? */}
+      <div style={{ display: "grid", gap: 4 }}>
+        {titleLine && (
+          <div style={{ fontSize: 12, color: "#2c4a63", fontWeight: 600 }}>{titleLine}</div>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#546679" }}>
+          {contact.phone && (
+            <a href={`tel:${contact.phone}`} style={{ color: "#175089", textDecoration: "none", fontWeight: 600 }}>
+              {contact.phone}
+            </a>
+          )}
+          {contact.timezone && <span>TZ: {contact.timezone}</span>}
+          {contact.outreach_lane && (
+            <span style={{ padding: "1px 8px", borderRadius: 999, background: "#eef2f7", color: "#24364b", fontWeight: 600 }}>
+              {contact.outreach_lane.replace(/_/g, " ")}
+            </span>
+          )}
+          {contact.sequence_status && (
+            <span style={{ padding: "1px 8px", borderRadius: 999, background: "#eaf3ff", color: "#1a56db", fontWeight: 600 }}>
+              {contact.sequence_status.replace(/_/g, " ")}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {loading && (
+        <div style={{ fontSize: 12, color: "#7a96b0", fontStyle: "italic" }}>Loading pre-call brief…</div>
+      )}
+
+      {/* Last email sent — most decision-relevant signal. If the prospect
+          opened it, the rep should reference it. If not, start fresh. */}
+      {brief?.last_email_sent && (
+        <div style={{ background: brief.last_email_sent.opened ? "#ecfdf5" : "#f8fafc", border: `1px solid ${brief.last_email_sent.opened ? "#a7f3d0" : "#dbe4ef"}`, borderRadius: 10, padding: "10px 12px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+            <SectionHeader>
+              Last email · {emailAgeLabel(brief.last_email_sent.sent_at)}
+            </SectionHeader>
+            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              {brief.last_email_sent.opened && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "#059669", color: "#fff" }}>OPENED</span>
+              )}
+              {brief.last_email_sent.clicked && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "#1d4ed8", color: "#fff" }}>CLICKED</span>
+              )}
+            </div>
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#0f2744", marginBottom: 4 }}>
+            {brief.last_email_sent.subject}
+          </div>
+          {brief.last_email_sent.snippet && (
+            <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+              {brief.last_email_sent.snippet}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Recent buying signals — warm the call with timely context */}
+      {brief?.recent_signals && brief.recent_signals.length > 0 && (
+        <div>
+          <SectionHeader>Recent signals</SectionHeader>
+          <div style={{ display: "grid", gap: 6 }}>
+            {brief.recent_signals.map((s, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: "#2c4a63", lineHeight: 1.5 }}>
+                <span style={{ marginTop: 6, width: 6, height: 6, borderRadius: 999, background: signalDotColor(s.type), flexShrink: 0 }} />
+                <span>
+                  <span style={{ fontWeight: 600 }}>{s.title}</span>
+                  {s.summary && <span style={{ color: "#546679" }}> — {s.summary}</span>}
+                  {s.url && (
+                    <>
+                      {" "}
+                      <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: "#1a56db", fontSize: 11 }}>open</a>
+                    </>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Conversation starter & personalization — curated human signals
+          that were written during account sourcing. Highest-trust content. */}
+      {(brief?.conversation_starter || brief?.personalization_notes) && (
+        <div style={{ display: "grid", gap: 8 }}>
+          {brief.conversation_starter && (
+            <div style={{ fontSize: 13, color: "#2c4a63", background: "#f0f6ff", border: "1px solid #c8daf0", borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 11, textTransform: "uppercase", color: "#546679", letterSpacing: "0.05em" }}>Conversation starter</div>
+              {brief.conversation_starter}
+            </div>
+          )}
+          {brief.personalization_notes && (
+            <div style={{ fontSize: 13, color: "#2c4a63", background: "#f7fbff", border: "1px solid #dbe6f2", borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 11, textTransform: "uppercase", color: "#546679", letterSpacing: "0.05em" }}>Personalization notes</div>
+              {brief.personalization_notes}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Talking points — always shown (persona fallback if not populated)
+          so the rep is never staring at an empty sidebar. */}
+      {brief?.talking_points && brief.talking_points.length > 0 && (
+        <div>
+          <SectionHeader>Talking points</SectionHeader>
+          <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+            {brief.talking_points.slice(0, 4).map((pt, i) => (
+              <li key={i} style={{ fontSize: 12.5, color: "#2c4a63", lineHeight: 1.5 }}>{pt}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* Objection playbook — collapsed by default since we don't want to
+          distract the rep before the call. Available when needed. */}
+      {brief?.objection_playbook && brief.objection_playbook.length > 0 && (
+        <details style={{ background: "#fef9e7", border: "1px solid #fde68a", borderRadius: 10, padding: "8px 12px" }}>
+          <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 800, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Objection handles ({brief.objection_playbook.length})
+          </summary>
+          <div style={{ marginTop: 8, display: "grid", gap: 10 }}>
+            {brief.objection_playbook.map((ob, i) => (
+              <div key={i}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#7c2d12", marginBottom: 3 }}>{ob.objection}</div>
+                <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5 }}>{ob.response}</div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Recent activities — short trail of what's been happening on this
+          contact across all channels. */}
+      {brief?.recent_activities && brief.recent_activities.length > 0 && (
+        <details style={{ fontSize: 12 }}>
+          <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Recent activity ({brief.recent_activities.length})
+          </summary>
+          <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+            {brief.recent_activities.map((a, i) => (
+              <div key={i} style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5 }}>
+                <span style={{ fontWeight: 700, color: "#24364b" }}>{a.type}</span>
+                {a.medium && <span style={{ color: "#7a96b0" }}> · {a.medium}</span>}
+                {a.ai_summary || a.content ? <> — {a.ai_summary || a.content}</> : null}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {!loading && !brief && (
+        <div style={{ fontSize: 13, color: "#7a96b0", fontStyle: "italic" }}>
+          No pre-call brief available. Check the contact has data.
+        </div>
+      )}
+    </div>
   );
 }
 

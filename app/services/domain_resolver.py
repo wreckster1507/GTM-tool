@@ -349,7 +349,7 @@ async def resolve_company_domain(
 
     Returns `(domain, metadata)`.
     """
-    from app.clients.azure_openai import AzureOpenAIClient
+    from app.clients.claude import ClaudeClient
     from app.clients.web_search import WebSearchClient
 
     attempts: list[dict[str, Any]] = []
@@ -382,7 +382,7 @@ async def resolve_company_domain(
         if verified:
             return verified.domain, {"strategy": verified.strategy, "score": verified.score, "attempts": attempts}
 
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
     ai_candidate = await ai.resolve_domain(
         company_name=company_name,
         industry=industry,

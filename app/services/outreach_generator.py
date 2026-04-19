@@ -1,6 +1,6 @@
 """
-Outreach sequence generator — uses Azure OpenAI GPT-4o to craft
-persona-aware email sequences and LinkedIn messages.
+Outreach sequence generator — uses Claude to craft persona-aware email
+sequences and LinkedIn messages.
 
 Persona strategy:
   economic_buyer     → ROI, risk reduction, executive framing
@@ -120,7 +120,7 @@ async def generate_sequence(
     from app.models.company import Company
     from app.models.outreach import OutreachSequence, OutreachStep
     from app.models.settings import WorkspaceSettings
-    from app.clients.azure_openai import AzureOpenAIClient
+    from app.clients.claude import ClaudeClient
 
     # ── Load contact + company ─────────────────────────────────────────────────
     contact = await session.get(Contact, contact_id)
@@ -140,7 +140,7 @@ async def generate_sequence(
     kb_context = await get_knowledge_context(session, "outreach", limit=3, max_total_chars=1500)
     context["kb_context"] = kb_context
 
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
 
     # Check for existing sequence
     existing = await session.execute(

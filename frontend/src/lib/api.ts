@@ -199,6 +199,10 @@ export const contactsApi = {
       brief: string | null;
       scraped?: { headline?: string; summary?: string; error?: string };
     }>(`/api/v1/contacts/${id}/brief`),
+  getPrecallBrief: (id: string) =>
+    request<PreCallBrief>(`/api/v1/contacts/${id}/precall-brief`),
+  getMyQueue: (limit = 8) =>
+    request<{ items: RepQueueItem[] }>(`/api/v1/contacts/queue/mine?limit=${limit}`),
   create: (data: Partial<Contact>) =>
     request<Contact>("/api/v1/contacts/", {
       method: "POST",
@@ -323,6 +327,81 @@ export const enrichmentApi = {
       `/api/v1/enrichment/task/${taskId}`
     ),
 };
+
+export interface RepQueueItem {
+  contact_id: string;
+  first_name: string;
+  last_name: string;
+  email?: string | null;
+  phone?: string | null;
+  title?: string | null;
+  company_id?: string | null;
+  sequence_status?: string | null;
+  linkedin_status?: string | null;
+  call_status?: string | null;
+  score: number;
+  reasons: string[];
+  suggested_channel: "call" | "email" | "linkedin";
+}
+
+export interface PreCallBrief {
+  contact: {
+    id: string;
+    name: string;
+    title?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    linkedin_url?: string | null;
+    persona?: string | null;
+    persona_type?: string | null;
+    timezone?: string | null;
+    sequence_status?: string | null;
+    call_status?: string | null;
+    call_disposition?: string | null;
+    linkedin_status?: string | null;
+  };
+  company: {
+    id?: string | null;
+    name?: string | null;
+    domain?: string | null;
+    industry?: string | null;
+    employees?: number | null;
+  } | null;
+  conversation_starter?: string | null;
+  personalization_notes?: string | null;
+  talking_points: string[];
+  objection_playbook: Array<{ objection: string; response: string }>;
+  last_email_sent: {
+    subject: string;
+    sent_at: string;
+    snippet?: string | null;
+    opened: boolean;
+    clicked: boolean;
+  } | null;
+  recent_activities: Array<{
+    type: string;
+    medium?: string | null;
+    source?: string | null;
+    content?: string | null;
+    ai_summary?: string | null;
+    created_at: string;
+  }>;
+  recent_signals: Array<{
+    type: string;
+    title: string;
+    summary?: string | null;
+    url?: string | null;
+    published_at?: string | null;
+  }>;
+  sequence: {
+    id: string;
+    status: string;
+    subject_1?: string | null;
+    email_1_snippet?: string | null;
+    linkedin_message?: string | null;
+    instantly_campaign_status?: string | null;
+  } | null;
+}
 
 export const outreachApi = {
   generate: (contactId: string) =>

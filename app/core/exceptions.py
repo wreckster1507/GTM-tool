@@ -33,7 +33,7 @@ class ValidationError(BeaconError):
 
 
 class ExternalServiceError(BeaconError):
-    """Raised when a third-party API call fails (Apollo, Hunter, Azure, etc.)."""
+    """Raised when a third-party API call fails (Apollo, Hunter, Claude, etc.)."""
     status_code = 502
 
 

@@ -23,7 +23,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.clients.azure_openai import AzureOpenAIClient
+from app.clients.claude import ClaudeClient
 from app.clients.web_search import WebSearchClient
 from app.models.company import Company
 from app.models.contact import Contact
@@ -36,7 +36,7 @@ from app.services.pre_meeting_intelligence import (
 
 logger = logging.getLogger(__name__)
 
-ai_client = AzureOpenAIClient()
+ai_client = ClaudeClient()
 web_client = WebSearchClient()
 
 

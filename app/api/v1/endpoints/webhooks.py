@@ -701,6 +701,37 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
             sequence.updated_at = now
             session.add(sequence)
 
+        # Claude-powered sentiment & intent classification so reps can
+        # distinguish "yes, let's talk" from "remove me" without opening
+        # the email. Persisted onto the Activity below via ai_summary +
+        # event_metadata.reply_sentiment. Failures here are non-fatal —
+        # the raw reply is still logged.
+        try:
+            from app.services.reply_sentiment import classify_reply
+
+            verdict = await classify_reply(
+                subject=subject,
+                body=reply_body,
+                sender=lead_email,
+                prospect_title=contact.title if contact else None,
+                company_name=None,
+            )
+            if verdict:
+                # Stash on the payload so it lands in Activity.event_metadata
+                payload = {**payload, "reply_sentiment": verdict}
+                # Re-tag sequence_status if the classifier is confident —
+                # catches Instantly's "positive reply" signal without waiting
+                # for the rep to manually promote the status.
+                if contact and verdict.get("intent") == "interested" and contact.sequence_status != "meeting_booked":
+                    contact.sequence_status = "interested"
+                    session.add(contact)
+                if contact and verdict.get("intent") == "unsubscribe":
+                    contact.sequence_status = "unsubscribed"
+                    contact.instantly_status = "unsubscribed"
+                    session.add(contact)
+        except Exception as exc:
+            logger.warning("reply_sentiment classification failed: %s", exc)
+
     elif event_type == "lead_unsubscribed":
         content = f"{lead_email} unsubscribed"
         activity_type = "email"
@@ -772,6 +803,19 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         external_source="instantly",
         external_source_id=event_external_id,
     )
+
+    # If Claude classified a reply, surface the one-line summary as the
+    # Activity's ai_summary so it renders inline in the timeline without the
+    # rep having to dig into event_metadata.
+    reply_verdict = payload.get("reply_sentiment") if isinstance(payload, dict) else None
+    if reply_verdict and reply_verdict.get("one_line"):
+        sentiment = reply_verdict.get("sentiment", "neutral")
+        intent = reply_verdict.get("intent", "other")
+        activity.ai_summary = (
+            f"[{sentiment.upper()} · {intent}] {reply_verdict['one_line']}"
+        )
+        session.add(activity)
+        await session.commit()
 
     # ── Refresh system tasks based on new email signal ─────────────────────────
     if contact_id:
@@ -1076,6 +1120,38 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
     session.add(activity)
     await session.commit()
     await session.refresh(activity)
+
+    # ── Mirror Aircall outcome onto the Contact row ───────────────────────────
+    # Previously Aircall data only lived on the Activity timeline, so the
+    # Prospecting list view didn't show that the rep had actually attempted a
+    # call via Aircall. Now the same fields a manual call logger sets
+    # (`call_status`, `call_last_at`, optional `call_notes`) are updated on the
+    # contact, so filtering "assigned to me, no call yet" works regardless of
+    # which channel the rep used.
+    if contact and call_outcome and event in {
+        "call.ended", "call.answered", "call.missed", "call.voicemail_left"
+    }:
+        # Translate Aircall outcome -> the rep-facing call_status enum used on
+        # the Contact. Manual call UI uses: attempted | connected | voicemail |
+        # callback. Aircall gives us: answered | missed | voicemail.
+        outcome_to_status = {
+            "answered": "connected",
+            "missed": "attempted",
+            "voicemail": "voicemail",
+        }
+        mapped = outcome_to_status.get(call_outcome)
+        if mapped:
+            contact.call_status = mapped
+            contact.call_last_at = datetime.utcnow()
+            # Don't overwrite rep-authored notes with the Aircall summary;
+            # only auto-populate when the contact has nothing yet, so the rep
+            # still has context at a glance on the list view.
+            summary = ai_summary or conversation_summary
+            if summary and not (contact.call_notes or "").strip():
+                contact.call_notes = summary[:500]
+            session.add(contact)
+            await session.commit()
+
     if contact_id:
         await refresh_system_tasks_for_entity(session, "contact", contact_id)
     if deal_id:

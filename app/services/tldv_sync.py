@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.tldv import TldvClient, TldvError
-from app.clients.azure_openai import AzureOpenAIClient
+from app.clients.claude import ClaudeClient
 from app.config import settings
 from app.models.activity import Activity
 from app.models.company import Company
@@ -556,7 +556,7 @@ async def _build_followup_email_draft(
     action_items: list[str],
     next_steps: list[str],
 ) -> str:
-    ai = AzureOpenAIClient()
+    ai = ClaudeClient()
     bullets = [item.strip() for item in [*action_items, *next_steps] if isinstance(item, str) and item.strip()]
     bullet_text = "\n".join(f"- {item}" for item in bullets[:5])
     if ai.mock:

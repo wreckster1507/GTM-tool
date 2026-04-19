@@ -1,11 +1,13 @@
 """
 Claude client wrapper with adaptive model routing.
 
-This module intentionally keeps the historical `AzureOpenAIClient` class name
-so existing services do not need large refactors. Under the hood it uses
-Anthropic Claude only and chooses the model by request complexity.
+Single-responsibility wrapper around Anthropic's async SDK. Picks a model
+tier (simple / standard / complex) based on the prompt shape so cheap tasks
+(persona classification, domain resolution) don't burn the big model and
+heavy tasks (account briefs, meeting intelligence) get it.
 
-Mock mode: returns None when no Claude API key is configured.
+Mock mode: returns None when no Claude API key is configured — services
+must handle None and skip cleanly rather than crashing.
 """
 import asyncio
 import logging
@@ -16,7 +18,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-class AzureOpenAIClient:
+class ClaudeClient:
     def __init__(self) -> None:
         self.api_key = settings.claude_api_key
         self.mock = not self.api_key
@@ -140,14 +142,12 @@ class AzureOpenAIClient:
         if not result or result.strip().lower() in ("null", "none", "unknown", ""):
             return None
 
-        # Strip any accidental protocol or www prefix the model may have added
         domain = result.strip().lower()
         for prefix in ("https://", "http://", "www."):
             if domain.startswith(prefix):
                 domain = domain[len(prefix):]
         domain = domain.split("/")[0].strip()
 
-        # Basic sanity check — must look like a domain
         if "." not in domain or len(domain) > 100:
             return None
 

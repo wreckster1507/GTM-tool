@@ -21,6 +21,10 @@ from app.services.account_sourcing import (
     row_to_contact_fields,
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
+from app.services.disposition_effects import (
+    apply_call_disposition_effects,
+    apply_linkedin_status_effects,
+)
 from app.services.permissions import require_workspace_permission
 from app.services.persona_classifier import classify_persona
 from app.services.prospect_hygiene import is_valid_prospect_candidate
@@ -278,6 +282,24 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
         contact.persona = classify_persona(contact)
     contact.updated_at = datetime.utcnow()
     saved = await repo.save(contact)
+
+    # Server-side source of truth for the rep-driven state machine: when a
+    # call or LinkedIn outcome was just logged, derive the correct
+    # sequence_status, pause Instantly if this was a dead-end disposition, and
+    # refresh system tasks (book-the-meeting, retry-call, etc.) so the rep
+    # sees an accurate next-best-action without waiting for a cron.
+    if "call_disposition" in update_data:
+        await apply_call_disposition_effects(
+            session, saved, disposition=update_data.get("call_disposition")
+        )
+    if "linkedin_status" in update_data:
+        await apply_linkedin_status_effects(
+            session, saved, linkedin_status=update_data.get("linkedin_status")
+        )
+    if "call_disposition" in update_data or "linkedin_status" in update_data:
+        await session.commit()
+        await session.refresh(saved)
+
     return await to_contact_read(session, saved)
 
 
@@ -293,6 +315,35 @@ async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUse
     repo = ContactRepository(session)
     await repo.get_or_raise(contact_id)
     await repo.delete_with_cascade(contact_id)
+
+
+@router.get("/queue/mine")
+async def get_my_queue(session: DBSession, current_user: CurrentUser, limit: int = 8):
+    """The rep's next-best-action queue.
+
+    Rule-based ranking over the rep's portfolio — surfaces the top N prospects
+    to act on first. Fast (< 300ms), no AI call, explainable via per-item
+    `reasons`. Admins see the whole workspace; reps see contacts assigned as
+    sdr_id or assigned_to_id.
+    """
+    from app.services.rep_queue import build_rep_queue
+
+    return {"items": await build_rep_queue(session, current_user, limit=limit)}
+
+
+@router.get("/{contact_id}/precall-brief")
+async def get_precall_brief(contact_id: UUID, session: DBSession, _user: CurrentUser):
+    """Return the full pre-call brief for a contact.
+
+    Read-only, assembled from existing DB state, no AI or network calls — so
+    the rep can tap 'Call' and have a complete brief in one API round-trip.
+    """
+    from app.services.precall_brief import build_precall_brief
+
+    brief = await build_precall_brief(session, contact_id)
+    if brief.get("error"):
+        raise NotFoundError(brief["error"])
+    return brief
 
 
 @router.post("/{contact_id}/enrich")
