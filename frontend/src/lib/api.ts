@@ -201,8 +201,16 @@ export const contactsApi = {
     }>(`/api/v1/contacts/${id}/brief`),
   getPrecallBrief: (id: string) =>
     request<PreCallBrief>(`/api/v1/contacts/${id}/precall-brief`),
-  getMyQueue: (limit = 8) =>
-    request<{ items: RepQueueItem[] }>(`/api/v1/contacts/queue/mine?limit=${limit}`),
+  getSequenceLifecycle: (id: string) =>
+    request<SequenceLifecycle>(`/api/v1/contacts/${id}/sequence-lifecycle`),
+  getLifecycleSummaries: (contactIds: string[]) =>
+    request<{ summaries: Record<string, LifecycleSummary> }>(
+      "/api/v1/contacts/sequence-lifecycle/summaries",
+      {
+        method: "POST",
+        body: JSON.stringify({ contact_ids: contactIds }),
+      }
+    ),
   create: (data: Partial<Contact>) =>
     request<Contact>("/api/v1/contacts/", {
       method: "POST",
@@ -328,20 +336,78 @@ export const enrichmentApi = {
     ),
 };
 
-export interface RepQueueItem {
+export type LifecycleStepState =
+  | "upcoming"
+  | "overdue"
+  | "sent"
+  | "opened"
+  | "clicked"
+  | "replied"
+  | "done"
+  | "skipped"
+  | "failed";
+
+export type LifecycleStatus =
+  | "never_launched"
+  | "ready"
+  | "in_progress"
+  | "replied"
+  | "booked"
+  | "stopped"
+  | "stalled"
+  | "completed";
+
+export interface LifecycleStep {
+  index: number;
+  channel: "email" | "call" | "linkedin";
+  day_offset: number;
+  objective?: string | null;
+  subject?: string | null;
+  state: LifecycleStepState;
+  due_at: string;
+  fired_at?: string | null;
+  opened_at?: string | null;
+  clicked_at?: string | null;
+  replied_at?: string | null;
+  bounced_at?: string | null;
+  call_outcome?: string | null;
+  note?: string | null;
+  skip_reason?: string | null;
+}
+
+export interface LifecycleIssue {
+  severity: "info" | "warning" | "error";
+  code: string;
+  step_index?: number;
+  message: string;
+}
+
+export interface SequenceLifecycle {
   contact_id: string;
-  first_name: string;
-  last_name: string;
-  email?: string | null;
-  phone?: string | null;
-  title?: string | null;
-  company_id?: string | null;
-  sequence_status?: string | null;
-  linkedin_status?: string | null;
-  call_status?: string | null;
-  score: number;
-  reasons: string[];
-  suggested_channel: "call" | "email" | "linkedin";
+  status: LifecycleStatus;
+  sequence?: {
+    id: string;
+    status?: string | null;
+    instantly_campaign_id?: string | null;
+    instantly_campaign_status?: string | null;
+  } | null;
+  launched_at?: string | null;
+  days_since_launch?: number | null;
+  current_step_index?: number | null;
+  total_steps: number;
+  steps: LifecycleStep[];
+  issues: LifecycleIssue[];
+}
+
+export interface LifecycleSummary {
+  status: LifecycleStatus;
+  done_count: number;
+  total_steps: number;
+  overdue_count: number;
+  current_channel?: "email" | "call" | "linkedin" | null;
+  current_step_index?: number | null;
+  days_since_launch?: number | null;
+  has_issues: boolean;
 }
 
 export interface PreCallBrief {

@@ -317,18 +317,43 @@ async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUse
     await repo.delete_with_cascade(contact_id)
 
 
-@router.get("/queue/mine")
-async def get_my_queue(session: DBSession, current_user: CurrentUser, limit: int = 8):
-    """The rep's next-best-action queue.
+@router.get("/{contact_id}/sequence-lifecycle")
+async def get_sequence_lifecycle(
+    contact_id: UUID, session: DBSession, _user: CurrentUser
+):
+    """Full reconciled cadence for one contact: every step's actual state,
+    timestamps, and any detected issues (stalled sequence, overdue step,
+    bounced email, paused campaign). Drives the lifecycle drawer."""
+    from app.services.sequence_lifecycle import build_sequence_lifecycle
 
-    Rule-based ranking over the rep's portfolio — surfaces the top N prospects
-    to act on first. Fast (< 300ms), no AI call, explainable via per-item
-    `reasons`. Admins see the whole workspace; reps see contacts assigned as
-    sdr_id or assigned_to_id.
-    """
-    from app.services.rep_queue import build_rep_queue
+    payload = await build_sequence_lifecycle(session, contact_id)
+    if payload.get("error"):
+        raise NotFoundError(payload["error"])
+    return payload
 
-    return {"items": await build_rep_queue(session, current_user, limit=limit)}
+
+class LifecycleSummariesPayload(SQLModel):
+    contact_ids: list[UUID]
+
+
+@router.post("/sequence-lifecycle/summaries")
+async def post_sequence_lifecycle_summaries(
+    payload: LifecycleSummariesPayload,
+    session: DBSession,
+    _user: CurrentUser,
+):
+    """Compact per-contact cadence summary for the Prospecting list view.
+    Rep sees 'Day 7 · 2/5 · overdue' inline on the row without opening the
+    drawer."""
+    from app.services.sequence_lifecycle import (
+        build_sequence_lifecycle_summaries,
+    )
+
+    summaries = await build_sequence_lifecycle_summaries(
+        session, payload.contact_ids[:200]
+    )
+    # Return with string keys since JSON can't carry UUID keys
+    return {"summaries": {str(k): v for k, v in summaries.items()}}
 
 
 @router.get("/{contact_id}/precall-brief")

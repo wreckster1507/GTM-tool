@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
-import type { PreCallBrief, RepQueueItem } from "../lib/api";
+import type { PreCallBrief, SequenceLifecycle, LifecycleSummary, LifecycleStep, LifecycleStepState } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
@@ -9,7 +9,7 @@ import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
-  Mail, Clock, PhoneCall, Globe, X,
+  Mail, Clock, PhoneCall, Globe, X, AlertTriangle,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import {
@@ -219,9 +219,11 @@ export default function Contacts() {
   const [savingDisposition, setSavingDisposition] = useState(false);
   const [precallBrief, setPrecallBrief] = useState<PreCallBrief | null>(null);
   const [precallLoading, setPrecallLoading] = useState(false);
-  const [myQueue, setMyQueue] = useState<RepQueueItem[]>([]);
-  const [myQueueLoading, setMyQueueLoading] = useState(false);
-  const [myQueueCollapsed, setMyQueueCollapsed] = useState(false);
+  // Cadence lifecycle: compact summary per-row, full detail in the drawer.
+  const [lifecycleSummaries, setLifecycleSummaries] = useState<Record<string, LifecycleSummary>>({});
+  const [lifecycleContactId, setLifecycleContactId] = useState<string | null>(null);
+  const [lifecycleDetail, setLifecycleDetail] = useState<SequenceLifecycle | null>(null);
+  const [lifecycleLoading, setLifecycleLoading] = useState(false);
   const [linkedinContact, setLinkedinContact] = useState<Contact | null>(null);
   const [linkedinStatus, setLinkedinStatus] = useState("sent");
   const [linkedinNotes, setLinkedinNotes] = useState("");
@@ -426,27 +428,56 @@ export default function Contacts() {
     loadContacts();
   }, [tab, page, debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter]);
 
-  // Pull the rep's next-best-action queue whenever the tab opens. Cheap call
-  // (<300ms) and only shown on the Contacts tab, so no background poll needed.
+  // After the contacts list renders, fetch compact lifecycle summaries in
+  // one batch call. Gives each row a progress bar (●━●━◉━○━○) and "Day 7 ·
+  // 2/5 · 1 overdue" text without N+1 requests.
   useEffect(() => {
-    if (tab !== "contacts") return;
+    if (tab !== "contacts" || contacts.length === 0) {
+      setLifecycleSummaries({});
+      return;
+    }
     let cancelled = false;
-    setMyQueueLoading(true);
+    const ids = contacts.map((c) => c.id).filter(Boolean);
     contactsApi
-      .getMyQueue(8)
+      .getLifecycleSummaries(ids)
       .then((res) => {
-        if (!cancelled) setMyQueue(res.items || []);
+        if (!cancelled) setLifecycleSummaries(res.summaries || {});
       })
       .catch(() => {
-        if (!cancelled) setMyQueue([]);
-      })
-      .finally(() => {
-        if (!cancelled) setMyQueueLoading(false);
+        if (!cancelled) setLifecycleSummaries({});
       });
     return () => {
       cancelled = true;
     };
-  }, [tab, sequenceFilter, callDispositionFilter]);
+  }, [tab, contacts]);
+
+  // When the lifecycle drawer is opened for a contact, fetch the full
+  // reconciled step list. Refetch if the user logs a disposition / reply
+  // while the drawer is open (tracked via contacts state change).
+  useEffect(() => {
+    if (!lifecycleContactId) {
+      setLifecycleDetail(null);
+      setLifecycleLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLifecycleLoading(true);
+    contactsApi
+      .getSequenceLifecycle(lifecycleContactId)
+      .then((detail) => {
+        if (!cancelled) setLifecycleDetail(detail);
+      })
+      .catch(() => {
+        if (!cancelled) setLifecycleDetail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLifecycleLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lifecycleContactId, contacts]);
+
 
   useEffect(() => {
     const dismiss = () => setOpenActionsId(null);
@@ -1027,31 +1058,6 @@ export default function Contacts() {
               </div>
             </div>
 
-            {/* Your Queue: rule-ranked next-best-actions for the rep */}
-            <RepQueueWidget
-              items={myQueue}
-              loading={myQueueLoading}
-              collapsed={myQueueCollapsed}
-              onToggle={() => setMyQueueCollapsed((prev) => !prev)}
-              onCall={(item) => {
-                const match = contacts.find((c) => c.id === item.contact_id);
-                if (match) {
-                  setCallContact(match);
-                  setCallDisposition("");
-                  setCallNotes("");
-                  setCallStatus("attempted");
-                }
-              }}
-              onLinkedin={(item) => {
-                const match = contacts.find((c) => c.id === item.contact_id);
-                if (match) {
-                  setLinkedinContact(match);
-                  setLinkedinStatus("sent");
-                  setLinkedinNotes("");
-                }
-              }}
-            />
-
             {/* Filters */}
             {(() => {
               const hasFilters = !!(
@@ -1170,6 +1176,7 @@ export default function Contacts() {
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Title</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Progress</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Cadence</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Timezone</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email Status</th>
                         <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Call</th>
@@ -1347,6 +1354,12 @@ export default function Contacts() {
                                 </div>
                               );
                             })()}
+                          </td>
+                          {/* Cadence lifecycle — compact status bar showing
+                              actual step-by-step cadence state (not stage).
+                              Click opens the full lifecycle drawer. */}
+                          <td onClick={(e) => { e.stopPropagation(); setLifecycleContactId(c.id); }}>
+                            <CadenceMiniBar summary={lifecycleSummaries[c.id]} />
                           </td>
                           {/* Timezone */}
                           <td>
@@ -2255,6 +2268,14 @@ export default function Contacts() {
         onCreated={loadContacts}
       />
 
+      {/* ── Sequence lifecycle drawer ─────────────────────────────────── */}
+      <LifecycleDrawer
+        contactId={lifecycleContactId}
+        detail={lifecycleDetail}
+        loading={lifecycleLoading}
+        onClose={() => setLifecycleContactId(null)}
+      />
+
       {/* ── Call Disposition Sidebar ─────────────────────────────────── */}
       {callContact && (
         <div style={{
@@ -2517,126 +2538,323 @@ export default function Contacts() {
   );
 }
 
-// ── Your Queue widget ────────────────────────────────────────────────────
-// Shows the rep which prospects to act on next, ranked by a backend
-// rule-based scorer. Each card has a one-click "call" / "linkedin" button so
-// the rep never has to hunt through filters to find the next action. Reasons
-// are shown inline so the rep knows *why* each prospect surfaced.
-function RepQueueWidget({
-  items,
-  loading,
-  collapsed,
-  onToggle,
-  onCall,
-  onLinkedin,
+// ── Cadence mini bar (compact per-row progress) ─────────────────────────
+// Visual goal: at-a-glance truth about where the prospect sits in their
+// sequence and whether anything is stuck. The bar encodes step state with
+// color + fill pattern, and the text line tells the rep "day 7 · 2/5 done"
+// plus any stall/overdue signal. Full detail is in the drawer.
+const LIFECYCLE_DOT_STYLE: Record<LifecycleStepState, { bg: string; ring: string; border: string }> = {
+  sent:     { bg: "#22c55e", ring: "#dcfce7", border: "#16a34a" },
+  opened:   { bg: "#14b8a6", ring: "#ccfbf1", border: "#0d9488" },
+  clicked:  { bg: "#0ea5e9", ring: "#e0f2fe", border: "#0284c7" },
+  replied:  { bg: "#7c3aed", ring: "#ede9fe", border: "#6d28d9" },
+  done:     { bg: "#16a34a", ring: "#dcfce7", border: "#15803d" },
+  overdue:  { bg: "#ef4444", ring: "#fee2e2", border: "#dc2626" },
+  upcoming: { bg: "#ffffff", ring: "transparent", border: "#cbd5e1" },
+  skipped:  { bg: "#f1f5f9", ring: "transparent", border: "#cbd5e1" },
+  failed:   { bg: "#f97316", ring: "#ffedd5", border: "#ea580c" },
+};
+
+function CadenceMiniBar({ summary }: { summary: LifecycleSummary | undefined }) {
+  if (!summary) {
+    return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
+  }
+  if (summary.status === "never_launched") {
+    return (
+      <div style={{ fontSize: 11, color: "#94a3b8" }}>
+        <span style={{ fontWeight: 700 }}>Not generated</span>
+      </div>
+    );
+  }
+  if (summary.status === "ready") {
+    return (
+      <div style={{ fontSize: 11, color: "#64748b" }}>
+        <span style={{ fontWeight: 700, color: "#475569" }}>Ready</span>
+        <div style={{ color: "#94a3b8" }}>Not launched</div>
+      </div>
+    );
+  }
+
+  const statusLabel = (() => {
+    switch (summary.status) {
+      case "in_progress": return summary.overdue_count > 0 ? "Overdue" : "On track";
+      case "replied":     return "Replied";
+      case "booked":      return "Booked";
+      case "stopped":     return "Stopped";
+      case "stalled":     return "Stalled";
+      case "completed":   return "Completed";
+      default:            return summary.status;
+    }
+  })();
+  const statusColor = (() => {
+    switch (summary.status) {
+      case "replied":    return "#7c3aed";
+      case "booked":     return "#16a34a";
+      case "stalled":    return "#dc2626";
+      case "stopped":    return "#64748b";
+      case "completed":  return "#475569";
+      default:           return summary.overdue_count > 0 ? "#dc2626" : "#175089";
+    }
+  })();
+
+  // Bar: render up to total_steps dots, colored by done/current/overdue/upcoming.
+  const total = summary.total_steps;
+  const done = summary.done_count;
+  const current = summary.current_step_index ?? -1;
+  const dots: Array<{ state: LifecycleStepState }> = [];
+  for (let i = 0; i < total; i++) {
+    let state: LifecycleStepState = "upcoming";
+    if (i < done) state = "done";
+    if (i === current) state = summary.overdue_count > 0 && i === current ? "overdue" : "upcoming";
+    dots.push({ state });
+  }
+
+  return (
+    <div style={{ cursor: "pointer", minWidth: 150 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 3, marginBottom: 4 }}>
+        {dots.map((dot, i) => {
+          const style = LIFECYCLE_DOT_STYLE[dot.state];
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center" }}>
+              <div
+                style={{
+                  width: 10, height: 10, borderRadius: 999,
+                  background: style.bg, border: `1.5px solid ${style.border}`,
+                  boxShadow: style.ring !== "transparent" ? `0 0 0 2px ${style.ring}` : "none",
+                  flexShrink: 0,
+                }}
+              />
+              {i < dots.length - 1 && (
+                <div style={{ width: 8, height: 2, background: i < done ? "#cbd5e1" : "#e2e8f0", margin: "0 1px" }} />
+              )}
+            </div>
+          );
+        })}
+        {total === 0 && (
+          <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>No steps</span>
+        )}
+      </div>
+      <div style={{ fontSize: 10.5, color: statusColor, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        {statusLabel}
+      </div>
+      <div style={{ fontSize: 10.5, color: "#64748b" }}>
+        {summary.days_since_launch != null ? `Day ${summary.days_since_launch} · ` : ""}
+        {done}/{total} done
+        {summary.overdue_count > 0 ? ` · ${summary.overdue_count} overdue` : ""}
+        {summary.has_issues && summary.status !== "in_progress" ? " · issues" : ""}
+      </div>
+    </div>
+  );
+}
+
+// ── Lifecycle drawer: full step-by-step cadence state ───────────────────
+// Opens when rep clicks the mini bar. Shows every step's actual state,
+// timestamps, and email/call/linkedin details. Issues banner at the top
+// surfaces things like "stalled 10 days" or "campaign paused" so reps know
+// what to check without digging through Instantly or activity logs.
+const CHANNEL_ICON: Record<"email" | "call" | "linkedin", React.ReactNode> = {
+  email: <Mail size={13} />,
+  call: <PhoneCall size={13} />,
+  linkedin: <Link2 size={13} />,
+};
+
+function formatLifecycleDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+    " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function LifecycleStepRow({ step }: { step: LifecycleStep }) {
+  const style = LIFECYCLE_DOT_STYLE[step.state];
+  const stateLabels: Record<LifecycleStepState, string> = {
+    sent: "Sent", opened: "Opened", clicked: "Clicked", replied: "Replied",
+    done: "Done", overdue: "Overdue", upcoming: "Upcoming",
+    skipped: "Skipped", failed: "Failed",
+  };
+  const showFired = step.fired_at;
+  return (
+    <div style={{ display: "flex", gap: 12, padding: "12px 0", borderBottom: "1px solid #eef2f7" }}>
+      {/* Rail dot */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
+        <div style={{ width: 14, height: 14, borderRadius: 999, background: style.bg, border: `2px solid ${style.border}`, boxShadow: style.ring !== "transparent" ? `0 0 0 3px ${style.ring}` : "none", flexShrink: 0 }} />
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 700, color: "#0f2744" }}>
+            {CHANNEL_ICON[step.channel]}
+            Step {step.index + 1} · {step.channel[0].toUpperCase() + step.channel.slice(1)}
+          </span>
+          <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>
+            day {step.day_offset}
+          </span>
+          <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: style.ring !== "transparent" ? style.ring : "#f1f5f9", color: style.border, border: `1px solid ${style.border}`, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            {stateLabels[step.state]}
+          </span>
+          {step.state === "overdue" && (
+            <span style={{ fontSize: 10.5, color: "#dc2626", fontWeight: 700 }}>
+              due {formatLifecycleDate(step.due_at)}
+            </span>
+          )}
+        </div>
+
+        {step.objective && (
+          <div style={{ marginTop: 4, fontSize: 11.5, color: "#64748b" }}>{step.objective}</div>
+        )}
+
+        {/* Channel-specific details */}
+        {step.channel === "email" && (
+          <div style={{ marginTop: 6, display: "grid", gap: 3 }}>
+            {step.subject && <div style={{ fontSize: 12, fontWeight: 600, color: "#24364b" }}>{step.subject}</div>}
+            {showFired && <div style={{ fontSize: 11.5, color: "#334155" }}>Sent: {formatLifecycleDate(step.fired_at)}</div>}
+            {step.opened_at && <div style={{ fontSize: 11.5, color: "#0d9488" }}>Opened: {formatLifecycleDate(step.opened_at)}</div>}
+            {step.clicked_at && <div style={{ fontSize: 11.5, color: "#0284c7" }}>Clicked: {formatLifecycleDate(step.clicked_at)}</div>}
+            {step.replied_at && <div style={{ fontSize: 11.5, color: "#7c3aed", fontWeight: 700 }}>Replied: {formatLifecycleDate(step.replied_at)}</div>}
+            {step.bounced_at && <div style={{ fontSize: 11.5, color: "#ea580c", fontWeight: 700 }}>Bounced: {formatLifecycleDate(step.bounced_at)}</div>}
+          </div>
+        )}
+        {step.channel === "call" && step.fired_at && (
+          <div style={{ marginTop: 6, display: "grid", gap: 3 }}>
+            <div style={{ fontSize: 11.5, color: "#334155" }}>
+              Call logged: {formatLifecycleDate(step.fired_at)}
+              {step.call_outcome && <> · {step.call_outcome}</>}
+            </div>
+            {step.note && <div style={{ fontSize: 11.5, color: "#64748b", lineHeight: 1.5 }}>{step.note}</div>}
+          </div>
+        )}
+        {step.channel === "linkedin" && step.fired_at && (
+          <div style={{ marginTop: 6, display: "grid", gap: 3 }}>
+            <div style={{ fontSize: 11.5, color: "#334155" }}>Logged: {formatLifecycleDate(step.fired_at)}</div>
+            {step.note && <div style={{ fontSize: 11.5, color: "#64748b", lineHeight: 1.5 }}>{step.note}</div>}
+          </div>
+        )}
+        {step.state === "skipped" && step.skip_reason && (
+          <div style={{ marginTop: 4, fontSize: 11.5, color: "#64748b", fontStyle: "italic" }}>
+            Skipped — {step.skip_reason.replace(/_/g, " ")}
+          </div>
+        )}
+        {step.state === "upcoming" && (
+          <div style={{ marginTop: 4, fontSize: 11.5, color: "#64748b" }}>
+            Due {formatLifecycleDate(step.due_at)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LifecycleDrawer({
+  contactId, detail, loading, onClose,
 }: {
-  items: RepQueueItem[];
+  contactId: string | null;
+  detail: SequenceLifecycle | null;
   loading: boolean;
-  collapsed: boolean;
-  onToggle: () => void;
-  onCall: (item: RepQueueItem) => void;
-  onLinkedin: (item: RepQueueItem) => void;
+  onClose: () => void;
 }) {
-  const channelTone = (ch: string) => {
-    switch (ch) {
-      case "call":     return { bg: "#eef7ff", color: "#175089", border: "#c8daf0" };
-      case "email":    return { bg: "#f5f3ff", color: "#5b21b6", border: "#ddd6fe" };
-      case "linkedin": return { bg: "#e8f4ff", color: "#0a66c2", border: "#b8dbff" };
-      default:         return { bg: "#f1f5f9", color: "#334155", border: "#cbd5e1" };
+  if (!contactId) return null;
+
+  const statusChipTone = (status: string) => {
+    switch (status) {
+      case "in_progress": return { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" };
+      case "replied":     return { bg: "#faf5ff", color: "#7c3aed", border: "#e9d5ff" };
+      case "booked":      return { bg: "#f0fdf4", color: "#15803d", border: "#bbf7d0" };
+      case "stopped":     return { bg: "#f1f5f9", color: "#475569", border: "#cbd5e1" };
+      case "stalled":     return { bg: "#fef2f2", color: "#dc2626", border: "#fecaca" };
+      case "completed":   return { bg: "#f1f5f9", color: "#334155", border: "#cbd5e1" };
+      case "ready":       return { bg: "#fef9e7", color: "#92400e", border: "#fde68a" };
+      case "never_launched": return { bg: "#f1f5f9", color: "#64748b", border: "#cbd5e1" };
+      default: return { bg: "#f1f5f9", color: "#475569", border: "#cbd5e1" };
     }
   };
 
   return (
-    <div style={{ background: "linear-gradient(180deg,#ffffff,#f7fafd)", border: "1px solid #dbe6f2", borderRadius: 16, padding: collapsed ? "12px 16px" : "16px 18px 18px", boxShadow: "0 1px 2px rgba(14,38,66,0.03)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: collapsed ? 0 : 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg,#0f2744,#175089)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Target size={14} color="#fff" />
-          </div>
+    <div style={{ position: "fixed", inset: 0, zIndex: 220, display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ flex: 1, background: "rgba(10,20,40,0.35)" }} onClick={onClose} />
+      <div style={{ width: 520, maxWidth: "100vw", background: "#fff", borderLeft: "1px solid #d5e3ef", boxShadow: "-24px 0 48px rgba(14,38,66,0.16)", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+        {/* Header */}
+        <div style={{ padding: "18px 22px 14px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#0f2744" }}>
-              Your queue
-              {!loading && items.length > 0 && (
-                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#546679", background: "#eef2f7", padding: "1px 8px", borderRadius: 999 }}>
-                  {items.length}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 11, color: "#7a96b0" }}>
-              Next-best prospects for you — ranked automatically
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#0f2744" }}>Sequence lifecycle</div>
+            <div style={{ fontSize: 12, color: "#7a96b0" }}>
+              {loading ? "Loading…" :
+               detail ? `${detail.total_steps} steps · ${detail.days_since_launch != null ? `day ${detail.days_since_launch}` : "not launched"}` :
+               "No data"}
             </div>
           </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#546679", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            <X size={14} />
+          </button>
         </div>
-        <button onClick={onToggle} style={{ border: "1px solid #d5e3ef", background: "#fff", color: "#546679", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-          {collapsed ? "Show" : "Hide"}
-        </button>
-      </div>
 
-      {!collapsed && (
-        <>
+        <div style={{ padding: "16px 22px" }}>
           {loading && (
-            <div style={{ fontSize: 12, color: "#7a96b0", fontStyle: "italic" }}>Scoring your portfolio…</div>
+            <div style={{ fontSize: 13, color: "#7a96b0" }}>Loading lifecycle…</div>
           )}
-          {!loading && items.length === 0 && (
-            <div style={{ fontSize: 13, color: "#64748b", padding: "10px 0" }}>
-              No urgent prospects right now. You're caught up — good time to load new leads or review deals.
-            </div>
-          )}
-          {!loading && items.length > 0 && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 10 }}>
-              {items.map((item) => {
-                const tone = channelTone(item.suggested_channel);
-                const canCall = !!item.phone;
-                const canLinkedin = item.suggested_channel === "linkedin";
-                return (
-                  <div key={item.contact_id} style={{ background: "#fff", border: "1px solid #e3ecf4", borderRadius: 12, padding: "12px 13px", display: "grid", gap: 8 }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#0f2744", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {item.first_name} {item.last_name}
+
+          {!loading && detail && (
+            <>
+              {/* Top-line status */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                {(() => {
+                  const tone = statusChipTone(detail.status);
+                  return (
+                    <span style={{ padding: "4px 10px", borderRadius: 999, background: tone.bg, color: tone.color, border: `1px solid ${tone.border}`, fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      {detail.status.replace(/_/g, " ")}
+                    </span>
+                  );
+                })()}
+                {detail.sequence?.instantly_campaign_status && (
+                  <span style={{ padding: "4px 10px", borderRadius: 999, background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1", fontSize: 11, fontWeight: 700 }}>
+                    Instantly: {detail.sequence.instantly_campaign_status}
+                  </span>
+                )}
+                {detail.launched_at && (
+                  <span style={{ fontSize: 11.5, color: "#64748b" }}>
+                    Launched {formatLifecycleDate(detail.launched_at)}
+                  </span>
+                )}
+              </div>
+
+              {/* Issues */}
+              {detail.issues.length > 0 && (
+                <div style={{ marginBottom: 14, display: "grid", gap: 8 }}>
+                  {detail.issues.map((issue, i) => {
+                    const toneBg = issue.severity === "error" ? "#fef2f2" :
+                                   issue.severity === "warning" ? "#fffbeb" : "#eff6ff";
+                    const toneColor = issue.severity === "error" ? "#b91c1c" :
+                                      issue.severity === "warning" ? "#92400e" : "#1d4ed8";
+                    const toneBorder = issue.severity === "error" ? "#fecaca" :
+                                       issue.severity === "warning" ? "#fde68a" : "#bfdbfe";
+                    return (
+                      <div key={i} style={{ padding: "10px 12px", borderRadius: 10, background: toneBg, border: `1px solid ${toneBorder}`, color: toneColor, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                        <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+                        <div style={{ fontSize: 12.5, lineHeight: 1.5, fontWeight: 600 }}>
+                          {issue.message}
                         </div>
-                        {item.title && (
-                          <div style={{ fontSize: 11.5, color: "#546679", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {item.title}
-                          </div>
-                        )}
                       </div>
-                      <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: tone.bg, color: tone.color, border: `1px solid ${tone.border}`, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                        {item.suggested_channel}
-                      </span>
-                    </div>
+                    );
+                  })}
+                </div>
+              )}
 
-                    {item.reasons.length > 0 && (
-                      <div style={{ fontSize: 11.5, color: "#3d5268", lineHeight: 1.45, background: "#fafbfd", borderRadius: 8, padding: "6px 8px" }}>
-                        • {item.reasons[0]}
-                      </div>
-                    )}
-
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button
-                        type="button"
-                        disabled={!canCall}
-                        onClick={() => onCall(item)}
-                        style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "1px solid #c8daf0", background: canCall ? "#fff" : "#f3f4f6", color: canCall ? "#175089" : "#94a3b8", fontSize: 11.5, fontWeight: 700, cursor: canCall ? "pointer" : "not-allowed", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}
-                      >
-                        <PhoneCall size={12} /> Call
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!canLinkedin}
-                        onClick={() => onLinkedin(item)}
-                        style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "1px solid #b8dbff", background: canLinkedin ? "#fff" : "#f3f4f6", color: canLinkedin ? "#0a66c2" : "#94a3b8", fontSize: 11.5, fontWeight: 700, cursor: canLinkedin ? "pointer" : "not-allowed", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}
-                      >
-                        <Link2 size={12} /> LinkedIn
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+              {/* Step timeline */}
+              {detail.steps.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#7a96b0", fontStyle: "italic" }}>
+                  No steps defined on this contact's sequence plan yet.
+                </div>
+              ) : (
+                <div>
+                  {detail.steps.map((step) => (
+                    <LifecycleStepRow key={step.index} step={step} />
+                  ))}
+                </div>
+              )}
+            </>
           )}
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }
