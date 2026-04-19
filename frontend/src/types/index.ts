@@ -464,6 +464,7 @@ export interface Meeting {
   what_went_right?: string;
   what_went_wrong?: string;
   next_steps?: string;
+  manually_linked?: boolean;
   created_at: string;
   updated_at: string;
 }

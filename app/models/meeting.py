@@ -48,6 +48,7 @@ class Meeting(MeetingBase, table=True):
     external_source_id: Optional[str] = Field(default=None, index=True)
     synced_by_user_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     synced_at: Optional[datetime] = None
+    manually_linked: bool = Field(default=False)
     meeting_url: Optional[str] = Field(default=None, sa_column=Column(Text))
     recording_url: Optional[str] = Field(default=None, sa_column=Column(Text))
     # Pre-meeting
@@ -78,6 +79,7 @@ class MeetingRead(MeetingBase):
     external_source_id: Optional[str] = None
     synced_by_user_id: Optional[UUID] = None
     synced_at: Optional[datetime] = None
+    manually_linked: bool = False
     meeting_url: Optional[str] = None
     recording_url: Optional[str] = None
     pre_brief: Optional[str] = None
@@ -117,3 +119,4 @@ class MeetingUpdate(SQLModel):
     what_went_wrong: Optional[str] = None
     next_steps: Optional[str] = None
     intel_email_sent_at: Optional[datetime] = None
+    manually_linked: Optional[bool] = None

@@ -39,6 +39,36 @@ function canonicalPersona(persona?: string | null, personaType?: string | null):
   return "unknown";
 }
 
+// Normalize company/title strings for loose matching (mirrors the backend's
+// `_normalize_name_key`). Used to surface a banner when a meeting title
+// clearly names a company different from the one it is linked to — the
+// Procore-titled meeting mislinked to Azentio is the canonical case.
+function normalizeNameKey(value: string): string {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+}
+
+function detectTitleCompanyMismatch(
+  title: string,
+  linkedCompanyId: string | undefined,
+  companies: Company[]
+): Company | null {
+  if (!title || !linkedCompanyId) return null;
+  const normTitle = ` ${normalizeNameKey(title)} `;
+  if (normTitle.trim().length < 4) return null;
+  const candidates = companies
+    .map((c) => ({ company: c, key: normalizeNameKey(c.name || "") }))
+    .filter((x) => x.key.length >= 4 && normTitle.includes(` ${x.key} `))
+    .sort((a, b) => b.key.length - a.key.length);
+  if (!candidates.length) return null;
+  const longest = candidates[0].key.length;
+  const topIds = new Set(
+    candidates.filter((c) => c.key.length === longest).map((c) => c.company.id)
+  );
+  if (topIds.size !== 1) return null;
+  const titleCompany = candidates[0].company;
+  return titleCompany.id !== linkedCompanyId ? titleCompany : null;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface CompanyBackground {
@@ -463,6 +493,25 @@ export default function MeetingDetail() {
     }
   };
 
+  // One-click unlink for the mismatch banner. Backend will set manually_linked
+  // = true automatically because company_id/deal_id are in the payload, but
+  // we also send it explicitly to be self-documenting.
+  const [unlinking, setUnlinking] = useState(false);
+  const handleUnlink = async () => {
+    if (!id) return;
+    setUnlinking(true);
+    try {
+      await meetingsApi.update(id, {
+        company_id: null,
+        deal_id: null,
+        manually_linked: true,
+      } as any);
+      await loadAll();
+    } finally {
+      setUnlinking(false);
+    }
+  };
+
   // ── Open attendee editor: load contacts for linked company ───────────────────
   const handleOpenAttendeeEditor = async () => {
     const existing = Array.isArray(meeting?.attendees) ? meeting!.attendees as any[] : [];
@@ -617,6 +666,49 @@ export default function MeetingDetail() {
             </button>
           </div>
         </div>
+
+        {/* ── Title/company mismatch banner ── */}
+        {(() => {
+          const mismatch = detectTitleCompanyMismatch(
+            meeting.title,
+            meeting.company_id || undefined,
+            allCompanies
+          );
+          if (!mismatch) return null;
+          return (
+            <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 12, background: "#fff2ec", border: "1px solid #ffc8a8", display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <MessageSquareWarning size={16} style={{ color: "#c2410c", marginTop: 2, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#7c2d12" }}>
+                  Possible company mismatch
+                </div>
+                <div style={{ fontSize: 12.5, color: "#7a3f1f", lineHeight: 1.55, marginTop: 3 }}>
+                  The meeting title mentions <span style={{ fontWeight: 700 }}>{mismatch.name}</span>,
+                  but this meeting is linked to <span style={{ fontWeight: 700 }}>{company?.name || "another company"}</span>.
+                  This usually happens when someone from a different account attended the call
+                  and our auto-linker trusted the attendee's company over the title.
+                </div>
+                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={handleOpenLinkPanel}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #ffc8a8", background: "#fff", color: "#7c2d12", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+                  >
+                    <Link2 size={12} /> Re-link correctly
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleUnlink}
+                    disabled={unlinking}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #ffc8a8", background: "#fff", color: "#7c2d12", fontSize: 12, fontWeight: 700, cursor: unlinking ? "wait" : "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+                  >
+                    <Link2Off size={12} /> {unlinking ? "Unlinking…" : "Unlink"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Link Company / Deal panel ── */}
         {showLinkPanel && (

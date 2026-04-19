@@ -96,33 +96,81 @@ function Pill({ label, color, bg, border }: { label: string; color: string; bg: 
   );
 }
 
+// Normalize for loose, whole-token substring matching (same idea as the
+// backend's `_normalize_name_key`). Strips punctuation, lowercases, collapses
+// whitespace. Used to flag when a meeting *title* contains a company name
+// that differs from the one currently linked — the classic "Procore X
+// Beacon" event mislinked to Azentio because an Azentio contact attended.
+function normalizeNameKey(value: string): string {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function detectTitleCompanyMismatch(
+  title: string,
+  linkedCompanyId: string | undefined,
+  companies: Company[]
+): Company | null {
+  if (!title || !linkedCompanyId) return null;
+  const normTitle = ` ${normalizeNameKey(title)} `;
+  if (normTitle.trim().length < 4) return null;
+  const candidates = companies
+    .map((c) => ({ company: c, key: normalizeNameKey(c.name || "") }))
+    .filter((x) => x.key.length >= 4 && normTitle.includes(` ${x.key} `))
+    .sort((a, b) => b.key.length - a.key.length);
+  if (!candidates.length) return null;
+  // Accept only an unambiguous longest match.
+  const longest = candidates[0].key.length;
+  const topIds = new Set(
+    candidates.filter((c) => c.key.length === longest).map((c) => c.company.id)
+  );
+  if (topIds.size !== 1) return null;
+  const titleCompany = candidates[0].company;
+  return titleCompany.id !== linkedCompanyId ? titleCompany : null;
+}
+
 function MeetingIntelCard({
   meeting,
   company,
   deal,
   lastActivity,
   assigneeName,
+  allCompanies,
   onRunIntel,
   onUpdateStatus,
+  onUnlink,
   runningIntel,
   updatingStatus,
+  unlinking,
 }: {
   meeting: Meeting;
   company?: Company;
   deal?: Deal;
   lastActivity?: Activity;
   assigneeName?: string;
+  allCompanies: Company[];
   onRunIntel: (id: string) => void;
   onUpdateStatus: (id: string, status: "completed" | "cancelled") => void;
+  onUnlink: (id: string) => void;
   runningIntel: string | null;
   updatingStatus: string | null;
+  unlinking: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hours = hoursUntil(meeting.scheduled_at);
   const hasResearch = !!meeting.research_data;
   const hasIntelSent = !!(meeting as any).intel_email_sent_at;
   const isRunning = runningIntel === meeting.id;
+  const isUnlinking = unlinking === meeting.id;
   const needsReview = !meeting.company_id || !meeting.deal_id;
+  const titleMismatchCompany = detectTitleCompanyMismatch(
+    meeting.title,
+    meeting.company_id || undefined,
+    allCompanies
+  );
 
   // Classify each meeting across the full timeline:
   //   - "in_progress": started but not yet ended (within 90 min of scheduled_at)
@@ -278,6 +326,35 @@ function MeetingIntelCard({
             <AlertTriangle size={13} style={{ color: colors.orange, marginTop: 1, flexShrink: 0 }} />
             <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.5 }}>
               Beacon did not find a confident company and deal link for this meeting yet. Use <span style={{ fontWeight: 700 }}>Re-link</span> to review it instead of trusting an automatic guess.
+            </div>
+          </div>
+        )}
+
+        {titleMismatchCompany && (
+          <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff2ec", border: "1px solid #ffc8a8", display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <AlertTriangle size={14} style={{ color: "#c2410c", marginTop: 1, flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#7c2d12" }}>
+                Possible company mismatch
+              </div>
+              <div style={{ fontSize: 12, color: "#7a3f1f", lineHeight: 1.5, marginTop: 2 }}>
+                Title mentions <span style={{ fontWeight: 700 }}>{titleMismatchCompany.name}</span>, but this meeting is linked to <span style={{ fontWeight: 700 }}>{company?.name || "another company"}</span>. An attendee from the wrong account likely caused the auto-link. Open the meeting and use <span style={{ fontWeight: 700 }}>Re-link</span>, or unlink now.
+              </div>
+              <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
+                <button
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onUnlink(meeting.id); }}
+                  disabled={isUnlinking}
+                  style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #ffc8a8", background: "#fff", color: "#7c2d12", fontSize: 11, fontWeight: 700, cursor: isUnlinking ? "wait" : "pointer" }}
+                >
+                  {isUnlinking ? "Unlinking…" : "Unlink company & deal"}
+                </button>
+                <Link
+                  to={`/meetings/${meeting.id}`}
+                  style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #ffc8a8", background: "#fff", color: "#7c2d12", fontSize: 11, fontWeight: 700, textDecoration: "none" }}
+                >
+                  Open meeting
+                </Link>
+              </div>
             </div>
           </div>
         )}
@@ -878,6 +955,7 @@ export default function PreMeetingAssistance() {
   const [loading, setLoading] = useState(true);
   const [runningIntel, setRunningIntel] = useState<string | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const [unlinking, setUnlinking] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<MultiSelectValue>(["scheduled"]);
   const [intelFilter, setIntelFilter] = useState<MultiSelectValue>([]);
   const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>([]);
@@ -1027,6 +1105,25 @@ export default function PreMeetingAssistance() {
       // swallow — user can retry
     } finally {
       setUpdatingStatus(null);
+    }
+  };
+
+  // One-click unlink for meetings where the title names a different company
+  // than the one auto-linked. Sending nulls + manually_linked=true locks the
+  // choice so the next calendar sync cannot reattach the wrong account.
+  const handleUnlinkMeeting = async (meetingId: string) => {
+    setUnlinking(meetingId);
+    try {
+      await meetingsApi.update(meetingId, {
+        company_id: null,
+        deal_id: null,
+        manually_linked: true,
+      } as any);
+      await loadData();
+    } catch {
+      // swallow — user can retry
+    } finally {
+      setUnlinking(null);
     }
   };
 
@@ -1210,10 +1307,13 @@ export default function PreMeetingAssistance() {
                 deal={deal}
                 lastActivity={lastActivity}
                 assigneeName={isAdmin && assignee ? assignee.name : undefined}
+                allCompanies={companies}
                 onRunIntel={handleRunIntel}
                 onUpdateStatus={handleUpdateStatus}
+                onUnlink={handleUnlinkMeeting}
                 runningIntel={runningIntel}
                 updatingStatus={updatingStatus}
+                unlinking={unlinking}
               />
             );
           })}

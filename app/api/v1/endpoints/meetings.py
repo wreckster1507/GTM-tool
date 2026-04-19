@@ -151,6 +151,12 @@ async def update_meeting(meeting_id: UUID, payload: MeetingUpdate, session: DBSe
     repo = MeetingRepository(session)
     meeting = await repo.get_or_raise(meeting_id)
     update_data = payload.model_dump(exclude_unset=True)
+    # If a user edits company_id or deal_id, lock the link so future calendar
+    # syncs cannot silently overwrite it. Explicitly passing manually_linked
+    # (e.g., false to re-enable auto-linking) still wins.
+    touches_link = "company_id" in update_data or "deal_id" in update_data
+    if touches_link and "manually_linked" not in update_data:
+        update_data["manually_linked"] = True
     update_data["updated_at"] = datetime.utcnow()
     return await repo.update(meeting, update_data)
 

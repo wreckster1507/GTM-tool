@@ -59,6 +59,38 @@ def _infer_display_name(addr: str) -> str:
     return " ".join(part.title() for part in parts)
 
 
+def _title_company_match(
+    title: str,
+    company_name_candidates: list[tuple[str, UUID, str]],
+) -> UUID | None:
+    """Return a company id if the event title contains a strong, unambiguous company-name match.
+
+    Uses the pre-sorted (longest-first) candidate list so "Procore Tech" wins over "Proc".
+    Only considers candidates whose normalized name is >=4 chars, matches as a whole-token
+    substring in the normalized title, and has no other longer candidate also matching.
+    Returns None on ambiguity — we never guess.
+    """
+    norm_title = _normalize_name_key(title)
+    if not norm_title:
+        return None
+    padded = f" {norm_title} "
+    matches: list[tuple[str, UUID]] = []
+    for norm_name, company_id, _display in company_name_candidates:
+        if len(norm_name) < 4:
+            continue
+        if f" {norm_name} " in padded:
+            matches.append((norm_name, company_id))
+    if not matches:
+        return None
+    # Prefer the longest match; reject if two equally-long matches disagree.
+    matches.sort(key=lambda m: len(m[0]), reverse=True)
+    longest_len = len(matches[0][0])
+    top_ids = {cid for name, cid in matches if len(name) == longest_len}
+    if len(top_ids) == 1:
+        return next(iter(top_ids))
+    return None
+
+
 def _infer_meeting_type(title: str) -> str:
     lower = title.lower()
     if any(w in lower for w in ["demo", "product demo", "platform demo"]):
@@ -197,6 +229,23 @@ async def sync_calendar_events(
             # If we cannot safely match by attendee email or attendee domain,
             # keep the meeting unlinked so users can re-link it explicitly.
 
+            # ── Conflict guard: if title strongly names a DIFFERENT company,
+            # don't trust the attendee-derived link. Drop both and let the
+            # user re-link explicitly. This is the Procore→Azentio case:
+            # internal/shared contact attended a meeting titled "Procore X ...".
+            if matched_company_id is not None:
+                title_company_id = _title_company_match(event.title, company_name_candidates)
+                if title_company_id and title_company_id != matched_company_id:
+                    logger.info(
+                        "calendar_sync: title/attendee company mismatch for '%s' — "
+                        "attendee=%s, title=%s. Leaving unlinked.",
+                        event.title,
+                        matched_company_id,
+                        title_company_id,
+                    )
+                    matched_company_id = None
+                    matched_deal_id = None
+
             # ── Build attendees payload ───────────────────────────────────
             attendees_payload = []
             matched_contact_ids_by_email = {
@@ -254,12 +303,15 @@ async def sync_calendar_events(
                 if existing.owner_user_id != owner_user_id:
                     existing.owner_user_id = owner_user_id
                     changed = True
-                if existing.company_id != matched_company_id:
-                    existing.company_id = matched_company_id
-                    changed = True
-                if existing.deal_id != matched_deal_id:
-                    existing.deal_id = matched_deal_id
-                    changed = True
+                # Never stomp a user-established link. If the rep re-linked
+                # Procore→Procore after an auto-linker got it wrong, keep it.
+                if not getattr(existing, "manually_linked", False):
+                    if existing.company_id != matched_company_id:
+                        existing.company_id = matched_company_id
+                        changed = True
+                    if existing.deal_id != matched_deal_id:
+                        existing.deal_id = matched_deal_id
+                        changed = True
                 if attendees_payload and existing.attendees != attendees_payload:
                     existing.attendees = attendees_payload
                     changed = True
