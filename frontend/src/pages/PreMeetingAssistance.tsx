@@ -103,7 +103,9 @@ function MeetingIntelCard({
   lastActivity,
   assigneeName,
   onRunIntel,
+  onUpdateStatus,
   runningIntel,
+  updatingStatus,
 }: {
   meeting: Meeting;
   company?: Company;
@@ -111,7 +113,9 @@ function MeetingIntelCard({
   lastActivity?: Activity;
   assigneeName?: string;
   onRunIntel: (id: string) => void;
+  onUpdateStatus: (id: string, status: "completed" | "cancelled") => void;
   runningIntel: string | null;
+  updatingStatus: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hours = hoursUntil(meeting.scheduled_at);
@@ -120,15 +124,43 @@ function MeetingIntelCard({
   const isRunning = runningIntel === meeting.id;
   const needsReview = !meeting.company_id || !meeting.deal_id;
 
-  const urgency =
-    hours !== null && hours <= 2 ? "imminent"
-    : hours !== null && hours <= 12 ? "soon"
+  // Classify each meeting across the full timeline:
+  //   - "in_progress": started but not yet ended (within 90 min of scheduled_at)
+  //   - "overdue":     scheduled_at has passed but status is still "scheduled"
+  //                    (calendar / tl;dv didn't flip it to completed, or the
+  //                    rep never logged an outcome)
+  //   - "imminent":    within 2 hours
+  //   - "soon":        within 12 hours
+  //   - "upcoming":    further out
+  //   - "completed":   already marked completed
+  //   - "cancelled":   explicitly cancelled
+  const hoursPast = hours !== null ? -hours : null; // positive = past
+  const isCompleted = meeting.status === "completed";
+  const isCancelled = meeting.status === "cancelled";
+  const urgency: "completed" | "cancelled" | "in_progress" | "overdue" | "imminent" | "soon" | "upcoming" =
+    isCancelled ? "cancelled"
+    : isCompleted ? "completed"
+    : hours === null ? "upcoming"
+    : hours < 0 && hoursPast !== null && hoursPast * 60 <= 90 ? "in_progress"  // within 90 min after start
+    : hours < 0 ? "overdue"
+    : hours <= 2 ? "imminent"
+    : hours <= 12 ? "soon"
     : "upcoming";
+
+  const pastLabel = hoursPast !== null
+    ? hoursPast >= 48 ? `${Math.round(hoursPast / 24)}d overdue`
+      : hoursPast >= 1 ? `${hoursPast}h overdue`
+      : "Just ended"
+    : "Overdue";
 
   const urgencyStyle = {
     imminent: { bg: "#fff2ec", color: colors.orange, border: "#ffd3be", label: "< 2 hrs" },
     soon: { bg: colors.amberSoft, color: colors.amber, border: "#ffe3b3", label: hours !== null ? `${hours}h away` : "" },
     upcoming: { bg: "#f4f7ff", color: "#4b60cf", border: "#d7dffb", label: hours !== null ? `${hours}h away` : "Upcoming" },
+    in_progress: { bg: "#fff5d9", color: "#9a6b00", border: "#f6dd9b", label: "In progress" },
+    overdue: { bg: "#fdecec", color: "#b42336", border: "#f5c2c2", label: pastLabel },
+    completed: { bg: "#ecf8f0", color: "#15803d", border: "#c7e8d3", label: "Completed" },
+    cancelled: { bg: "#f1f5f9", color: "#64748b", border: "#e2e8f0", label: "Cancelled" },
   }[urgency];
 
   // ── Parse research_data ──────────────────────────────────────────────────
@@ -630,6 +662,31 @@ function MeetingIntelCard({
           <ExternalLink size={13} />
           Open meeting
         </Link>
+
+        {/* Show status-update actions when the meeting is past-but-unreviewed.
+            Reps can't rely on tl;dv firing every time, so we give them a manual
+            way to close out "overdue" meetings and clear the red badge. */}
+        {(urgency === "overdue" || urgency === "in_progress") && (
+          <>
+            <button
+              type="button"
+              disabled={updatingStatus === meeting.id}
+              onClick={() => onUpdateStatus(meeting.id, "completed")}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "1px solid #c7e8d3", background: "#ecf8f0", color: "#15803d", fontSize: 12, fontWeight: 700, cursor: updatingStatus === meeting.id ? "wait" : "pointer" }}
+            >
+              <CheckCircle2 size={13} />
+              Mark as done
+            </button>
+            <button
+              type="button"
+              disabled={updatingStatus === meeting.id}
+              onClick={() => onUpdateStatus(meeting.id, "cancelled")}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: updatingStatus === meeting.id ? "wait" : "pointer" }}
+            >
+              Mark as cancelled
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -820,6 +877,7 @@ export default function PreMeetingAssistance() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningIntel, setRunningIntel] = useState<string | null>(null);
+  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<MultiSelectValue>(["scheduled"]);
   const [intelFilter, setIntelFilter] = useState<MultiSelectValue>([]);
   const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>([]);
@@ -839,11 +897,18 @@ export default function PreMeetingAssistance() {
           ? intelFilter[0] === "has_intel"
           : undefined;
 
+      // "overdue" is a virtual status computed client-side (scheduled + past).
+      // Translate it to "scheduled" for the API so we fetch the right pool and
+      // let the client-side filter narrow it to actually-past meetings.
+      const apiStatusFilter = statusFilter.includes("overdue")
+        ? Array.from(new Set(statusFilter.filter((s) => s !== "overdue").concat(["scheduled"])))
+        : statusFilter;
+
       const [pageResp, totalResp, upcomingResp, hasIntelResp, noIntelResp] = await Promise.all([
         meetingsApi.listPaginated({
           skip: (page - 1) * 25,
           limit: 25,
-          status: statusFilter,
+          status: apiStatusFilter,
           meetingType: typeFilter,
           assigneeId: assigneeFilter,
           linkState: linkFilter,
@@ -950,9 +1015,33 @@ export default function PreMeetingAssistance() {
     }
   };
 
+  // Manual close-out for overdue meetings when tl;dv / calendar didn't flip
+  // status automatically. Reps need this to clear the red "Overdue" badge
+  // without inventing a fake transcript.
+  const handleUpdateStatus = async (meetingId: string, status: "completed" | "cancelled") => {
+    setUpdatingStatus(meetingId);
+    try {
+      await meetingsApi.update(meetingId, { status } as Partial<Meeting>);
+      await loadData();
+    } catch {
+      // swallow — user can retry
+    } finally {
+      setUpdatingStatus(null);
+    }
+  };
+
   const filtered = useMemo(() => {
+    const now = Date.now();
     return meetings.filter((m) => {
-      if (statusFilter.length > 0 && !statusFilter.includes(m.status)) return false;
+      if (statusFilter.length > 0) {
+        // "overdue" is a virtual status — pass when a scheduled meeting is in
+        // the past. Everything else compares against the real status field.
+        const isOverdue = m.status === "scheduled" && m.scheduled_at && new Date(m.scheduled_at).getTime() < now;
+        const matches = statusFilter.some((s) =>
+          s === "overdue" ? isOverdue : s === m.status
+        );
+        if (!matches) return false;
+      }
       if (intelFilter.length > 0) {
         const intelState = m.research_data ? "has_intel" : "no_intel";
         if (!intelFilter.includes(intelState)) return false;
@@ -1026,7 +1115,9 @@ export default function PreMeetingAssistance() {
             label="Status"
             options={[
               { value: "scheduled", label: "Upcoming (scheduled)" },
+              { value: "overdue", label: "Overdue — needs review" },
               { value: "completed", label: "Completed" },
+              { value: "cancelled", label: "Cancelled" },
             ]}
             selected={statusFilter}
             onChange={setStatusFilter}
@@ -1120,7 +1211,9 @@ export default function PreMeetingAssistance() {
                 lastActivity={lastActivity}
                 assigneeName={isAdmin && assignee ? assignee.name : undefined}
                 onRunIntel={handleRunIntel}
+                onUpdateStatus={handleUpdateStatus}
                 runningIntel={runningIntel}
+                updatingStatus={updatingStatus}
               />
             );
           })}
