@@ -89,6 +89,18 @@ function MetricCard({
   }[tone];
 
   const hasDeals = deals && deals.length > 0;
+  const toggle = () => { if (hasDeals) setOpen((v) => !v); };
+  // Closed Won card uses the actual close date language; other milestones
+  // use "Reached" since they represent a stage-transition timestamp.
+  const isClosedWon = deals?.[0]?.milestone_key === "closed_won";
+  const dateLabel = isClosedWon ? "Closed" : "Reached";
+
+  const fmtDate = (iso: string | null | undefined): string => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  };
 
   return (
     <div
@@ -102,13 +114,18 @@ function MetricCard({
         gap: 14,
         minHeight: 146,
         boxShadow: "0 12px 32px rgba(23, 43, 77, 0.06)",
+        cursor: hasDeals ? "pointer" : "default",
+        transition: "transform 0.12s ease, box-shadow 0.12s ease",
       }}
+      onClick={toggle}
+      onMouseEnter={(e) => { if (hasDeals) (e.currentTarget.style.boxShadow = "0 18px 40px rgba(23, 43, 77, 0.10)"); }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 12px 32px rgba(23, 43, 77, 0.06)"; }}
+      role={hasDeals ? "button" : undefined}
+      title={hasDeals ? (open ? "Click to hide deals" : `Click to view ${deals.length} deal${deals.length === 1 ? "" : "s"}`) : undefined}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <span style={{ fontSize: 11, fontWeight: 800, color: palette.text, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-        <button
-          type="button"
-          onClick={() => hasDeals && setOpen((v) => !v)}
+        <div
           style={{
             width: 38,
             height: 38,
@@ -119,31 +136,40 @@ function MetricCard({
             placeItems: "center",
             color: open ? "#fff" : palette.icon,
             flexShrink: 0,
-            cursor: hasDeals ? "pointer" : "default",
             transition: "background 0.15s, color 0.15s",
           }}
-          title={hasDeals ? "View deals" : undefined}
         >
           <Icon size={17} />
-        </button>
+        </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#62748a" }}>{hint}</p>
+        {hasDeals && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: palette.icon }}>
+            {open ? "▲ Hide deals" : `▼ View ${deals.length} deal${deals.length === 1 ? "" : "s"}`}
+          </span>
+        )}
       </div>
       {open && hasDeals && (
-        <div style={{ borderTop: `1px solid ${palette.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div
+          style={{ borderTop: `1px solid ${palette.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 10 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 92px 96px", gap: 8, fontSize: 10, fontWeight: 800, color: "#8a9cb2", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            <span>Deal</span>
+            <span>{dateLabel}</span>
+            <span style={{ textAlign: "right" }}>Amount</span>
+          </div>
           {deals.map((d, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, fontSize: 12 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                <span style={{ fontWeight: 700, color: "#1d2b3a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {d.deal_name || d.company_name || "Unknown deal"}
-                </span>
-                <span style={{ color: "#62748a" }}>
-                  {d.close_date_est ? `Close: ${d.close_date_est}` : `Reached: ${d.reached_at}`}
-                </span>
-              </div>
-              <span style={{ fontWeight: 700, color: palette.icon, flexShrink: 0 }}>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 92px 96px", gap: 8, alignItems: "baseline", fontSize: 12 }}>
+              <span style={{ fontWeight: 700, color: "#1d2b3a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.deal_name || d.company_name || ""}>
+                {d.deal_name || d.company_name || "Unknown deal"}
+              </span>
+              <span style={{ color: "#62748a", whiteSpace: "nowrap" }}>
+                {fmtDate(d.reached_at || d.close_date_est)}
+              </span>
+              <span style={{ fontWeight: 700, color: palette.icon, textAlign: "right", whiteSpace: "nowrap" }}>
                 {formatCurrency(d.deal_value)}
               </span>
             </div>
