@@ -65,6 +65,144 @@ function formatCurrency(val: number | null | undefined): string {
   return `$${val.toLocaleString()}`;
 }
 
+function fmtMilestoneDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function MilestoneDealsModal({
+  label,
+  deals,
+  onClose,
+  accentColor,
+}: {
+  label: string;
+  deals: MilestoneDealRow[];
+  onClose: () => void;
+  accentColor: string;
+}) {
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const isClosedWon = deals[0]?.milestone_key === "closed_won";
+  const dateLabel = isClosedWon ? "Closed On" : "Reached On";
+  const total = deals.reduce((sum, d) => sum + (d.deal_value ?? 0), 0);
+  const withAmount = deals.filter((d) => (d.deal_value ?? 0) > 0).length;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${label} deals`}
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 120,
+        background: "rgba(15, 26, 42, 0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(760px, 100%)", maxHeight: "86vh",
+          background: "#fff", borderRadius: 18, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 40px 80px rgba(10, 22, 40, 0.25)",
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: "18px 22px", borderBottom: "1px solid #ebeff5",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: accentColor, textTransform: "uppercase" }}>{label}</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
+              {deals.length} deal{deals.length === 1 ? "" : "s"}
+              {withAmount > 0 && <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>
+                · {formatCurrency(total)} total
+              </span>}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              width: 36, height: 36, borderRadius: 10, background: "#f4f6fa",
+              border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1,
+              cursor: "pointer", display: "grid", placeItems: "center",
+            }}
+          >×</button>
+        </div>
+
+        {/* Table */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                <th style={thSty}>Deal</th>
+                <th style={thSty}>Company</th>
+                <th style={thSty}>{dateLabel}</th>
+                <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deals.map((d, i) => {
+                const amt = d.deal_value ?? 0;
+                return (
+                  <tr key={i} style={{ borderBottom: "1px solid #f0f3f8" }}>
+                    <td style={tdSty}>
+                      <span style={{ fontWeight: 700, color: "#1d2b3a" }}>
+                        {d.deal_name || "—"}
+                      </span>
+                    </td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>
+                      {d.company_name || "—"}
+                    </td>
+                    <td style={{ ...tdSty, color: "#62748a", whiteSpace: "nowrap" }}>
+                      {fmtMilestoneDate(d.reached_at || d.close_date_est)}
+                    </td>
+                    <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: amt > 0 ? accentColor : "#aab4c2", whiteSpace: "nowrap" }}>
+                      {amt > 0 ? formatCurrency(amt) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {total > 0 && (
+              <tfoot>
+                <tr style={{ background: "#fafbfd" }}>
+                  <td colSpan={3} style={{ ...tdSty, fontWeight: 800, color: "#1d2b3a" }}>Total</td>
+                  <td style={{ ...tdSty, textAlign: "right", fontWeight: 800, color: accentColor }}>
+                    {formatCurrency(total)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const thSty: React.CSSProperties = {
+  textAlign: "left", fontSize: 10, fontWeight: 800, letterSpacing: "0.1em",
+  color: "#8a9cb2", textTransform: "uppercase", padding: "10px 22px 8px",
+  borderBottom: "1px solid #ebeff5",
+};
+const tdSty: React.CSSProperties = {
+  padding: "12px 22px", verticalAlign: "top",
+};
+
 function MetricCard({
   label,
   value,
@@ -80,7 +218,7 @@ function MetricCard({
   icon: LucideIcon;
   deals?: MilestoneDealRow[];
 }) {
-  const [open, setOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const palette = {
     blue: { bg: "linear-gradient(135deg, #f7faff 0%, #eef4ff 100%)", border: "#d8e4fb", icon: "#4261d6", text: "#29446d" },
     green: { bg: "linear-gradient(135deg, #f7fff9 0%, #ecf9f1 100%)", border: "#cdecd9", icon: "#2b8a5d", text: "#25473a" },
@@ -89,94 +227,58 @@ function MetricCard({
   }[tone];
 
   const hasDeals = deals && deals.length > 0;
-  const toggle = () => { if (hasDeals) setOpen((v) => !v); };
-  // Closed Won card uses the actual close date language; other milestones
-  // use "Reached" since they represent a stage-transition timestamp.
-  const isClosedWon = deals?.[0]?.milestone_key === "closed_won";
-  const dateLabel = isClosedWon ? "Closed" : "Reached";
-
-  const fmtDate = (iso: string | null | undefined): string => {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  };
 
   return (
-    <div
-      style={{
-        background: palette.bg,
-        border: `1px solid ${palette.border}`,
-        borderRadius: 18,
-        padding: 18,
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        minHeight: 146,
-        boxShadow: "0 12px 32px rgba(23, 43, 77, 0.06)",
-        cursor: hasDeals ? "pointer" : "default",
-        transition: "transform 0.12s ease, box-shadow 0.12s ease",
-      }}
-      onClick={toggle}
-      onMouseEnter={(e) => { if (hasDeals) (e.currentTarget.style.boxShadow = "0 18px 40px rgba(23, 43, 77, 0.10)"); }}
-      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 12px 32px rgba(23, 43, 77, 0.06)"; }}
-      role={hasDeals ? "button" : undefined}
-      title={hasDeals ? (open ? "Click to hide deals" : `Click to view ${deals.length} deal${deals.length === 1 ? "" : "s"}`) : undefined}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <span style={{ fontSize: 11, fontWeight: 800, color: palette.text, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-        <div
-          style={{
-            width: 38,
-            height: 38,
-            borderRadius: 12,
-            background: open ? palette.icon : "#fff",
-            border: `1px solid ${palette.border}`,
-            display: "grid",
-            placeItems: "center",
-            color: open ? "#fff" : palette.icon,
-            flexShrink: 0,
-            transition: "background 0.15s, color 0.15s",
-          }}
-        >
-          <Icon size={17} />
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
-        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#62748a" }}>{hint}</p>
-        {hasDeals && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: palette.icon }}>
-            {open ? "▲ Hide deals" : `▼ View ${deals.length} deal${deals.length === 1 ? "" : "s"}`}
-          </span>
-        )}
-      </div>
-      {open && hasDeals && (
-        <div
-          style={{ borderTop: `1px solid ${palette.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 10 }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 92px 96px", gap: 8, fontSize: 10, fontWeight: 800, color: "#8a9cb2", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            <span>Deal</span>
-            <span>{dateLabel}</span>
-            <span style={{ textAlign: "right" }}>Amount</span>
+    <>
+      <div
+        style={{
+          background: palette.bg,
+          border: `1px solid ${palette.border}`,
+          borderRadius: 18,
+          padding: 18,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+          minHeight: 146,
+          boxShadow: "0 12px 32px rgba(23, 43, 77, 0.06)",
+          cursor: hasDeals ? "pointer" : "default",
+          transition: "transform 0.12s ease, box-shadow 0.12s ease",
+        }}
+        onClick={() => hasDeals && setModalOpen(true)}
+        onMouseEnter={(e) => { if (hasDeals) e.currentTarget.style.boxShadow = "0 18px 40px rgba(23, 43, 77, 0.10)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 12px 32px rgba(23, 43, 77, 0.06)"; }}
+        role={hasDeals ? "button" : undefined}
+        title={hasDeals ? `Click to view ${deals.length} deal${deals.length === 1 ? "" : "s"}` : undefined}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: palette.text, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+          <div style={{
+            width: 38, height: 38, borderRadius: 12,
+            background: "#fff", border: `1px solid ${palette.border}`,
+            display: "grid", placeItems: "center", color: palette.icon, flexShrink: 0,
+          }}>
+            <Icon size={17} />
           </div>
-          {deals.map((d, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 92px 96px", gap: 8, alignItems: "baseline", fontSize: 12 }}>
-              <span style={{ fontWeight: 700, color: "#1d2b3a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.deal_name || d.company_name || ""}>
-                {d.deal_name || d.company_name || "Unknown deal"}
-              </span>
-              <span style={{ color: "#62748a", whiteSpace: "nowrap" }}>
-                {fmtDate(d.reached_at || d.close_date_est)}
-              </span>
-              <span style={{ fontWeight: 700, color: palette.icon, textAlign: "right", whiteSpace: "nowrap" }}>
-                {formatCurrency(d.deal_value)}
-              </span>
-            </div>
-          ))}
         </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#62748a" }}>{hint}</p>
+          {hasDeals && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: palette.icon }}>
+              View {deals.length} deal{deals.length === 1 ? "" : "s"} →
+            </span>
+          )}
+        </div>
+      </div>
+      {modalOpen && hasDeals && (
+        <MilestoneDealsModal
+          label={label}
+          deals={deals}
+          onClose={() => setModalOpen(false)}
+          accentColor={palette.icon}
+        />
       )}
-    </div>
+    </>
   );
 }
 
