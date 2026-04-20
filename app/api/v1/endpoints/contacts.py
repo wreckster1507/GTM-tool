@@ -128,16 +128,14 @@ async def list_contacts(
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
-    Non-admins are scoped to contacts assigned to them (AE or SDR).
-    """
-    is_admin = current_user.role == "admin"
-    effective_ae_id = ae_id
-    effective_sdr_id = sdr_id
-    if not is_admin:
-        user_id_str = str(current_user.id)
-        effective_ae_id = user_id_str
-        effective_sdr_id = user_id_str
 
+    Visibility: every authenticated user sees every contact in the workspace.
+    Assignment (`sdr_id` / `assigned_to_id`) is a label for ownership, NOT a
+    visibility filter — this keeps the team on a shared view of the pipeline.
+    Any per-rep filtering happens via the `ae_id` / `sdr_id` query params,
+    which are driven by explicit user selection in the UI, not by the
+    caller's own role.
+    """
     repo = ContactRepository(session)
     items, total = await repo.list_with_company_name(
         company_id=company_id,
@@ -146,9 +144,9 @@ async def list_contacts(
         sequence_status=sequence_status,
         call_disposition=call_disposition,
         email_state=email_state,
-        ae_id=effective_ae_id,
-        sdr_id=effective_sdr_id,
-        scope_any_match=not is_admin,
+        ae_id=ae_id,
+        sdr_id=sdr_id,
+        scope_any_match=False,
         prospect_only=prospect_only,
         skip=pagination.skip,
         limit=pagination.limit,

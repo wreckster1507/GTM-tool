@@ -44,14 +44,10 @@ async def list_meetings(
         count_stmt = count_stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
         joined_deal = True
 
-    # Non-admins only see meetings they own or that are synced to them
-    if current_user.role != "admin":
-        scope_clause = or_(
-            Meeting.owner_user_id == current_user.id,
-            Meeting.synced_by_user_id == current_user.id,
-        )
-        stmt = stmt.where(scope_clause)
-        count_stmt = count_stmt.where(scope_clause)
+    # Visibility: every authenticated user sees every meeting in the
+    # workspace. Ownership (`owner_user_id` / `synced_by_user_id`) is a
+    # label only. Filter by rep explicitly via the `assignee_id` query
+    # param when the UI asks for it.
 
     if company_id:
         stmt = stmt.where(Meeting.company_id == company_id)
