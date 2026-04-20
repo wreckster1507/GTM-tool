@@ -194,8 +194,28 @@ export interface MeddpiccAiDimension {
   reason?: string;
 }
 
+export interface MeddpiccFieldContact {
+  name?: string;
+  email?: string;
+  title?: string;
+  persona_type?: string;
+}
+
+export interface MeddpiccFieldDetail {
+  summary?: string;
+  evidence?: string;
+  change_reason?: "empty_field" | "material_refinement" | "contradiction";
+  updated_at?: string;
+  target_score?: number;
+  evidence_activity_id?: string;
+  contact?: MeddpiccFieldContact | null;
+  tags?: string[];
+  entities?: string[];
+}
+
 export interface DealQualification {
   meddpicc?: Record<string, number>;
+  meddpicc_details?: Record<string, MeddpiccFieldDetail>;
   meddpicc_ai?: {
     generated_at?: string;
     generator?: string;

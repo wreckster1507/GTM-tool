@@ -23,7 +23,14 @@ export function getSystemTaskGuidance(task: TaskItem): SystemTaskGuidance | null
   const newCloseDate = asString(payload.new_close_date);
   const medpiccField = asString(payload.field).replace(/_/g, " ");
   const medpiccScore = typeof payload.target_score === "number" ? payload.target_score : null;
+  const medpiccSummary = asString(payload.summary);
   const medpiccEvidence = asString(payload.evidence);
+  const medpiccChangeReason = asString(payload.change_reason).replace(/_/g, " ");
+  const medpiccContact = payload.contact && typeof payload.contact === "object" ? payload.contact as Record<string, unknown> : null;
+  const medpiccContactName = asString(medpiccContact?.name);
+  const medpiccTags = Array.isArray(payload.tags)
+    ? payload.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+    : [];
   const contactEmail = asString(payload.email);
   const contactChangeType = asString(payload.change_type);
   const contactTitle = asString(payload.title);
@@ -240,13 +247,17 @@ export function getSystemTaskGuidance(task: TaskItem): SystemTaskGuidance | null
     },
     t_medpicc_apply: {
       intro: medpiccField && medpiccScore
-        ? `If accepted, Beacon will set MEDDPICC "${medpiccField}" to level ${medpiccScore}.`
+        ? `If accepted, Beacon will update MEDDPICC "${medpiccField}" to level ${medpiccScore} and save the new field detail.`
         : "If accepted, Beacon will fill in the MEDDPICC field the latest conversation surfaced.",
       steps: [
+        medpiccSummary ? `Write this field summary: ${medpiccSummary}` : "Write the new MEDDPICC detail Beacon extracted from the conversation.",
         medpiccEvidence ? `Evidence: ${medpiccEvidence}` : "Review the evidence Beacon captured from the conversation.",
+        medpiccContactName ? `Link the named stakeholder context: ${medpiccContactName}.` : "Carry over any stakeholder context included in the update.",
+        medpiccTags.length > 0 ? `Save the supporting tags: ${medpiccTags.join(", ")}.` : "Store any supporting tags or competitor names Beacon captured.",
         medpiccField && medpiccScore
           ? `Set MEDDPICC ${medpiccField} to ${medpiccScore} (1=identified, 2=validated, 3=confirmed).`
           : "Advance the MEDDPICC field to the correct level.",
+        medpiccChangeReason ? `Mark this as a ${medpiccChangeReason} update so Beacon can dedupe future prompts.` : "Record why this MEDDPICC field changed.",
         "Recompute the MEDDPICC score on the deal.",
       ],
     },
@@ -285,4 +296,3 @@ export function getSystemTaskGuidance(task: TaskItem): SystemTaskGuidance | null
     ],
   };
 }
-

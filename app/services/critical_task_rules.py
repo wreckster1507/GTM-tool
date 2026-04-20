@@ -16,7 +16,8 @@ from typing import Callable, Iterable
 
 from app.models.activity import Activity
 from app.models.contact import Contact
-from app.models.deal import Deal
+from app.models.deal import DEAL_STAGES, Deal
+from app.services.meddpicc_updates import competition_has_direct_competitor, field_has_capture
 
 
 # ── Tuneable thresholds (days) ──────────────────────────────────────────────
@@ -31,6 +32,8 @@ THRESHOLDS: dict[str, int] = {
     "stalled_in_stage_days": 21,         # deal sitting in any active stage with no activity
     "msa_review_no_legal_contact_days": 4,
 }
+
+STAGE_INDEX = {stage: idx for idx, stage in enumerate(DEAL_STAGES)}
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,12 @@ def _age_days(moment: datetime | None, now: datetime) -> float | None:
     if moment is None:
         return None
     return (now - moment).total_seconds() / 86400.0
+
+
+def _stage_at_or_beyond(current_stage: str | None, target_stage: str) -> bool:
+    if not current_stage:
+        return False
+    return STAGE_INDEX.get(current_stage, -1) >= STAGE_INDEX.get(target_stage, 999)
 
 
 # ── Individual rule evaluators ──────────────────────────────────────────────
@@ -248,6 +257,42 @@ def _rule_msa_review_no_legal_contact(deal, activities, contacts, now) -> Critic
     )
 
 
+def _rule_missing_paper_process(deal, activities, contacts, now) -> CriticalFinding | None:
+    if deal.stage not in {"commercial_negotiation", "msa_review", "workshop"}:
+        return None
+    if field_has_capture(deal.qualification, "paper_process"):
+        return None
+    return CriticalFinding(
+        rule_id="missing_paper_process",
+        severity="high",
+        title="Commercial deal missing paper process",
+        description=(
+            "The deal is already in commercial/legal motion but Beacon has no paper-process detail captured yet. "
+            "Map procurement, legal, security, or onboarding steps before the deal gets stuck late."
+        ),
+        deadline_missed_at=deal.stage_entered_at or now,
+    )
+
+
+def _rule_direct_competitor_live(deal, activities, contacts, now) -> CriticalFinding | None:
+    if not _stage_at_or_beyond(deal.stage, "qualified_lead"):
+        return None
+    if deal.stage in {"closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"}:
+        return None
+    if not competition_has_direct_competitor(deal.qualification):
+        return None
+    return CriticalFinding(
+        rule_id="direct_competitor_live",
+        severity="high",
+        title="Direct competitor active in the deal",
+        description=(
+            "Beacon captured a named direct competitor on an active qualified deal. "
+            "Tighten positioning and confirm why Beacon wins before the buyer frame hardens."
+        ),
+        deadline_missed_at=deal.stage_entered_at or now,
+    )
+
+
 CRITICAL_RULES: list[Callable[..., CriticalFinding | None]] = [
     _rule_nda_unsigned,
     _rule_proposal_unanswered,
@@ -255,6 +300,8 @@ CRITICAL_RULES: list[Callable[..., CriticalFinding | None]] = [
     _rule_champion_silent_in_poc,
     _rule_stalled_in_stage,
     _rule_msa_review_no_legal_contact,
+    _rule_missing_paper_process,
+    _rule_direct_competitor_live,
 ]
 
 

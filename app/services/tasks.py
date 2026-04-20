@@ -21,6 +21,7 @@ from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
 from app.services.deal_health import compute_health
+from app.services.meddpicc_updates import get_meddpicc_details
 from app.services.system_task_actions import get_system_task_action_spec
 from app.services.task_codes import CODE_TO_ACTION, track_for_code
 
@@ -1392,7 +1393,7 @@ async def _refresh_sales_ai_tasks_for_deal(session: AsyncSession, deal: Deal) ->
 
     # ── Reconcile: dismiss stale sales_ai/critical tasks the latest run did
     # not re-propose. This lets the CRM self-clean when buyer signals change.
-    managed_prefixes = ("t_stage", "t_amount", "t_close", "t_medpicc:", "t_contact:", "t_critical:")
+    managed_prefixes = ("t_stage", "t_amount", "t_close", "t_medpicc:", "t_contact:", "t_contact_name:", "t_critical:")
     open_ai_tasks = (
         await session.execute(
             select(Task).where(
@@ -1886,9 +1887,48 @@ async def apply_task_action(
         deal = await repo.get_or_raise(deal_id)
         qualification = dict(deal.qualification) if isinstance(deal.qualification, dict) else {}
         meddpicc = dict(qualification.get("meddpicc")) if isinstance(qualification.get("meddpicc"), dict) else {}
+        meddpicc_details = get_meddpicc_details(qualification)
         previous_score = int(meddpicc.get(field, 0) or 0)
         meddpicc[field] = target_score
+        summary = str(payload.get("summary") or "").strip()[:240] or None
+        evidence = str(payload.get("evidence") or "").strip()[:200] or None
+        change_reason = str(payload.get("change_reason") or "").strip().lower() or None
+        raw_contact = payload.get("contact") if isinstance(payload.get("contact"), dict) else None
+        detail_contact = None
+        if raw_contact:
+            detail_contact = {
+                "name": str(raw_contact.get("name") or "").strip()[:120] or None,
+                "email": str(raw_contact.get("email") or "").strip().lower()[:254] or None,
+                "title": str(raw_contact.get("title") or "").strip()[:120] or None,
+                "persona_type": str(raw_contact.get("persona_type") or "").strip().lower() or None,
+            }
+            if not any(detail_contact.values()):
+                detail_contact = None
+        raw_tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+        tags = [
+            str(tag).strip()[:48]
+            for tag in raw_tags
+            if isinstance(tag, str) and str(tag).strip()
+        ][:8]
+        raw_entities = payload.get("entities") if isinstance(payload.get("entities"), list) else []
+        entities = [
+            str(entity).strip()[:80]
+            for entity in raw_entities
+            if isinstance(entity, str) and str(entity).strip()
+        ][:5]
+        meddpicc_details[field] = {
+            "summary": summary,
+            "evidence": evidence,
+            "change_reason": change_reason,
+            "updated_at": datetime.utcnow().isoformat(),
+            "target_score": target_score,
+            "evidence_activity_id": str(payload.get("evidence_activity_id") or "").strip() or None,
+            "contact": detail_contact,
+            "tags": tags,
+            "entities": entities,
+        }
         qualification["meddpicc"] = meddpicc
+        qualification["meddpicc_details"] = meddpicc_details
         qualification["meddpicc_score"] = compute_meddpicc_score(qualification)
         deal.qualification = qualification
         deal.updated_at = datetime.utcnow()
@@ -1900,8 +1940,8 @@ async def apply_task_action(
                 source="system_task",
                 medium="internal",
                 content=(
-                    f"MEDDPICC field '{field}' set from {previous_score} to {target_score} via T-MEDPICC (AI). "
-                    f"Evidence: {payload.get('evidence') or ''}"
+                    f"MEDDPICC field '{field}' updated from {previous_score} to {target_score} via T-MEDPICC (AI). "
+                    f"Summary: {summary or ''} Evidence: {evidence or ''}"
                 ),
                 created_by_id=actor_id,
             )
@@ -1911,27 +1951,45 @@ async def apply_task_action(
     if action == "t_contact_apply":
         deal_id = UUID(str(payload["deal_id"]))
         email = str(payload.get("email") or "").strip().lower()
-        if not email or "@" not in email:
-            raise ValueError("email missing or invalid")
+        if email and "@" not in email:
+            raise ValueError("email invalid")
         change_type = str(payload.get("change_type") or "").strip().lower()
+        name = str(payload.get("name") or "").strip()
+        if change_type == "add" and not email and not name:
+            raise ValueError("name or email required")
+        if change_type == "update" and (not email or "@" not in email):
+            raise ValueError("email missing or invalid")
         repo = DealRepository(session)
         deal = await repo.get_or_raise(deal_id)
 
-        existing_contact = (
-            await session.execute(select(Contact).where(Contact.email == email))
-        ).scalar_one_or_none()
+        existing_contact = None
+        if email:
+            existing_contact = (
+                await session.execute(select(Contact).where(Contact.email == email))
+            ).scalar_one_or_none()
+        elif name:
+            first_name, _, last_name = name.partition(" ")
+            existing_contact = (
+                await session.execute(
+                    select(Contact).where(
+                        Contact.company_id == deal.company_id,
+                        Contact.first_name == first_name,
+                        Contact.last_name == (last_name or "Contact"),
+                    )
+                )
+            ).scalar_one_or_none()
 
         if change_type == "add":
             if existing_contact:
                 contact = existing_contact
             else:
-                name_parts = str(payload.get("name") or "").strip().split(" ", 1)
+                name_parts = name.split(" ", 1)
                 first_name = name_parts[0] if name_parts and name_parts[0] else "Unknown"
                 last_name = name_parts[1] if len(name_parts) > 1 else "Contact"
                 contact = Contact(
                     first_name=first_name,
                     last_name=last_name,
-                    email=email,
+                    email=email or None,
                     title=payload.get("title"),
                     persona_type=payload.get("persona_type"),
                     company_id=deal.company_id,
@@ -1955,11 +2013,11 @@ async def apply_task_action(
                     contact_id=contact.id,
                     type="contact_linked",
                     source="system_task",
-                    content=f"Stakeholder {email} added to deal via T-CONTACT (AI)",
+                    content=f"Stakeholder {email or name or contact.id} added to deal via T-CONTACT (AI)",
                     created_by_id=actor_id,
                 )
             )
-            return {"message": f"Added {email} to the deal"}
+            return {"message": f"Added {email or name} to the deal"}
 
         if change_type == "update":
             if not existing_contact:

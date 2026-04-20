@@ -7,7 +7,7 @@ import {
 import { accountSourcingApi, companiesApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi } from "../../lib/api";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
-import type { Activity, Company, Contact, Deal, DealContact, DealQualification, User } from "../../types";
+import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
@@ -56,6 +56,10 @@ const MEDDPICC_DIMENSIONS = [
 
 const MEDDPICC_LEVEL_LABELS = ["Not Started", "Identified", "Validated", "Confirmed"] as const;
 const MEDDPICC_LEVEL_COLORS = ["#94a3b8", "#f59e0b", "#3b82f6", "#22c55e"] as const;
+
+function formatMeddpiccChangeReason(value?: string) {
+  return value ? value.replace(/_/g, " ") : "";
+}
 
 function engagementTone(timestamp?: string) {
   if (!timestamp) {
@@ -1434,6 +1438,7 @@ function MeddpiccPanel({
   onUpdate: (meddpicc: Record<string, number>) => Promise<void>;
 }) {
   const meddpicc = (qualification?.meddpicc ?? {}) as Record<string, number>;
+  const meddpiccDetails = qualification?.meddpicc_details ?? {};
   const aiDimensions = qualification?.meddpicc_ai?.dimensions ?? {};
   const aiGeneratedAt = qualification?.meddpicc_ai?.generated_at;
   const aiSignals = qualification?.meddpicc_ai?.signals_used;
@@ -1507,6 +1512,7 @@ function MeddpiccPanel({
       {MEDDPICC_DIMENSIONS.map((dim) => {
         const val = meddpicc[dim.key] ?? 0;
         const aiMeta = aiDimensions[dim.key];
+        const detail = meddpiccDetails[dim.key] as MeddpiccFieldDetail | undefined;
         return (
           <div key={dim.key} style={{
             padding: "14px 18px", borderRadius: 12,
@@ -1530,6 +1536,76 @@ function MeddpiccPanel({
             <div style={{ fontSize: 11, color: "#7a8ca1", marginBottom: 10 }}>
               {dim.desc}
             </div>
+            {(detail?.summary || detail?.contact?.name || detail?.tags?.length || detail?.entities?.length) && (
+              <div style={{
+                marginBottom: 12,
+                padding: "10px 12px",
+                borderRadius: 10,
+                background: "#fffaf5",
+                border: "1px solid #fde8d8",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: "#ffe8de",
+                    color: "#b45309",
+                  }}>
+                    Captured detail
+                  </span>
+                  {detail?.change_reason && (
+                    <span style={{ fontSize: 10, color: "#9a3412", fontWeight: 700 }}>
+                      {formatMeddpiccChangeReason(detail.change_reason)}
+                    </span>
+                  )}
+                  {detail?.updated_at && (
+                    <span style={{ fontSize: 10, color: "#7a8ca1" }}>
+                      Updated {formatDate(detail.updated_at)}
+                    </span>
+                  )}
+                </div>
+                {detail?.summary && (
+                  <div style={{ fontSize: 12, color: "#364152", lineHeight: 1.6 }}>
+                    {detail.summary}
+                  </div>
+                )}
+                {detail?.contact?.name && (
+                  <div style={{ fontSize: 11, color: "#55687d" }}>
+                    Stakeholder: {detail.contact.name}{detail.contact.title ? ` · ${detail.contact.title}` : ""}
+                  </div>
+                )}
+                {detail?.entities && detail.entities.length > 0 && (
+                  <div style={{ fontSize: 11, color: "#55687d" }}>
+                    Named: {detail.entities.join(", ")}
+                  </div>
+                )}
+                {detail?.tags && detail.tags.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {detail.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: "2px 7px",
+                          borderRadius: 999,
+                          background: "#fff",
+                          color: "#9a3412",
+                          border: "1px solid #fed7aa",
+                        }}
+                      >
+                        {tag.replace(/_/g, " ")}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {aiMeta?.reason && (
               <div style={{
                 display: "flex",
