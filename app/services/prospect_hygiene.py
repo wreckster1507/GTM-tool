@@ -103,21 +103,33 @@ BLOCKED_EMAIL_DOMAINS = (
     "substack.com",
 )
 
-# Tokens that, if they appear anywhere in the domain (host OR subdomain),
-# indicate this is infrastructure, not a person. Catches things like
-# "unsubscribe2.customer.io", "tracking.clients.example.com",
-# "bounces.mydomain.com", "mail.mailer.company.net".
-BLOCKED_DOMAIN_SUBSTRINGS = (
+# Hostname LABELS (not free-text substrings) that indicate infrastructure.
+# A label is a dot-separated segment. We flag the domain when any label
+# equals one of these — so "unsubscribe2.customer.io" and
+# "tracking.example.com" are caught, but legitimate brand names that happen
+# to contain these characters (e.g. "e2open.com" — which literally contains
+# the text "open.") are NOT caught because "open" is not its own label.
+# This is the anchored version of what used to be a bare substring match,
+# which produced false positives on "e2open.com", "opentext.com", etc.
+BLOCKED_DOMAIN_LABELS = (
     "unsubscribe",
-    "bounces.",
-    "bounce.",
-    ".bounces.",
-    "tracking.",
-    ".tracking.",
-    "click.",
-    ".click.",
-    "open.",
-    "tr.snd",
+    "unsubscribes",
+    "bounce",
+    "bounces",
+    "tracking",
+    "track",
+    "click",
+    "clicks",
+    "open-tracking",
+    "mktdns",
+)
+
+# Special-case: labels that start with one of these PREFIXES are flagged.
+# Catches "unsubscribe2", "unsubscribe3", "tracking1" style numbered
+# infrastructure subdomains.
+BLOCKED_DOMAIN_LABEL_PREFIXES = (
+    "unsubscribe",
+    "tracking",
 )
 
 # Maximum number of alphanumeric characters allowed in an email local-part
@@ -174,9 +186,18 @@ def is_blocked_email_domain(email: str | None) -> bool:
         if domain == blocked or domain.endswith("." + blocked):
             return True
 
-    for fragment in BLOCKED_DOMAIN_SUBSTRINGS:
-        if fragment in domain:
+    # Label-based check: any dot-separated segment matches a blocked label
+    # exactly, or starts with one of the prefix patterns.
+    labels = domain.split(".")
+    for label in labels:
+        if label in BLOCKED_DOMAIN_LABELS:
             return True
+        for prefix in BLOCKED_DOMAIN_LABEL_PREFIXES:
+            if label.startswith(prefix) and len(label) > len(prefix):
+                # "unsubscribe2" starts with "unsubscribe" and has extra
+                # chars — infrastructure. Plain "unsubscribe" itself is
+                # already in BLOCKED_DOMAIN_LABELS, so no duplication.
+                return True
 
     return False
 
