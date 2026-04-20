@@ -4,12 +4,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
 from app.services.background_jobs import shutdown_background_workers, start_background_workers
 from app.services.meeting_automation import run_due_pre_meeting_intel_once
+from app.services.zippy_docs.base import ZIPPY_OUTPUT_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,14 @@ register_exception_handlers(app)
 # All API endpoints live under /api/v1. A future v2 can be mounted alongside it
 # without changing the existing route modules.
 app.include_router(v1_router, prefix="/api/v1")
+
+# Serve Zippy-generated Word docs (MOM, NDAs, drafts) so the frontend can link
+# straight to them. The directory is ensured at import time by zippy_docs.base.
+app.mount(
+    "/zippy_outputs",
+    StaticFiles(directory=str(ZIPPY_OUTPUT_DIR), check_dir=False),
+    name="zippy_outputs",
+)
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

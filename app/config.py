@@ -121,5 +121,57 @@ class Settings(BaseSettings):
     CLICKUP_SPACE_ID: str = ""
     CLICKUP_DEALS_LIST_ID: str = ""
 
+    # Qdrant vector DB (Zippy knowledge base)
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str = ""
+    QDRANT_COLLECTION: str = "beacon_knowledge"
+
+    # OpenAI (for embeddings used by Zippy RAG)
+    # If AZURE_OPENAI_API_KEY is set we prefer Azure; OPENAI_API_KEY is used
+    # only as a fallback when no Azure config is provided.
+    OPENAI_API_KEY: str = ""
+    OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    OPENAI_EMBED_DIMS: int = 1536
+
+    # Azure OpenAI (preferred embeddings provider when configured)
+    AZURE_OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_ENDPOINT: str = ""  # e.g. https://myresource.openai.azure.com/
+    AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
+    AZURE_OPENAI_DEPLOYMENT: str = ""  # existing LLM deployment (gpt-4o-mini etc.)
+    AZURE_OPENAI_EMBED_DEPLOYMENT: str = "text-embedding-3-small"
+    AZURE_OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    AZURE_OPENAI_EMBED_DIMS: int = 1536
+
+    @property
+    def embeddings_provider(self) -> str:
+        """Return 'azure' if Azure OpenAI is configured, else 'openai'."""
+        if self.AZURE_OPENAI_API_KEY and self.AZURE_OPENAI_ENDPOINT:
+            return "azure"
+        return "openai"
+
+    @property
+    def embeddings_ready(self) -> bool:
+        """True if we have enough config to actually call an embeddings API."""
+        if self.embeddings_provider == "azure":
+            return bool(
+                self.AZURE_OPENAI_API_KEY
+                and self.AZURE_OPENAI_ENDPOINT
+                and self.AZURE_OPENAI_EMBED_DEPLOYMENT
+            )
+        return bool(self.OPENAI_API_KEY)
+
+    @property
+    def embeddings_dims(self) -> int:
+        if self.embeddings_provider == "azure":
+            return self.AZURE_OPENAI_EMBED_DIMS
+        return self.OPENAI_EMBED_DIMS
+
+    # Zippy agent tuning
+    ZIPPY_MODEL: str = "claude-sonnet-4-20250514"
+    ZIPPY_MAX_TOKENS: int = 4000
+    ZIPPY_TOP_K: int = 8
+    ZIPPY_CHUNK_SIZE: int = 1200
+    ZIPPY_CHUNK_OVERLAP: int = 200
+
 
 settings = Settings()

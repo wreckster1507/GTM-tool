@@ -1579,3 +1579,196 @@ export const personalEmailSyncApi = {
       `/api/v1/personal-email-sync/threads/${dealId}`
     ),
 };
+
+// ── Google Drive folder picker ──────────────────────────────────────────────
+
+export interface DriveFolder {
+  id: string;
+  name: string;
+  parents: string[];
+  modified_time?: string;
+  owned_by_me: boolean;
+  shared: boolean;
+  drive_id?: string;
+}
+
+export interface DriveFolderList {
+  folders: DriveFolder[];
+  parent_id?: string;
+}
+
+export interface SelectedDriveFolder {
+  folder_id?: string;
+  folder_name?: string;
+  is_admin_folder: boolean;
+  owner_email?: string;
+}
+
+export const driveApi = {
+  listFolders: (parentId?: string) => {
+    const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : "";
+    return request<DriveFolderList>(`/api/v1/drive/folders${qs}`);
+  },
+  searchFolders: (q: string) =>
+    request<DriveFolderList>(`/api/v1/drive/folders/search?q=${encodeURIComponent(q)}`),
+  selectFolder: (folderId: string, folderName?: string) =>
+    request<SelectedDriveFolder>(`/api/v1/drive/folder/select`, {
+      method: "POST",
+      body: JSON.stringify({ folder_id: folderId, folder_name: folderName }),
+    }),
+  selectAdminFolder: (folderId: string, folderName?: string) =>
+    request<SelectedDriveFolder>(`/api/v1/drive/folder/select-admin`, {
+      method: "POST",
+      body: JSON.stringify({ folder_id: folderId, folder_name: folderName }),
+    }),
+  getCurrentFolder: () =>
+    request<SelectedDriveFolder>(`/api/v1/drive/folder/current`),
+  getAdminFolder: () =>
+    request<SelectedDriveFolder>(`/api/v1/drive/folder/admin`),
+  clearFolder: () =>
+    request<SelectedDriveFolder>(`/api/v1/drive/folder/clear`, { method: "POST" }),
+};
+
+// ── Zippy (RAG Copilot) ──────────────────────────────────────────────────────
+
+export interface ZippyCitation {
+  source_id: string;
+  source_name: string;
+  source_type: string;
+  drive_url: string;
+  mime_type: string;
+  chunk_index: number;
+  score: number;
+  snippet: string;
+}
+
+export interface ZippyArtifact {
+  type: string;
+  filename: string;
+  url: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface ZippyMessage {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  citations?: ZippyCitation[] | null;
+  artifacts?: ZippyArtifact[] | null;
+  created_at: string;
+}
+
+export interface ZippyConversationSummary {
+  id: string;
+  title: string;
+  summary: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ZippyConversationDetail {
+  id: string;
+  title: string;
+  summary: string | null;
+  messages: ZippyMessage[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ZippySendResponse {
+  conversation_id: string;
+  message: ZippyMessage;
+}
+
+export const zippyApi = {
+  send: (payload: {
+    message: string;
+    conversation_id?: string | null;
+    source_ids?: string[] | null;
+  }) =>
+    request<ZippySendResponse>(`/api/v1/zippy/send`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  listConversations: (limit = 30) =>
+    request<ZippyConversationSummary[]>(
+      `/api/v1/zippy/conversations?limit=${limit}`,
+    ),
+  getConversation: (id: string) =>
+    request<ZippyConversationDetail>(`/api/v1/zippy/conversations/${id}`),
+  archive: (id: string, archived = true) =>
+    request<{ id: string; is_archived: boolean }>(
+      `/api/v1/zippy/conversations/${id}/archive`,
+      {
+        method: "POST",
+        body: JSON.stringify({ is_archived: archived }),
+      },
+    ),
+};
+
+// ── Knowledge / Drive index ──────────────────────────────────────────────────
+
+export interface IndexedFile {
+  id: string;
+  drive_file_id: string;
+  name: string;
+  mime_type: string;
+  web_view_link: string;
+  size_bytes: number | null;
+  qdrant_chunk_count: number;
+  last_indexed_at: string | null;
+  last_error: string | null;
+  is_admin: boolean;
+}
+
+export interface IndexReport {
+  folder_id: string;
+  folder_name: string;
+  scope: "admin" | "user";
+  files_scanned: number;
+  files_indexed: number;
+  files_skipped_unchanged: number;
+  files_skipped_unsupported: number;
+  files_failed: number;
+  chunks_written: number;
+  errors: string[];
+}
+
+export interface ReindexResponse {
+  ok: boolean;
+  report: IndexReport | Record<string, unknown>;
+}
+
+export interface IndexStatus {
+  folder_id: string | null;
+  folder_name: string | null;
+  is_admin_folder: boolean;
+  total_files: number;
+  successful: number;
+  failed: number;
+  skipped?: number;
+  total_chunks: number;
+  files: IndexedFile[];
+}
+
+export const knowledgeApi = {
+  status: (scope: "user" | "admin" = "user") =>
+    request<IndexStatus>(`/api/v1/knowledge/status?scope=${scope}`),
+  reindex: (force = false) =>
+    request<ReindexResponse>(`/api/v1/knowledge/reindex?force=${force}`, {
+      method: "POST",
+    }),
+  reindexAdmin: (force = false) =>
+    request<ReindexResponse>(`/api/v1/knowledge/reindex-admin?force=${force}`, {
+      method: "POST",
+    }),
+  reset: () =>
+    request<ReindexResponse>(`/api/v1/knowledge/reset`, { method: "POST" }),
+  resetAdmin: () =>
+    request<ReindexResponse>(`/api/v1/knowledge/reset-admin`, {
+      method: "POST",
+    }),
+};

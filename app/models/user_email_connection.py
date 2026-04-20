@@ -43,6 +43,14 @@ class UserEmailConnection(SQLModel, table=True):
     last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     is_active: bool = Field(default=True)
 
+    # Google Drive folder selection
+    # The folder this user has chosen as the "source" for Drive sync.
+    # When is_admin_folder=True, this row represents the admin's shared-drive
+    # folder and content from here is visible to the whole workspace.
+    selected_drive_folder_id: Optional[str] = Field(default=None, index=True)
+    selected_drive_folder_name: Optional[str] = Field(default=None)
+    is_admin_folder: bool = Field(default=False)
+
     connected_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -58,6 +66,9 @@ class UserEmailConnectionRead(SQLModel):
     backfill_days: int
     last_error: Optional[str] = None
     is_active: bool
+    selected_drive_folder_id: Optional[str] = None
+    selected_drive_folder_name: Optional[str] = None
+    is_admin_folder: bool = False
     connected_at: datetime
     updated_at: datetime
 
@@ -68,3 +79,6 @@ class UserEmailConnectionStatus(SQLModel):
     last_sync_epoch: Optional[int] = None
     backfill_completed: bool = False
     last_error: Optional[str] = None
+    selected_drive_folder_id: Optional[str] = None
+    selected_drive_folder_name: Optional[str] = None
+    is_admin_folder: bool = False

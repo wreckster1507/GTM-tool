@@ -23,10 +23,12 @@ from app.api.v1.endpoints import (
     crm_imports,
     custom_demo,
     deals,
+    drive,
     execution_tracker,
     enrichment,
     intelligence,
     global_search,
+    knowledge,
     meetings,
     outreach,
     prospecting,
@@ -38,6 +40,7 @@ from app.api.v1.endpoints import (
     tldv,
     webhooks,
     workspace,
+    zippy,
 )
 
 router = APIRouter()
@@ -71,4 +74,7 @@ router.include_router(settings.router)
 router.include_router(aircall.router)
 router.include_router(email_sync.router)
 router.include_router(personal_email_sync.router)
+router.include_router(drive.router)
 router.include_router(reminders.router)
+router.include_router(knowledge.router)
+router.include_router(zippy.router)

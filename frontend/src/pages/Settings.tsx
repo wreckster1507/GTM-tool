@@ -20,8 +20,10 @@ import {
   Clock,
   Wand2,
 } from "lucide-react";
-import { settingsApi, personalEmailSyncApi } from "../lib/api";
-import type { PersonalEmailStatus } from "../lib/api";
+import { settingsApi, personalEmailSyncApi, driveApi } from "../lib/api";
+import type { PersonalEmailStatus, SelectedDriveFolder, DriveFolder } from "../lib/api";
+import { DriveFolderPicker } from "../components/DriveFolderPicker";
+import { KnowledgeSourcePanel } from "../components/zippy/KnowledgeSourcePanel";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import type {
@@ -111,6 +113,13 @@ export default function SettingsPage() {
   const [monitorPersonalSync, setMonitorPersonalSync] = useState(false);
   const [personalSyncBaseline, setPersonalSyncBaseline] = useState<number | null>(null);
 
+  // Google Drive folder selection
+  const [userDriveFolder, setUserDriveFolder] = useState<SelectedDriveFolder | null>(null);
+  const [adminDriveFolder, setAdminDriveFolder] = useState<SelectedDriveFolder | null>(null);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [drivePickerMode, setDrivePickerMode] = useState<"user" | "admin" | null>(null);
+  const [driveMessage, setDriveMessage] = useState<string | null>(null);
+
   const statusTone = useMemo(() => {
     if (!gmail) return { bg: "#eef2ff", color: "#4b56c7", label: "Loading" };
     if (gmail.configured) return { bg: "#e8f8ee", color: "#217a49", label: "Connected" };
@@ -160,6 +169,63 @@ export default function SettingsPage() {
     const status = await personalEmailSyncApi.getStatus();
     setPersonalEmail(status);
     return status;
+  };
+
+  const loadDriveFolders = async () => {
+    setDriveLoading(true);
+    try {
+      const [userFolder, adminFolder] = await Promise.all([
+        driveApi.getCurrentFolder().catch(() => null),
+        driveApi.getAdminFolder().catch(() => null),
+      ]);
+      setUserDriveFolder(userFolder);
+      setAdminDriveFolder(adminFolder);
+    } finally {
+      setDriveLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // Only load Drive folder state once the user has a personal connection
+    // (because the scope lives on that connection).
+    if (personalEmail?.connected) {
+      void loadDriveFolders();
+    } else {
+      setUserDriveFolder(null);
+      setAdminDriveFolder(null);
+    }
+  }, [personalEmail?.connected]);
+
+  const handlePickUserFolder = async (folder: DriveFolder) => {
+    try {
+      const saved = await driveApi.selectFolder(folder.id, folder.name);
+      setUserDriveFolder(saved);
+      setDriveMessage(`Your personal Drive folder is now "${saved.folder_name}".`);
+      toast.success(saved.folder_name || folder.name, "Drive folder saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save Drive folder");
+    }
+  };
+
+  const handlePickAdminFolder = async (folder: DriveFolder) => {
+    try {
+      const saved = await driveApi.selectAdminFolder(folder.id, folder.name);
+      setAdminDriveFolder(saved);
+      setDriveMessage(`Workspace-wide Drive folder is now "${saved.folder_name}".`);
+      toast.success(saved.folder_name || folder.name, "Workspace folder saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save workspace Drive folder");
+    }
+  };
+
+  const handleClearUserFolder = async () => {
+    try {
+      await driveApi.clearFolder();
+      await loadDriveFolders();
+      setDriveMessage("Your personal Drive folder has been cleared.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear Drive folder");
+    }
   };
 
   useEffect(() => {
@@ -1098,6 +1164,18 @@ export default function SettingsPage() {
                 ))}
               </div>
             </section>
+
+            {/* ── Knowledge Source (merged: folder picker + Zippy index) ──── */}
+            <KnowledgeSourcePanel
+              isAdmin={isAdmin}
+              connected={!!personalEmail?.connected}
+              driveLoading={driveLoading}
+              userFolder={userDriveFolder}
+              adminFolder={adminDriveFolder}
+              driveMessage={driveMessage}
+              onOpenPicker={(scope) => setDrivePickerMode(scope)}
+              onClearUser={handleClearUserFolder}
+            />
           </>
         ) : activeTab === "outreach-ai" ? (
           <>
@@ -1871,6 +1949,18 @@ export default function SettingsPage() {
           </div>
         </div>
       </section>
+
+      <DriveFolderPicker
+        open={drivePickerMode !== null}
+        onClose={() => setDrivePickerMode(null)}
+        onPick={drivePickerMode === "admin" ? handlePickAdminFolder : handlePickUserFolder}
+        title={drivePickerMode === "admin" ? "Select a workspace Drive folder" : "Select your personal Drive folder"}
+        description={
+          drivePickerMode === "admin"
+            ? "This folder will be visible to every user in the workspace."
+            : "Only you will see files from this folder."
+        }
+      />
     </div>
   );
 }

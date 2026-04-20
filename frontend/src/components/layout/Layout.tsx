@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Search, ChevronDown, LogOut, Shield, User } from "lucide-react";
 import Sidebar from "./Sidebar";
 import GlobalSearchModal from "./GlobalSearchModal";
+import { ZippyLauncher } from "../zippy/ZippyLauncher";
 import { useAuth } from "../../lib/AuthContext";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
@@ -188,6 +189,7 @@ export default function Layout() {
           </div>
         </section>
       </main>
+      <ZippyLauncher />
     </div>
   );
 }
