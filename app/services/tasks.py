@@ -17,9 +17,12 @@ from app.models.task import Task
 from app.models.user import User
 from app.repositories.deal import DealRepository
 from app.services.account_sourcing import append_company_activity_log
+from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
+from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
 from app.services.deal_health import compute_health
 from app.services.system_task_actions import get_system_task_action_spec
+from app.services.task_codes import CODE_TO_ACTION, track_for_code
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,7 @@ async def _upsert_system_task(
     recommended_action: str | None,
     action_payload: dict | None = None,
     assigned_role: str | None = None,
+    task_track: str = "hygiene",
 ) -> Task:
     assigned_to_id, resolved_role = await _resolve_task_assignee(
         session,
@@ -118,6 +122,7 @@ async def _upsert_system_task(
         existing.action_payload = action_payload
         existing.assigned_role = resolved_role
         existing.assigned_to_id = assigned_to_id
+        existing.task_track = task_track
         existing.updated_at = datetime.utcnow()
         session.add(existing)
         return existing
@@ -135,6 +140,7 @@ async def _upsert_system_task(
         system_key=system_key,
         assigned_role=resolved_role,
         assigned_to_id=assigned_to_id,
+        task_track=task_track,
     )
     session.add(task)
     return task
@@ -1306,6 +1312,115 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
         await _resolve_system_task(session, entity_type="deal", entity_id=deal.id, system_key=system_task.system_key, status="dismissed")
 
 
+async def _refresh_sales_ai_tasks_for_deal(session: AsyncSession, deal: Deal) -> set[str]:
+    """Emit T-STAGE/T-AMOUNT/T-CLOSE/T-MEDPICC/T-CONTACT (LLM) and T-CRITICAL (rules).
+
+    Returns the set of system_keys produced so the deal-level reconciler can
+    avoid dismissing them as stale.
+    """
+    produced_keys: set[str] = set()
+
+    # ── T-CRITICAL (deterministic) ──────────────────────────────────────────
+    activities = (
+        await session.execute(
+            select(Activity)
+            .where(Activity.deal_id == deal.id)
+            .order_by(Activity.created_at.desc())
+            .limit(40)
+        )
+    ).scalars().all()
+    contacts = (
+        await session.execute(
+            select(Contact)
+            .join(DealContact, DealContact.contact_id == Contact.id)
+            .where(DealContact.deal_id == deal.id)
+        )
+    ).scalars().all()
+
+    findings: list[CriticalFinding] = evaluate_critical_rules(deal, activities, contacts)
+    for finding in findings:
+        system_key = f"t_critical:{finding.rule_id}"
+        produced_keys.add(system_key)
+        await _upsert_system_task(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key=system_key,
+            title=finding.title,
+            description=finding.description,
+            priority="high" if finding.severity == "high" else "medium",
+            source="critical_rules",
+            recommended_action=CODE_TO_ACTION["T-CRITICAL"],
+            action_payload={
+                "deal_id": str(deal.id),
+                "rule_id": finding.rule_id,
+                "severity": finding.severity,
+                "deadline_missed_at": finding.deadline_missed_at.isoformat(),
+                "evidence_activity_id": finding.evidence_activity_id,
+            },
+            assigned_role="ae",
+            task_track="critical",
+        )
+
+    # ── T-STAGE/T-AMOUNT/T-CLOSE/T-MEDPICC/T-CONTACT (LLM) ──────────────────
+    try:
+        proposals: list[TaskProposal] = await emit_ai_tasks(session, deal)
+    except Exception as exc:  # never let the emitter break the refresh pipeline
+        logger.warning("AI task emitter failed for deal %s: %s", deal.id, exc)
+        proposals = []
+
+    for proposal in proposals:
+        produced_keys.add(proposal.system_key)
+        action_payload = {"deal_id": str(deal.id), **proposal.payload}
+        if proposal.evidence_activity_id:
+            action_payload["evidence_activity_id"] = proposal.evidence_activity_id
+        action_payload["confidence"] = proposal.confidence
+        await _upsert_system_task(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key=proposal.system_key,
+            title=proposal.title,
+            description=proposal.description,
+            priority=proposal.priority,
+            source="ai_emitter",
+            recommended_action=CODE_TO_ACTION[proposal.code],
+            action_payload=action_payload,
+            assigned_role="ae",
+            task_track=track_for_code(proposal.code),
+        )
+
+    # ── Reconcile: dismiss stale sales_ai/critical tasks the latest run did
+    # not re-propose. This lets the CRM self-clean when buyer signals change.
+    managed_prefixes = ("t_stage", "t_amount", "t_close", "t_medpicc:", "t_contact:", "t_critical:")
+    open_ai_tasks = (
+        await session.execute(
+            select(Task).where(
+                Task.entity_type == "deal",
+                Task.entity_id == deal.id,
+                Task.task_type == "system",
+                Task.status == "open",
+                Task.task_track.in_(["sales_ai", "critical"]),
+            )
+        )
+    ).scalars().all()
+    for task in open_ai_tasks:
+        key = task.system_key or ""
+        if not key.startswith(managed_prefixes):
+            continue
+        if key in produced_keys:
+            continue
+        await _resolve_system_task(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key=key,
+            status="dismissed",
+        )
+
+    return produced_keys
+
+
 async def refresh_system_tasks_for_entity(session: AsyncSession, entity_type: str, entity_id: UUID) -> None:
     if entity_type == "company":
         await _refresh_company_tasks(session, entity_id)
@@ -1313,6 +1428,9 @@ async def refresh_system_tasks_for_entity(session: AsyncSession, entity_type: st
         await _refresh_contact_tasks(session, entity_id)
     elif entity_type == "deal":
         await _refresh_deal_tasks(session, entity_id)
+        deal = await session.get(Deal, entity_id)
+        if deal:
+            await _refresh_sales_ai_tasks_for_deal(session, deal)
 
 
 async def apply_task_action(
@@ -1660,5 +1778,229 @@ async def apply_task_action(
             )
         )
         return {"message": "Prospect closed as not interested"}
+
+    # ── AI task emitter actions (the 6 codes) ────────────────────────────────
+    if action == "t_stage_apply":
+        deal_id = UUID(str(payload["deal_id"]))
+        target_stage = str(payload.get("target_stage") or "").strip()
+        if target_stage not in DEAL_STAGES:
+            raise ValueError(f"Invalid target_stage: {target_stage}")
+        repo = DealRepository(session)
+        deal = await repo.get_or_raise(deal_id)
+        previous_stage = deal.stage
+        await repo.update(
+            deal,
+            {
+                "stage": target_stage,
+                "stage_entered_at": datetime.utcnow(),
+                "days_in_stage": 0,
+                "updated_at": datetime.utcnow(),
+            },
+        )
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="stage_change",
+                source="system_task",
+                content=f"Stage moved from {previous_stage} to {target_stage} via T-STAGE (AI)",
+                created_by_id=actor_id,
+            )
+        )
+        await record_deal_stage_milestone(
+            session,
+            deal=deal,
+            stage=target_stage,
+            reached_at=deal.stage_entered_at or deal.updated_at,
+            source="t_stage_apply",
+        )
+        return {"message": f"Deal moved to {target_stage}"}
+
+    if action == "t_amount_apply":
+        deal_id = UUID(str(payload["deal_id"]))
+        try:
+            new_value = float(payload.get("new_value"))
+        except (TypeError, ValueError):
+            raise ValueError("new_value missing or invalid")
+        from decimal import Decimal
+
+        repo = DealRepository(session)
+        deal = await repo.get_or_raise(deal_id)
+        previous = deal.value
+        deal.value = Decimal(str(new_value))
+        deal.updated_at = datetime.utcnow()
+        session.add(deal)
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content=f"Deal value updated from {previous} to {new_value} via T-AMOUNT (AI)",
+                created_by_id=actor_id,
+            )
+        )
+        return {"message": f"Deal value set to {new_value}"}
+
+    if action == "t_close_apply":
+        deal_id = UUID(str(payload["deal_id"]))
+        from datetime import date as date_cls
+
+        try:
+            new_close = date_cls.fromisoformat(str(payload.get("new_close_date")))
+        except (TypeError, ValueError):
+            raise ValueError("new_close_date missing or invalid")
+        repo = DealRepository(session)
+        deal = await repo.get_or_raise(deal_id)
+        previous = deal.close_date_est
+        deal.close_date_est = new_close
+        deal.updated_at = datetime.utcnow()
+        session.add(deal)
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content=f"Expected close date updated from {previous} to {new_close} via T-CLOSE (AI)",
+                created_by_id=actor_id,
+            )
+        )
+        return {"message": f"Close date set to {new_close.isoformat()}"}
+
+    if action == "t_medpicc_apply":
+        deal_id = UUID(str(payload["deal_id"]))
+        field = str(payload.get("field") or "").strip().lower()
+        try:
+            target_score = int(payload.get("target_score"))
+        except (TypeError, ValueError):
+            raise ValueError("target_score missing or invalid")
+        if target_score not in {1, 2, 3}:
+            raise ValueError("target_score must be 1, 2, or 3")
+
+        from app.models.deal import MEDDPICC_FIELDS, compute_meddpicc_score
+
+        if field not in MEDDPICC_FIELDS:
+            raise ValueError(f"Invalid MEDDPICC field: {field}")
+
+        repo = DealRepository(session)
+        deal = await repo.get_or_raise(deal_id)
+        qualification = dict(deal.qualification) if isinstance(deal.qualification, dict) else {}
+        meddpicc = dict(qualification.get("meddpicc")) if isinstance(qualification.get("meddpicc"), dict) else {}
+        previous_score = int(meddpicc.get(field, 0) or 0)
+        meddpicc[field] = target_score
+        qualification["meddpicc"] = meddpicc
+        qualification["meddpicc_score"] = compute_meddpicc_score(qualification)
+        deal.qualification = qualification
+        deal.updated_at = datetime.utcnow()
+        session.add(deal)
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content=(
+                    f"MEDDPICC field '{field}' set from {previous_score} to {target_score} via T-MEDPICC (AI). "
+                    f"Evidence: {payload.get('evidence') or ''}"
+                ),
+                created_by_id=actor_id,
+            )
+        )
+        return {"message": f"MEDDPICC {field} → {target_score}"}
+
+    if action == "t_contact_apply":
+        deal_id = UUID(str(payload["deal_id"]))
+        email = str(payload.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            raise ValueError("email missing or invalid")
+        change_type = str(payload.get("change_type") or "").strip().lower()
+        repo = DealRepository(session)
+        deal = await repo.get_or_raise(deal_id)
+
+        existing_contact = (
+            await session.execute(select(Contact).where(Contact.email == email))
+        ).scalar_one_or_none()
+
+        if change_type == "add":
+            if existing_contact:
+                contact = existing_contact
+            else:
+                name_parts = str(payload.get("name") or "").strip().split(" ", 1)
+                first_name = name_parts[0] if name_parts and name_parts[0] else "Unknown"
+                last_name = name_parts[1] if len(name_parts) > 1 else "Contact"
+                contact = Contact(
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=email,
+                    title=payload.get("title"),
+                    persona_type=payload.get("persona_type"),
+                    company_id=deal.company_id,
+                    assigned_to_id=deal.assigned_to_id,
+                )
+                session.add(contact)
+                await session.flush()
+
+            existing_link = (
+                await session.execute(
+                    select(DealContact).where(
+                        DealContact.deal_id == deal_id, DealContact.contact_id == contact.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if not existing_link:
+                await repo.add_contact(deal_id, contact.id, contact.persona_type or "stakeholder")
+            session.add(
+                Activity(
+                    deal_id=deal_id,
+                    contact_id=contact.id,
+                    type="contact_linked",
+                    source="system_task",
+                    content=f"Stakeholder {email} added to deal via T-CONTACT (AI)",
+                    created_by_id=actor_id,
+                )
+            )
+            return {"message": f"Added {email} to the deal"}
+
+        if change_type == "update":
+            if not existing_contact:
+                raise ValueError(f"No contact found with email {email}")
+            if payload.get("title"):
+                existing_contact.title = payload["title"]
+            if payload.get("persona_type"):
+                existing_contact.persona_type = payload["persona_type"]
+            existing_contact.updated_at = datetime.utcnow()
+            session.add(existing_contact)
+            session.add(
+                Activity(
+                    deal_id=deal_id,
+                    contact_id=existing_contact.id,
+                    type="note",
+                    source="system_task",
+                    medium="internal",
+                    content=f"Stakeholder {email} updated via T-CONTACT (AI)",
+                    created_by_id=actor_id,
+                )
+            )
+            return {"message": f"Updated {email}"}
+
+        raise ValueError(f"Invalid change_type: {change_type}")
+
+    if action == "t_critical_apply":
+        # T-CRITICAL is a human-action alert — accepting it just acknowledges
+        # that the rep has seen and is handling the overdue item. The rule
+        # engine will re-emit on the next refresh if the condition persists.
+        deal_id = UUID(str(payload["deal_id"]))
+        rule_id = str(payload.get("rule_id") or "unknown")
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="note",
+                source="system_task",
+                medium="internal",
+                content=f"T-CRITICAL acknowledged by {actor_name}: rule={rule_id}",
+                created_by_id=actor_id,
+            )
+        )
+        return {"message": "Critical action acknowledged"}
 
     return {"message": "No automatic action configured"}

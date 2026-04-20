@@ -961,6 +961,9 @@ export default function PreMeetingAssistance() {
   const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>([]);
   const [typeFilter, setTypeFilter] = useState<MultiSelectValue>([]);
   const [linkFilter, setLinkFilter] = useState<MultiSelectValue>([]);
+  // Text search across title, company name, attendee JSON. Debounced.
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [totalMeetings, setTotalMeetings] = useState(0);
   const [meetingPages, setMeetingPages] = useState(1);
@@ -992,6 +995,7 @@ export default function PreMeetingAssistance() {
           linkState: linkFilter,
           hasIntel: hasIntelFilter,
           order: statusFilter.length === 1 && statusFilter[0] === "completed" ? "desc" : "asc",
+          q: debouncedSearch || undefined,
         }),
         meetingsApi.listPaginated({ skip: 0, limit: 1 }),
         meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"] }),
@@ -1036,11 +1040,18 @@ export default function PreMeetingAssistance() {
 
   useEffect(() => {
     loadData();
-  }, [page, statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter]);
+  }, [page, statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter, debouncedSearch]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter]);
+  }, [statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter, debouncedSearch]);
+
+  // Debounce the search input so typing doesn't hit the API on every
+  // keystroke. 250ms feels fast enough to still be "live".
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const companyMap = useMemo(
     () => new Map(companies.map((c) => [c.id, c])),
@@ -1207,7 +1218,51 @@ export default function PreMeetingAssistance() {
           <Filter size={14} />
           Filters
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {/* Free-text search: matches meeting title, linked company name,
+              and anything inside the attendees JSON (names + emails). */}
+          <div style={{ position: "relative", minWidth: 280, flex: "0 0 280px" }}>
+            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: colors.faint }} />
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search title, company, attendee…"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                height: 34,
+                padding: "0 32px 0 30px",
+                borderRadius: 10,
+                border: `1px solid ${colors.border}`,
+                fontSize: 13,
+                color: colors.text,
+                background: "#fff",
+                outline: "none",
+              }}
+            />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => setSearchInput("")}
+                aria-label="Clear search"
+                style={{
+                  position: "absolute",
+                  right: 6,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  border: "none",
+                  background: "transparent",
+                  color: colors.faint,
+                  cursor: "pointer",
+                  padding: 2,
+                  display: "inline-flex",
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
           <MultiSelectDropdown
             label="Status"
             options={[

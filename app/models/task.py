@@ -12,6 +12,7 @@ TASK_TYPES = {"manual", "system"}
 TASK_STATUSES = {"open", "completed", "dismissed"}
 TASK_PRIORITIES = {"low", "medium", "high"}
 TASK_ASSIGNED_ROLES = {"admin", "ae", "sdr"}
+TASK_TRACKS = {"sales_ai", "critical", "hygiene", "manual"}
 
 
 class TaskBase(SQLModel):
@@ -34,6 +35,7 @@ class Task(TaskBase, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     action_payload: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     system_key: Optional[str] = Field(default=None, index=True)
+    task_track: Optional[str] = Field(default=None, index=True)
     created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     assigned_role: Optional[str] = Field(default=None, index=True)
     assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
@@ -94,6 +96,7 @@ class TaskRead(TaskBase):
     id: UUID
     action_payload: Optional[Any] = None
     system_key: Optional[str] = None
+    task_track: Optional[str] = None
     created_by_id: Optional[UUID] = None
     created_by_name: Optional[str] = None
     assigned_role: Optional[str] = None

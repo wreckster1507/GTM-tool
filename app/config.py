@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     CLAUDE_MODEL_STANDARD: str = "claude-sonnet-4-20250514"
     CLAUDE_MODEL_COMPLEX: str = "claude-opus-4-6"
 
+    # AI task emitter — the 5 LLM-gated codes (T-STAGE, T-AMOUNT, T-CLOSE,
+    # T-MEDPICC, T-CONTACT). T-CRITICAL always runs (deterministic rules).
+    ENABLE_AI_TASK_EMITTER: bool = True
+
     # Demo generation tuning
     DEMO_MODEL: str = "claude-sonnet-4-20250514"  # Sonnet 4 — best availability + quality for code gen
     DEMO_MAX_TOKENS: int = 30000             # Extended thinking unlocks 64K; 30K is plenty for 15-25K token demos

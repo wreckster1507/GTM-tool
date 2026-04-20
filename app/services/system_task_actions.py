@@ -37,6 +37,13 @@ _ACTION_SPECS = [
     SystemTaskActionSpec("book_call_from_interest", "prospect_follow_up"),
     SystemTaskActionSpec("mark_contact_unsubscribed", "prospect_hygiene"),
     SystemTaskActionSpec("close_not_interested_contact", "prospect_hygiene"),
+    # AI task emitter (T-STAGE, T-AMOUNT, T-CLOSE, T-MEDPICC, T-CONTACT, T-CRITICAL).
+    SystemTaskActionSpec("t_stage_apply", "sales_ai"),
+    SystemTaskActionSpec("t_amount_apply", "sales_ai"),
+    SystemTaskActionSpec("t_close_apply", "sales_ai"),
+    SystemTaskActionSpec("t_medpicc_apply", "sales_ai"),
+    SystemTaskActionSpec("t_contact_apply", "sales_ai"),
+    SystemTaskActionSpec("t_critical_apply", "critical"),
 ]
 
 SYSTEM_TASK_ACTION_SPECS = {spec.action: spec for spec in _ACTION_SPECS}

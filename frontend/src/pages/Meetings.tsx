@@ -527,9 +527,10 @@ export default function Meetings() {
           onChange={setLinkFilter}
           placeholder="All links"
         />
-        {/* Recently-synced shortcut — answers "what has the calendar sync
-            pulled in lately?". Translates to a synced_after cutoff on the
-            backend. */}
+        {/* Recently-synced shortcut — this is about when Beacon imported or
+            refreshed the meeting record, not about when the meeting itself is
+            scheduled to happen. Upcoming meetings synced earlier will be
+            excluded by this filter. */}
         <select
           value={recentSyncHours}
           onChange={(e) => setRecentSyncHours(e.target.value as "" | "1" | "24" | "168")}
@@ -546,10 +547,10 @@ export default function Meetings() {
             outline: "none",
           }}
         >
-          <option value="">All sync times</option>
-          <option value="1">Synced in last hour</option>
-          <option value="24">Synced in last 24h</option>
-          <option value="168">Synced in last 7d</option>
+          <option value="">All import times</option>
+          <option value="1">Added to Beacon in last hour</option>
+          <option value="24">Added to Beacon in last 24h</option>
+          <option value="168">Added to Beacon in last 7d</option>
         </select>
         {isAdmin && visibleUsers.length > 0 && (
           <MultiSelectDropdown
@@ -650,9 +651,11 @@ export default function Meetings() {
                         };
                         const tone = sourceTone[source] ?? sourceTone.manual;
                         const label = sourceLabel[source] ?? source;
-                        const adder = m.synced_by_user_id
-                          ? users.find((u) => u.id === m.synced_by_user_id)?.name
+                        const syncedByUser = m.synced_by_user_id
+                          ? users.find((u) => u.id === m.synced_by_user_id)
                           : undefined;
+                        const adder = syncedByUser?.name;
+                        const adderEmail = syncedByUser?.email;
                         const when = m.synced_at ? new Date(m.synced_at) : null;
                         const whenLabel = when
                           ? (() => {
@@ -671,7 +674,12 @@ export default function Meetings() {
                               {label}
                             </span>
                             {adder && (
-                              <span style={{ fontSize: 11.5, color: "#546679" }}>by {adder}</span>
+                              <span style={{ fontSize: 11.5, color: "#546679", lineHeight: 1.45 }}>
+                                by {adder}
+                                {adderEmail ? (
+                                  <span style={{ color: "#8aa0b6" }}> · {adderEmail}</span>
+                                ) : null}
+                              </span>
                             )}
                             {whenLabel && (
                               <span style={{ fontSize: 11, color: "#94a3b8" }}>{whenLabel}</span>

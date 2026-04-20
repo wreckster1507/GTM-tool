@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
@@ -131,6 +131,24 @@ class QuotaState(BaseModel):
     message: str
 
 
+class SalesHighlightDrilldown(BaseModel):
+    entity_type: Literal["deal"] = "deal"
+    stage_key: Optional[str] = None
+    rep_user_id: Optional[UUID] = None
+    stalled_only: bool = False
+    overdue_close_date: bool = False
+    missing_close_date: bool = False
+    close_month: Optional[str] = None
+
+
+class SalesHighlight(BaseModel):
+    key: str
+    message: str
+    title: Optional[str] = None
+    subtitle: Optional[str] = None
+    drilldown: Optional[SalesHighlightDrilldown] = None
+
+
 class MonthlyUniqueFunnelRow(BaseModel):
     month_key: str
     label: str
@@ -147,7 +165,7 @@ class SalesDashboardRead(BaseModel):
     from_date: Optional[str] = None
     to_date: Optional[str] = None
     summary: SalesSummary
-    highlights: list[str]
+    highlights: list[SalesHighlight]
     rep_activity: list[RepActivityRow]
     pipeline_by_stage: list[StageBucket]
     pipeline_by_owner: list[PipelineOwnerRow]
@@ -829,28 +847,71 @@ async def sales_dashboard(
         ),
     ]
 
-    highlights: list[str] = []
+    highlights: list[SalesHighlight] = []
     if rep_activity_rows:
         top_rep = rep_activity_rows[0]
         if top_rep.total > 0:
-            highlights.append(f"{top_rep.rep_name} leads activity with {top_rep.total} touches in the last {window_days} days.")
+            highlights.append(
+                SalesHighlight(
+                    key="top_rep_activity",
+                    message=f"{top_rep.rep_name} leads activity with {top_rep.total} touches in the last {window_days} days.",
+                    title=f"{top_rep.rep_name} owned deals",
+                    subtitle="Current pipeline owned by the rep highlighted in the readout.",
+                    drilldown=SalesHighlightDrilldown(rep_user_id=top_rep.user_id),
+                )
+            )
     if velocity_rows:
         slowest_stage = velocity_rows[0]
         highlights.append(
-            f"{slowest_stage.label} is the slowest stage, averaging {slowest_stage.average_days_in_stage:.1f} days in stage."
+            SalesHighlight(
+                key="slowest_stage",
+                message=f"{slowest_stage.label} is the slowest stage, averaging {slowest_stage.average_days_in_stage:.1f} days in stage.",
+                title=f"{slowest_stage.label} deal aging",
+                subtitle="Deals in the slowest stage, sorted by time spent in stage.",
+                drilldown=SalesHighlightDrilldown(stage_key=slowest_stage.key),
+            )
         )
     if overdue_close_count > 0:
-        highlights.append(f"{overdue_close_count} open deals have overdue close dates and need forecast cleanup.")
+        highlights.append(
+            SalesHighlight(
+                key="overdue_close_dates",
+                message=f"{overdue_close_count} open deals have overdue close dates and need forecast cleanup.",
+                title="Overdue close dates",
+                subtitle="Open deals whose expected close date is already in the past.",
+                drilldown=SalesHighlightDrilldown(overdue_close_date=True),
+            )
+        )
     if missing_close_date_count > 0:
-        highlights.append(f"{missing_close_date_count} active deals are missing an expected close date.")
+        highlights.append(
+            SalesHighlight(
+                key="missing_close_dates",
+                message=f"{missing_close_date_count} active deals are missing an expected close date.",
+                title="Missing close dates",
+                subtitle="Active deals that still do not have an expected close date.",
+                drilldown=SalesHighlightDrilldown(missing_close_date=True),
+            )
+        )
     if forecast_rows:
         strongest_month = max(forecast_rows, key=lambda row: row.weighted_amount)
         if strongest_month.weighted_amount > 0:
             highlights.append(
-                f"{strongest_month.label} carries the strongest weighted forecast at ${strongest_month.weighted_amount:,.0f}."
+                SalesHighlight(
+                    key="strongest_forecast_month",
+                    message=f"{strongest_month.label} carries the strongest weighted forecast at ${strongest_month.weighted_amount:,.0f}.",
+                    title=f"{strongest_month.label} forecast coverage",
+                    subtitle="Deals expected to close in the strongest weighted forecast month.",
+                    drilldown=SalesHighlightDrilldown(close_month=strongest_month.key),
+                )
             )
     if not highlights:
-        highlights.append("Sales analytics is live, but the workspace needs more activity data before trends stand out.")
+        highlights.append(
+            SalesHighlight(
+                key="no_signal_yet",
+                message="Sales analytics is live, but the workspace needs more activity data before trends stand out.",
+                title="Beacon Readout",
+                subtitle="No related records are available for this readout item yet.",
+            )
+        )
 
     average_deal_size = round(pipeline_amount / active_deals, 2) if active_deals else 0.0
 

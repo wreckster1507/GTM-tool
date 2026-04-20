@@ -17,6 +17,18 @@ export function getSystemTaskGuidance(task: TaskItem): SystemTaskGuidance | null
   const payload = task.action_payload ?? {};
   const meetingTitle = asString(payload.meeting_title);
   const followUpDraft = asString(payload.follow_up_email_draft);
+  const targetStage = asString(payload.target_stage).replace(/_/g, " ");
+  const newValue = typeof payload.new_value === "number" ? payload.new_value : null;
+  const currency = asString(payload.currency) || "USD";
+  const newCloseDate = asString(payload.new_close_date);
+  const medpiccField = asString(payload.field).replace(/_/g, " ");
+  const medpiccScore = typeof payload.target_score === "number" ? payload.target_score : null;
+  const medpiccEvidence = asString(payload.evidence);
+  const contactEmail = asString(payload.email);
+  const contactChangeType = asString(payload.change_type);
+  const contactTitle = asString(payload.title);
+  const criticalRule = asString(payload.rule_id).replace(/_/g, " ");
+  const criticalSeverity = asString(payload.severity) || "high";
 
   const byAction: Record<string, SystemTaskGuidance> = {
     move_deal_stage: {
@@ -193,6 +205,73 @@ export function getSystemTaskGuidance(task: TaskItem): SystemTaskGuidance | null
         "Update the prospect status to not interested.",
         "Remove it from the active follow-up queue.",
         "Leave a clear activity record explaining the change.",
+      ],
+    },
+    // ── AI task emitter — the 6 canonical codes ──────────────────────────
+    t_stage_apply: {
+      intro: targetStage
+        ? `If accepted, Beacon will move this deal to "${targetStage}" and stamp the stage change.`
+        : "If accepted, Beacon will move this deal to the recommended stage.",
+      steps: [
+        "Read the buyer evidence Beacon cited and confirm the stage really moved.",
+        targetStage ? `Set the deal stage to ${targetStage} and reset days-in-stage.` : "Update the deal stage.",
+        "Write a stage_change activity so the pipeline stays auditable.",
+      ],
+    },
+    t_amount_apply: {
+      intro: newValue
+        ? `If accepted, Beacon will set the deal value to ${currency} ${newValue.toLocaleString()}.`
+        : "If accepted, Beacon will update the deal value to match the latest buyer signal.",
+      steps: [
+        "Check the cited email/call — a number has been proposed, agreed, or discounted.",
+        newValue ? `Overwrite the current deal value with ${currency} ${newValue.toLocaleString()}.` : "Update the deal value.",
+        "Log the change on the deal timeline for forecast accuracy.",
+      ],
+    },
+    t_close_apply: {
+      intro: newCloseDate
+        ? `If accepted, Beacon will re-anchor the expected close date to ${newCloseDate}.`
+        : "If accepted, Beacon will update the expected close date to match the buyer's stated timeline.",
+      steps: [
+        "Confirm the prospect named or implied this new timeline.",
+        newCloseDate ? `Set expected close to ${newCloseDate}.` : "Update the expected close date.",
+        "Record the change so the forecast reflects the newest buyer guidance.",
+      ],
+    },
+    t_medpicc_apply: {
+      intro: medpiccField && medpiccScore
+        ? `If accepted, Beacon will set MEDDPICC "${medpiccField}" to level ${medpiccScore}.`
+        : "If accepted, Beacon will fill in the MEDDPICC field the latest conversation surfaced.",
+      steps: [
+        medpiccEvidence ? `Evidence: ${medpiccEvidence}` : "Review the evidence Beacon captured from the conversation.",
+        medpiccField && medpiccScore
+          ? `Set MEDDPICC ${medpiccField} to ${medpiccScore} (1=identified, 2=validated, 3=confirmed).`
+          : "Advance the MEDDPICC field to the correct level.",
+        "Recompute the MEDDPICC score on the deal.",
+      ],
+    },
+    t_contact_apply: {
+      intro: contactEmail
+        ? contactChangeType === "update"
+          ? `If accepted, Beacon will update ${contactEmail} on this deal.`
+          : `If accepted, Beacon will add ${contactEmail} as a stakeholder on this deal.`
+        : "If accepted, Beacon will keep the buying-committee map clean.",
+      steps: [
+        contactChangeType === "update"
+          ? "Patch the existing contact with the newly detected role/title."
+          : "Create or link the contact Beacon spotted on the thread.",
+        contactTitle ? `Role/title: ${contactTitle}.` : "Attach the stakeholder to this deal.",
+        "Leave a contact_linked activity so stakeholder history stays visible.",
+      ],
+    },
+    t_critical_apply: {
+      intro: criticalRule
+        ? `Critical (${criticalSeverity}): ${criticalRule}. Beacon cannot fix this — a human needs to act.`
+        : "Beacon flagged a critical, time-sensitive action. A human needs to act on this directly.",
+      steps: [
+        "Read the overdue condition Beacon detected and confirm it's still true.",
+        "Take the action outside Beacon (email, call, escalate, push paper).",
+        "Accept this task to acknowledge — it will re-emit on the next refresh if the condition persists.",
       ],
     },
   };

@@ -1461,6 +1461,10 @@ export default function Pipeline() {
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [priorityFilters, setPriorityFilters] = useState<string[]>([]);
   const [commitFilter, setCommitFilter] = useState<string[]>([]);
+  const [stalledOnly, setStalledOnly] = useState(false);
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [missingCloseDateOnly, setMissingCloseDateOnly] = useState(false);
+  const [closeMonthFilter, setCloseMonthFilter] = useState("");
   const [showForecast, setShowForecast] = useState(true);
   const [createDealStage, setCreateDealStage] = useState<string | null>(null);
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
@@ -1575,6 +1579,21 @@ export default function Pipeline() {
   }, []);
 
   useEffect(() => {
+    const requestedStages = searchParams.getAll("stage").filter(Boolean);
+    const requestedAssignees = searchParams.getAll("assignee").filter(Boolean);
+    const stalledParam = searchParams.get("stalled");
+    const overdueParam = searchParams.get("overdue");
+    const missingCloseDateParam = searchParams.get("missing_close_date");
+    const closeMonthParam = searchParams.get("close_month") ?? "";
+    setStageFilters(requestedStages);
+    setAssigneeFilters(requestedAssignees);
+    setStalledOnly(stalledParam === "1" || stalledParam === "true");
+    setOverdueOnly(overdueParam === "1" || overdueParam === "true");
+    setMissingCloseDateOnly(missingCloseDateParam === "1" || missingCloseDateParam === "true");
+    setCloseMonthFilter(closeMonthParam);
+  }, [searchParams]);
+
+  useEffect(() => {
     if (!selectedProspect) {
       setProspectActivities([]);
       setLoadingProspectActivities(false);
@@ -1590,6 +1609,8 @@ export default function Pipeline() {
 
   const filteredDealBoard = useMemo(() => {
     const next: Record<string, Deal[]> = {};
+    const today = new Date();
+    const closedStageIds = new Set(effectiveDealStages.filter((stage) => stage.group === "closed").map((stage) => stage.id));
     for (const stage of effectiveDealStages) {
       let items = dealBoard[stage.id] ?? [];
       if (search) {
@@ -1614,10 +1635,21 @@ export default function Pipeline() {
         return tag ? priorityFilters.includes(tag) : false;
       });
       if (commitFilter.length) items = items.filter((deal) => deal.commit_to_deal === true);
+      if (stalledOnly) items = items.filter((deal) => (deal.days_in_stage ?? 0) >= 30);
+      if (overdueOnly) {
+        items = items.filter((deal) => {
+          if (closedStageIds.has(deal.stage) || !deal.close_date_est) return false;
+          const closeDate = new Date(deal.close_date_est);
+          if (Number.isNaN(closeDate.getTime())) return false;
+          return closeDate < today;
+        });
+      }
+      if (missingCloseDateOnly) items = items.filter((deal) => !closedStageIds.has(deal.stage) && !deal.close_date_est);
+      if (closeMonthFilter) items = items.filter((deal) => (deal.close_date_est ?? "").slice(0, 7) === closeMonthFilter);
       next[stage.id] = items;
     }
     return next;
-  }, [assigneeFilters, commitFilter, companyMap, dealBoard, effectiveDealStages, geographyFilters, priorityFilters, search, stageFilters, tagFilters]);
+  }, [assigneeFilters, closeMonthFilter, commitFilter, companyMap, dealBoard, effectiveDealStages, geographyFilters, missingCloseDateOnly, overdueOnly, priorityFilters, search, stageFilters, stalledOnly, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -1740,7 +1772,7 @@ export default function Pipeline() {
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
-  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0;
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || Boolean(closeMonthFilter);
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
   const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
@@ -1775,6 +1807,73 @@ export default function Pipeline() {
     setTagFilters([]);
     setPriorityFilters([]);
     setCommitFilter([]);
+    setStalledOnly(false);
+    setOverdueOnly(false);
+    setMissingCloseDateOnly(false);
+    setCloseMonthFilter("");
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("stage");
+      next.delete("assignee");
+      next.delete("stalled");
+      next.delete("overdue");
+      next.delete("missing_close_date");
+      next.delete("close_month");
+      return next;
+    }, { replace: true });
+  };
+
+  const handleStageFilterChange = (values: string[]) => {
+    setStageFilters(values);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("stage");
+      values.forEach((value) => next.append("stage", value));
+      return next;
+    }, { replace: true });
+  };
+
+  const handleStalledOnlyChange = (checked: boolean) => {
+    setStalledOnly(checked);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (checked) {
+        next.set("stalled", "1");
+      } else {
+        next.delete("stalled");
+      }
+      return next;
+    }, { replace: true });
+  };
+
+  const handleAssigneeFilterChange = (values: string[]) => {
+    setAssigneeFilters(values);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("assignee");
+      values.forEach((value) => next.append("assignee", value));
+      return next;
+    }, { replace: true });
+  };
+
+  const handleOverdueOnlyChange = (checked: boolean) => {
+    setOverdueOnly(checked);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (checked) next.set("overdue", "1");
+      else next.delete("overdue");
+      return next;
+    }, { replace: true });
+  };
+
+  const handleMissingCloseDateOnlyChange = (checked: boolean) => {
+    setMissingCloseDateOnly(checked);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (checked) next.set("missing_close_date", "1");
+      else next.delete("missing_close_date");
+      return next;
+    }, { replace: true });
   };
 
   const handleDealUpdated = (updated: Deal) => {
@@ -2124,11 +2223,67 @@ export default function Pipeline() {
               <Search size={12} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
               <input type="text" placeholder={`Search ${tab === "deal" ? "deals" : "prospects"}...`} value={search} onChange={(event) => setSearch(event.target.value)} style={{ width: "100%", height: 32, borderRadius: 8, border: search ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2", background: search ? "#f0f6ff" : "#f8fafc", paddingLeft: 28, paddingRight: 10, fontSize: 12, outline: "none" }} />
             </div>
-            <MultiSelectFilter values={stageFilters} onChange={setStageFilters} label="Stage" allLabel="All Stages" options={stageOptions} />
-            <MultiSelectFilter values={assigneeFilters} onChange={setAssigneeFilters} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
+            <MultiSelectFilter values={stageFilters} onChange={handleStageFilterChange} label="Stage" allLabel="All Stages" options={stageOptions} />
+            <MultiSelectFilter values={assigneeFilters} onChange={handleAssigneeFilterChange} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
             <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
             {tab === "deal" && <MultiSelectFilter values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
             {tab === "deal" && <MultiSelectFilter values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
+            {tab === "deal" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Deal Aging</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: stalledOnly ? "1.5px solid #fcd34d" : "1px solid #e2eaf2", background: stalledOnly ? "#fffbeb" : "#f8fafc" }}>
+                  <input
+                    type="checkbox"
+                    checked={stalledOnly}
+                    onChange={(e) => handleStalledOnlyChange(e.target.checked)}
+                    style={{ accentColor: "#d97706", width: 14, height: 14 }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: stalledOnly ? "#b45309" : "#2d4258" }}>Stalled only (30d+ in stage)</span>
+                </label>
+              </div>
+            )}
+            {tab === "deal" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Close Date Hygiene</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: overdueOnly ? "1.5px solid #fecaca" : "1px solid #e2eaf2", background: overdueOnly ? "#fef2f2" : "#f8fafc" }}>
+                  <input
+                    type="checkbox"
+                    checked={overdueOnly}
+                    onChange={(e) => handleOverdueOnlyChange(e.target.checked)}
+                    style={{ accentColor: "#dc2626", width: 14, height: 14 }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: overdueOnly ? "#b91c1c" : "#2d4258" }}>Overdue close dates only</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: missingCloseDateOnly ? "1.5px solid #fde68a" : "1px solid #e2eaf2", background: missingCloseDateOnly ? "#fffbeb" : "#f8fafc" }}>
+                  <input
+                    type="checkbox"
+                    checked={missingCloseDateOnly}
+                    onChange={(e) => handleMissingCloseDateOnlyChange(e.target.checked)}
+                    style={{ accentColor: "#d97706", width: 14, height: 14 }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: missingCloseDateOnly ? "#b45309" : "#2d4258" }}>Missing close date only</span>
+                </label>
+                {closeMonthFilter && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, height: 38, padding: "0 10px", borderRadius: 12, border: "1.5px solid #c7d2fe", background: "#eef2ff" }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#4338ca" }}>Close month: {closeMonthFilter}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCloseMonthFilter("");
+                        setSearchParams((current) => {
+                          const next = new URLSearchParams(current);
+                          next.delete("close_month");
+                          return next;
+                        }, { replace: true });
+                      }}
+                      style={{ border: "none", background: "transparent", color: "#4338ca", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Commit to Deal</label>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Clock3, MessageSquare, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, MessageSquare, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react";
 
 import { authApi, tasksApi } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
@@ -319,11 +319,26 @@ export default function TaskCenterModal({
     () => tasks.filter((task) => task.status === "open" && task.task_type === "system"),
     [tasks],
   );
+  const openCriticalTasks = useMemo(
+    () => openSystemTasks.filter((task) => task.task_track === "critical"),
+    [openSystemTasks],
+  );
+  const openSalesAiTasks = useMemo(
+    () => openSystemTasks.filter((task) => task.task_track === "sales_ai"),
+    [openSystemTasks],
+  );
+  const openHygieneTasks = useMemo(
+    // Catch-all for anything that isn't critical or sales_ai — covers the
+    // explicit "hygiene" track plus any legacy rows that predate the migration.
+    () => openSystemTasks.filter((task) => task.task_track !== "critical" && task.task_track !== "sales_ai"),
+    [openSystemTasks],
+  );
   const openManualTasks = useMemo(
     () => tasks.filter((task) => task.status === "open" && task.task_type === "manual"),
     [tasks],
   );
   const historyTasks = useMemo(() => tasks.filter((task) => task.status !== "open"), [tasks]);
+  const [hygieneOpen, setHygieneOpen] = useState(false);
 
   const resetForm = () => {
     setTitle("");
@@ -428,8 +443,16 @@ export default function TaskCenterModal({
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {openCriticalTasks.length > 0 ? (
+              <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.redSoft, color: colors.red, border: "1px solid #ffd0d8", fontSize: 12, fontWeight: 800 }}>
+                {openCriticalTasks.length} critical
+              </span>
+            ) : null}
             <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.violetSoft, color: colors.violet, border: "1px solid #eadbff", fontSize: 12, fontWeight: 800 }}>
-              {openSystemTasks.length} recommendations
+              {openSalesAiTasks.length} sales AI
+            </span>
+            <span style={{ borderRadius: 999, padding: "5px 10px", background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 800 }}>
+              {openHygieneTasks.length} hygiene
             </span>
             <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.primarySoft, color: colors.primary, border: "1px solid #d5e5ff", fontSize: 12, fontWeight: 800 }}>
               {openManualTasks.length} manual
@@ -479,17 +502,41 @@ export default function TaskCenterModal({
           <div style={{ color: colors.faint, padding: "8px 4px" }}>Loading tasks…</div>
         ) : (
           <>
+            {openCriticalTasks.length > 0 ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.red, fontWeight: 800 }}>
+                  <AlertTriangle size={14} color={colors.red} />
+                  <span>Critical — Action Required</span>
+                </div>
+                {openCriticalTasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    commentDraft={commentDrafts[task.id] || ""}
+                    onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                    onAddComment={() => addComment(task.id)}
+                    onComplete={() => patchTask(task.id, { status: "completed" })}
+                    onDismiss={() => patchTask(task.id, { status: "dismissed" })}
+                    onAccept={() => acceptTask(task.id)}
+                    onManualTakeover={() => takeManualOwnership(task)}
+                    onDelete={() => deleteTask(task)}
+                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                  />
+                ))}
+              </div>
+            ) : null}
+
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800 }}>
                 <Sparkles size={14} color={colors.violet} />
-                <span>Beacon Recommendations</span>
+                <span>Sales AI — CRM Updates</span>
               </div>
-              {openSystemTasks.length === 0 ? (
+              {openSalesAiTasks.length === 0 ? (
                 <div style={{ border: `1px dashed ${colors.border}`, borderRadius: 16, background: "#fff", padding: "22px 18px", color: colors.faint }}>
-                  No active recommendations yet. When synced email, call, outreach, or record-state signals imply a next-best action, Beacon will surface it here.
+                  No active CRM-update recommendations. When buyer signals imply a stage, amount, close-date, MEDDPICC, or stakeholder change, Beacon will surface it here.
                 </div>
               ) : (
-                openSystemTasks.map((task) => (
+                openSalesAiTasks.map((task) => (
                   <TaskCard
                     key={task.id}
                     task={task}
@@ -506,6 +553,37 @@ export default function TaskCenterModal({
                 ))
               )}
             </div>
+
+            {openHygieneTasks.length > 0 ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setHygieneOpen((current) => !current)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", color: colors.sub, fontWeight: 800, cursor: "pointer", padding: 0, textAlign: "left" }}
+                >
+                  {hygieneOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <Wrench size={13} color={colors.faint} />
+                  <span>Hygiene ({openHygieneTasks.length})</span>
+                </button>
+                {hygieneOpen
+                  ? openHygieneTasks.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        commentDraft={commentDrafts[task.id] || ""}
+                        onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                        onAddComment={() => addComment(task.id)}
+                        onComplete={() => patchTask(task.id, { status: "completed" })}
+                        onDismiss={() => patchTask(task.id, { status: "dismissed" })}
+                        onAccept={() => acceptTask(task.id)}
+                        onManualTakeover={() => takeManualOwnership(task)}
+                        onDelete={() => deleteTask(task)}
+                        canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                      />
+                    ))
+                  : null}
+              </div>
+            ) : null}
 
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800 }}>
