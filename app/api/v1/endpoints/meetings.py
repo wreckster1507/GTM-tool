@@ -3,11 +3,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Text as sa_Text, func, or_, select
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
+from app.models.company import Company
 from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.models.user import User
@@ -31,10 +32,13 @@ async def list_meetings(
     link_state: list[str] = Query(default=[]),
     has_intel: Optional[bool] = Query(default=None),
     order: str = Query(default="desc"),
+    q: Optional[str] = Query(default=None, description="Free-text search across title, linked company name, and attendee name/email."),
+    synced_after: Optional[datetime] = Query(default=None, description="Only return meetings whose synced_at is on/after this ISO timestamp. Used by the 'Recently synced' shortcut."),
 ):
     stmt = select(Meeting)
     count_stmt = select(func.count()).select_from(Meeting)
     joined_deal = False
+    joined_company = False
 
     def ensure_deal_join() -> None:
         nonlocal stmt, count_stmt, joined_deal
@@ -43,6 +47,14 @@ async def list_meetings(
         stmt = stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
         count_stmt = count_stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
         joined_deal = True
+
+    def ensure_company_join() -> None:
+        nonlocal stmt, count_stmt, joined_company
+        if joined_company:
+            return
+        stmt = stmt.outerjoin(Company, Meeting.company_id == Company.id)
+        count_stmt = count_stmt.outerjoin(Company, Meeting.company_id == Company.id)
+        joined_company = True
 
     # Visibility: every authenticated user sees every meeting in the
     # workspace. Ownership (`owner_user_id` / `synced_by_user_id`) is a
@@ -83,6 +95,29 @@ async def list_meetings(
     elif has_intel is False:
         stmt = stmt.where(Meeting.research_data.is_(None))
         count_stmt = count_stmt.where(Meeting.research_data.is_(None))
+
+    if synced_after is not None:
+        # Strip timezone so the DB comparison works against a naive column.
+        naive_cutoff = synced_after.replace(tzinfo=None) if synced_after.tzinfo else synced_after
+        stmt = stmt.where(Meeting.synced_at.is_not(None), Meeting.synced_at >= naive_cutoff)
+        count_stmt = count_stmt.where(Meeting.synced_at.is_not(None), Meeting.synced_at >= naive_cutoff)
+
+    # Free-text search across title + linked company name + attendee JSON.
+    # Using ILIKE is enough for the small meetings table here (low-hundreds
+    # of rows); no full-text index needed. The JSONB cast-to-text search
+    # matches attendee names/emails stored inside `attendees` without having
+    # to normalize the blob — scrappy but fine.
+    q_trimmed = (q or "").strip()
+    if q_trimmed:
+        ensure_company_join()
+        pattern = f"%{q_trimmed}%"
+        q_clause = or_(
+            Meeting.title.ilike(pattern),
+            Company.name.ilike(pattern),
+            func.cast(Meeting.attendees, sa_Text).ilike(pattern),
+        )
+        stmt = stmt.where(q_clause)
+        count_stmt = count_stmt.where(q_clause)
 
     order_by = Meeting.scheduled_at.asc() if order == "asc" else Meeting.scheduled_at.desc()
     stmt = stmt.order_by(order_by).offset(pagination.skip).limit(pagination.limit)

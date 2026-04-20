@@ -305,6 +305,7 @@ export interface TaskItem {
   due_at?: string;
   action_payload?: Record<string, unknown>;
   system_key?: string;
+  task_track?: "sales_ai" | "critical" | "hygiene" | "manual" | null;
   created_by_id?: string;
   created_by_name?: string;
   assigned_role?: "admin" | "ae" | "sdr";
@@ -449,6 +450,8 @@ export interface Meeting {
   deal_id?: string;
   external_source?: string;
   external_source_id?: string;
+  synced_by_user_id?: string;
+  synced_at?: string;
   scheduled_at?: string;
   status: string;
   meeting_type: string;

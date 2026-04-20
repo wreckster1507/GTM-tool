@@ -17,6 +17,8 @@ import {
 import {
   analyticsApi,
   authApi,
+  dealsApi,
+  type SalesHighlight,
   type MonthlyUniqueFunnelRow,
   type SalesDashboard,
   type SalesForecastRow,
@@ -26,7 +28,7 @@ import {
   type SalesStageBucket,
   type SalesVelocityRow,
 } from "../lib/api";
-import type { User } from "../types";
+import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 
 const WINDOW_OPTIONS = [30, 90, 180] as const;
@@ -194,6 +196,126 @@ function MilestoneDealsModal({
   );
 }
 
+function HighlightDealsModal({
+  title,
+  subtitle,
+  deals,
+  loading,
+  onClose,
+}: {
+  title: string;
+  subtitle: string;
+  deals: Deal[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const total = deals.reduce((sum, deal) => sum + Number(deal.value ?? 0), 0);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 120,
+        background: "rgba(15, 26, 42, 0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(980px, 100%)", maxHeight: "86vh",
+          background: "#fff", borderRadius: 18, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 40px 80px rgba(10, 22, 40, 0.25)",
+        }}
+      >
+        <div style={{
+          padding: "18px 22px", borderBottom: "1px solid #ebeff5",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7556cb", textTransform: "uppercase" }}>Beacon Readout Drilldown</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>{title}</h3>
+            <p style={{ margin: "6px 0 0", fontSize: 13, color: "#62748a", lineHeight: 1.5 }}>{subtitle}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              width: 36, height: 36, borderRadius: 10, background: "#f4f6fa",
+              border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1,
+              cursor: "pointer", display: "grid", placeItems: "center",
+            }}
+          >×</button>
+        </div>
+        <div style={{ padding: "14px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fafbfd" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#203244" }}>
+            {loading ? "Loading deals..." : `${deals.length} deal${deals.length === 1 ? "" : "s"}`}
+          </span>
+          {!loading && total > 0 && (
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#4561d5" }}>
+              {formatCurrency(total)} total
+            </span>
+          )}
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: loading ? 24 : "8px 0" }}>
+          {loading ? (
+            <div style={{ display: "grid", placeItems: "center", gap: 10, minHeight: 220, color: "#6f8095" }}>
+              <LoaderCircle size={22} className="spin" />
+              <span>Loading details...</span>
+            </div>
+          ) : deals.length === 0 ? (
+            <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 220, color: "#6f8095", padding: 24, textAlign: "center" }}>
+              <strong style={{ color: "#203244" }}>No matching deals found.</strong>
+              <span>There are no current board deals that match this readout item.</span>
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                  <th style={thSty}>Deal</th>
+                  <th style={thSty}>Company</th>
+                  <th style={thSty}>Stage</th>
+                  <th style={thSty}>Owner</th>
+                  <th style={thSty}>Close Date</th>
+                  <th style={{ ...thSty, textAlign: "right" }}>Days In Stage</th>
+                  <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deals.map((deal) => (
+                  <tr key={deal.id} style={{ borderBottom: "1px solid #f0f3f8" }}>
+                    <td style={tdSty}><span style={{ fontWeight: 700, color: "#1d2b3a" }}>{deal.name || "—"}</span></td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.company_name || "—"}</td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.stage.replace(/_/g, " ")}</td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.assigned_rep_name || "Unassigned"}</td>
+                    <td style={{ ...tdSty, color: "#62748a", whiteSpace: "nowrap" }}>{fmtMilestoneDate(deal.close_date_est)}</td>
+                    <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: (deal.days_in_stage ?? 0) >= 30 ? "#b45309" : "#62748a" }}>{deal.days_in_stage ?? 0}d</td>
+                    <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: Number(deal.value ?? 0) > 0 ? "#4561d5" : "#aab4c2", whiteSpace: "nowrap" }}>
+                      {Number(deal.value ?? 0) > 0 ? formatCurrency(deal.value) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const thSty: React.CSSProperties = {
   textAlign: "left", fontSize: 10, fontWeight: 800, letterSpacing: "0.1em",
   color: "#8a9cb2", textTransform: "uppercase", padding: "10px 22px 8px",
@@ -316,7 +438,16 @@ function SectionCard({
   );
 }
 
-function HighlightsCard({ highlights }: { highlights: string[] }) {
+function HighlightsCard({
+  highlights,
+  onOpenHighlight,
+}: {
+  // Accept either the current backend shape (SalesHighlight objects) or
+  // the legacy shape (plain strings) — prod currently returns strings but
+  // the frontend type says objects. Handled defensively inside the map.
+  highlights: Array<SalesHighlight | string>;
+  onOpenHighlight: (item: SalesHighlight) => void;
+}) {
   return (
     <SectionCard
       title="Beacon Readout"
@@ -329,9 +460,19 @@ function HighlightsCard({ highlights }: { highlights: string[] }) {
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
-        {highlights.map((item, index) => (
-          <div
-            key={`${index}-${item}`}
+        {highlights.map((rawItem, index) => {
+          // Backend shape shifted from `list[str]` to `list[SalesHighlight]`
+          // during a refactor; prod runs the old shape while the frontend
+          // expects the new one. Coerce here so either shape renders safely
+          // instead of throwing React #31 ("object is not a valid child").
+          const item: SalesHighlight = typeof rawItem === "string"
+            ? { key: `hl-${index}`, message: rawItem }
+            : (rawItem as SalesHighlight);
+          return (
+          <button
+            key={`${index}-${item.key ?? "hl"}`}
+            type="button"
+            onClick={() => onOpenHighlight(item)}
             style={{
               borderRadius: 16,
               border: "1px solid #ece7fb",
@@ -340,14 +481,21 @@ function HighlightsCard({ highlights }: { highlights: string[] }) {
               display: "flex",
               gap: 12,
               alignItems: "flex-start",
+              width: "100%",
+              textAlign: "left",
+              cursor: "pointer",
             }}
           >
             <div style={{ width: 28, height: 28, borderRadius: 10, background: "#f3edff", color: "#7556cb", display: "grid", placeItems: "center", flexShrink: 0, marginTop: 2 }}>
               <ArrowUpRight size={14} />
             </div>
-            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#2d4055" }}>{item}</p>
-          </div>
-        ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#2d4055" }}>{item.message}</p>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#7556cb" }}>Open drilldown →</span>
+            </div>
+          </button>
+          );
+        })}
       </div>
     </SectionCard>
   );
@@ -455,7 +603,13 @@ function PipelineOwnerView({ rows }: { rows: SalesPipelineOwnerRow[] }) {
   );
 }
 
-function VelocityView({ rows }: { rows: SalesVelocityRow[] }) {
+function VelocityView({
+  rows,
+  onOpenStalledDeals,
+}: {
+  rows: SalesVelocityRow[];
+  onOpenStalledDeals: (row: SalesVelocityRow) => void;
+}) {
   const maxDays = useMemo(() => Math.max(...rows.map((row) => row.average_days_in_stage), 1), [rows]);
 
   if (rows.length === 0) {
@@ -465,16 +619,37 @@ function VelocityView({ rows }: { rows: SalesVelocityRow[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {rows.map((row) => (
-        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(170px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
+        <button
+          key={row.key}
+          type="button"
+          onClick={() => onOpenStalledDeals(row)}
+          disabled={row.stale_deals === 0}
+          title={row.stale_deals > 0 ? `Open ${row.stale_deals} stalled deal${row.stale_deals === 1 ? "" : "s"} in ${row.label}` : "No stalled deals in this stage"}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(170px, 1fr) minmax(180px, 3fr) auto",
+            gap: 12,
+            alignItems: "center",
+            width: "100%",
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            textAlign: "left",
+            cursor: row.stale_deals > 0 ? "pointer" : "default",
+            opacity: row.stale_deals > 0 ? 1 : 0.72,
+          }}
+        >
           <div style={{ minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#76879b" }}>{row.deal_count} deals • {row.stale_deals} stale</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: row.stale_deals > 0 ? "#4561d5" : "#76879b" }}>
+              {row.deal_count} deals • {row.stale_deals} stale{row.stale_deals > 0 ? " · click to open" : ""}
+            </p>
           </div>
           <div style={{ height: 12, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
             <div style={{ width: `${Math.max((row.average_days_in_stage / maxDays) * 100, row.average_days_in_stage > 0 ? 8 : 0)}%`, height: "100%", borderRadius: 999, background: row.color }} />
           </div>
           <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", textAlign: "right" }}>{row.average_days_in_stage.toFixed(1)}d</p>
-        </div>
+        </button>
       ))}
     </div>
   );
@@ -761,6 +936,9 @@ export default function SalesAnalytics() {
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [boardDeals, setBoardDeals] = useState<Deal[] | null>(null);
+  const [highlightModal, setHighlightModal] = useState<{ title: string; subtitle: string; deals: Deal[] } | null>(null);
+  const [highlightLoading, setHighlightLoading] = useState(false);
 
   // When a custom date range is set, window buttons are ignored
   const usingCustomRange = !!(fromDate && toDate);
@@ -918,6 +1096,82 @@ export default function SalesAnalytics() {
     [data?.pipeline_by_owner, hideDeveloper, user?.id],
   );
 
+  const loadBoardDeals = async () => {
+    if (boardDeals) return boardDeals;
+    const board = await dealsApi.board("deal");
+    const nextDeals = Object.values(board).flat();
+    setBoardDeals(nextDeals);
+    return nextDeals;
+  };
+
+  const openDealModal = (title: string, subtitle: string, deals: Deal[]) => {
+    setHighlightModal({ title, subtitle, deals });
+    setHighlightLoading(false);
+  };
+
+  const handleOpenStalledDeals = (row: SalesVelocityRow) => {
+    if (row.stale_deals === 0) return;
+    void (async () => {
+      setHighlightLoading(true);
+      setHighlightModal({ title: `${row.label} stalled deals`, subtitle: "Loading drilldown...", deals: [] });
+      try {
+        const deals = await loadBoardDeals();
+        const filtered = deals
+          .filter((deal) => deal.stage === row.key && (deal.days_in_stage ?? 0) >= 30)
+          .sort((a, b) => (b.days_in_stage ?? 0) - (a.days_in_stage ?? 0));
+        openDealModal(
+          `${row.label} stalled deals`,
+          "Deals in this stage that have been sitting for 30 days or more.",
+          filtered,
+        );
+      } catch {
+        openDealModal(`${row.label} stalled deals`, "Unable to load the drilldown right now.", []);
+      }
+    })();
+  };
+
+  const handleOpenHighlight = (item: SalesHighlight) => {
+    void (async () => {
+      setHighlightLoading(true);
+      setHighlightModal({ title: item.title || "Beacon Readout drilldown", subtitle: item.subtitle || "Loading drilldown...", deals: [] });
+      try {
+        const deals = await loadBoardDeals();
+        const closedStageIds = new Set(["closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"]);
+        const activeDeals = deals.filter((deal) => !closedStageIds.has(deal.stage));
+        const today = new Date();
+        const drilldown = item.drilldown;
+        if (!drilldown || drilldown.entity_type !== "deal") {
+          openDealModal(item.title || "Beacon Readout drilldown", item.subtitle || item.message, []);
+          return;
+        }
+
+        let filtered = deals.slice();
+        if (drilldown.stage_key) filtered = filtered.filter((deal) => deal.stage === drilldown.stage_key);
+        if (drilldown.rep_user_id) filtered = filtered.filter((deal) => deal.assigned_to_id === drilldown.rep_user_id);
+        if (drilldown.stalled_only) filtered = filtered.filter((deal) => (deal.days_in_stage ?? 0) >= 30);
+        if (drilldown.overdue_close_date) {
+          filtered = filtered.filter((deal) => {
+            if (closedStageIds.has(deal.stage) || !deal.close_date_est) return false;
+            const closeDate = new Date(deal.close_date_est);
+            return !Number.isNaN(closeDate.getTime()) && closeDate < today;
+          });
+        }
+        if (drilldown.missing_close_date) filtered = filtered.filter((deal) => !closedStageIds.has(deal.stage) && !deal.close_date_est);
+        if (drilldown.close_month) filtered = filtered.filter((deal) => (deal.close_date_est ?? "").slice(0, 7) === drilldown.close_month);
+
+        if (!drilldown.overdue_close_date && !drilldown.missing_close_date) {
+          filtered = filtered.sort((a, b) => (b.days_in_stage ?? 0) - (a.days_in_stage ?? 0));
+        } else {
+          filtered = filtered.sort((a, b) => new Date(a.close_date_est ?? "").getTime() - new Date(b.close_date_est ?? "").getTime());
+        }
+
+        openDealModal(item.title || "Beacon Readout drilldown", item.subtitle || item.message, filtered);
+      } catch {
+        openDealModal(item.title || "Beacon Readout drilldown", "Unable to load the drilldown right now.", []);
+      }
+    })();
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "6px 2px 18px" }}>
       <section
@@ -1063,7 +1317,7 @@ export default function SalesAnalytics() {
             ))}
           </div>
 
-          <HighlightsCard highlights={data.highlights} />
+          <HighlightsCard highlights={data.highlights} onOpenHighlight={handleOpenHighlight} />
 
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(320px, 1fr)", gap: 18 }}>
             <SectionCard
@@ -1128,7 +1382,7 @@ export default function SalesAnalytics() {
               title="Deal Velocity / Aging"
               subtitle="Average time each stage holds deals, plus how many are already stale enough to deserve a pipeline review."
             >
-              <VelocityView rows={data.velocity_by_stage} />
+              <VelocityView rows={data.velocity_by_stage} onOpenStalledDeals={handleOpenStalledDeals} />
             </SectionCard>
           </div>
 
@@ -1150,6 +1404,17 @@ export default function SalesAnalytics() {
             <MonthlyUniqueFunnelView rows={data.monthly_unique_funnel} />
           </SectionCard>
         </>
+      )}
+      {highlightModal && (
+        <HighlightDealsModal
+          title={highlightModal.title}
+          subtitle={highlightModal.subtitle}
+          deals={highlightModal.deals}
+          loading={highlightLoading}
+          onClose={() => {
+            if (!highlightLoading) setHighlightModal(null);
+          }}
+        />
       )}
     </div>
   );

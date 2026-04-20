@@ -292,6 +292,13 @@ export default function Meetings() {
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
   const [linkFilter, setLinkFilter] = useState<string[]>([]);
+  // Text search across title, linked company name, and attendee list.
+  // Debounced via a separate committed value so we don't hit the API on
+  // every keystroke.
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  // "Recently synced" shortcut — values are hours-ago windows. "" = off.
+  const [recentSyncHours, setRecentSyncHours] = useState<"" | "1" | "24" | "168">("");
   const [page, setPage] = useState(1);
   const [totalMeetings, setTotalMeetings] = useState(0);
   const [meetingPages, setMeetingPages] = useState(1);
@@ -307,6 +314,12 @@ export default function Meetings() {
   const loadData = async () => {
     setLoading(true);
     try {
+      // Translate "recently synced" shortcut into an ISO timestamp the
+      // backend can compare against Meeting.synced_at.
+      const syncedAfterIso = recentSyncHours
+        ? new Date(Date.now() - parseInt(recentSyncHours, 10) * 3600_000).toISOString()
+        : undefined;
+
       const pageResp = await meetingsApi.listPaginated({
         skip: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE,
@@ -314,6 +327,8 @@ export default function Meetings() {
         meetingType: typeFilter,
         assigneeId: assigneeFilter,
         linkState: linkFilter,
+        q: debouncedSearch || undefined,
+        syncedAfter: syncedAfterIso,
       });
 
       const ms = pageResp.items;
@@ -324,10 +339,16 @@ export default function Meetings() {
       const companyIds = Array.from(new Set(ms.map((meeting) => meeting.company_id).filter(Boolean))) as string[];
       const dealIds = Array.from(new Set(ms.map((meeting) => meeting.deal_id).filter(Boolean))) as string[];
 
+      // Load the team roster unconditionally so the "Added by" column can
+      // resolve synced_by_user_id → user name for every rep, not just admins.
+      // The non-admin `listUsers` endpoint returns the public subset.
+      const rosterPromise: Promise<User[]> = isAdmin
+        ? authApi.listAllUsers().catch(() => [])
+        : authApi.listUsers().catch(() => []);
       const [companyResults, dealResults, us] = await Promise.all([
         Promise.all(companyIds.map((id) => companiesApi.get(id).catch(() => null))),
         Promise.all(dealIds.map((id) => dealsApi.get(id).catch(() => null))),
-        isAdmin ? authApi.listAllUsers().catch(() => []) : Promise.resolve([]),
+        rosterPromise,
       ]);
 
       setCompanies(companyResults.filter((item): item is Company => Boolean(item)));
@@ -340,11 +361,17 @@ export default function Meetings() {
 
   useEffect(() => {
     loadData();
-  }, [page, statusFilter, typeFilter, assigneeFilter, linkFilter]);
+  }, [page, statusFilter, typeFilter, assigneeFilter, linkFilter, debouncedSearch, recentSyncHours]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, typeFilter, assigneeFilter, linkFilter]);
+  }, [statusFilter, typeFilter, assigneeFilter, linkFilter, debouncedSearch, recentSyncHours]);
+
+  // Debounce the search input 250ms so typing doesn't hammer the API.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   useEffect(() => {
     if (!showModal || !form.company_id) {
@@ -365,7 +392,7 @@ export default function Meetings() {
     [hideDeveloper, users],
   );
 
-  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0;
+  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0 || debouncedSearch.length > 0 || !!recentSyncHours;
 
   const handleCreate = async () => {
     if (!form.title.trim()) {
@@ -431,6 +458,50 @@ export default function Meetings() {
           <Filter size={13} />
           Filter
         </span>
+        {/* Free-text search: matches meeting title, linked company name,
+            and any text inside the attendees JSON (names + emails). */}
+        <div style={{ position: "relative", minWidth: 260, flex: "0 0 260px" }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#7a8ea4" }} />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search title, company, attendee…"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              height: 34,
+              padding: "0 32px 0 30px",
+              borderRadius: 10,
+              border: "1px solid #d5e3ef",
+              fontSize: 13,
+              color: "#0f2744",
+              background: "#fff",
+              outline: "none",
+            }}
+          />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => setSearchInput("")}
+              aria-label="Clear search"
+              style={{
+                position: "absolute",
+                right: 6,
+                top: "50%",
+                transform: "translateY(-50%)",
+                border: "none",
+                background: "transparent",
+                color: "#7a8ea4",
+                cursor: "pointer",
+                padding: 2,
+                display: "inline-flex",
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
         <MultiSelectDropdown
           options={[
             { value: "scheduled", label: "Scheduled" },
@@ -456,6 +527,30 @@ export default function Meetings() {
           onChange={setLinkFilter}
           placeholder="All links"
         />
+        {/* Recently-synced shortcut — answers "what has the calendar sync
+            pulled in lately?". Translates to a synced_after cutoff on the
+            backend. */}
+        <select
+          value={recentSyncHours}
+          onChange={(e) => setRecentSyncHours(e.target.value as "" | "1" | "24" | "168")}
+          style={{
+            height: 36,
+            padding: "0 28px 0 10px",
+            borderRadius: 8,
+            border: "1px solid #d5e3ef",
+            fontSize: 12.5,
+            fontWeight: 600,
+            color: recentSyncHours ? "#175089" : "#55657a",
+            background: recentSyncHours ? "#eef5ff" : "#fff",
+            cursor: "pointer",
+            outline: "none",
+          }}
+        >
+          <option value="">All sync times</option>
+          <option value="1">Synced in last hour</option>
+          <option value="24">Synced in last 24h</option>
+          <option value="168">Synced in last 7d</option>
+        </select>
         {isAdmin && visibleUsers.length > 0 && (
           <MultiSelectDropdown
             options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
@@ -467,7 +562,7 @@ export default function Meetings() {
         {hasFilters && (
           <button
             type="button"
-            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); }}
+            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); setRecentSyncHours(""); setSearchInput(""); }}
             style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
           >
             Reset
@@ -490,6 +585,7 @@ export default function Meetings() {
                   <th style={styles.th}>Type</th>
                   <th style={styles.th}>Scheduled</th>
                   <th style={styles.th}>Status</th>
+                  <th style={styles.th}>Added by</th>
                   <th style={styles.th}>Score</th>
                 </tr>
               </thead>
@@ -534,12 +630,62 @@ export default function Meetings() {
                     <td style={styles.td}>
                       <span style={styles.statusChip}>{m.status}</span>
                     </td>
+                    <td style={styles.td}>
+                      {(() => {
+                        // Map the meeting's sync metadata to a compact
+                        // "who added this" cell: source label, adder name
+                        // (resolved from users list), and a relative time.
+                        const source = (m.external_source || "manual").toLowerCase();
+                        const sourceLabel: Record<string, string> = {
+                          google_calendar: "Google Calendar",
+                          manual: "Manual entry",
+                          tldv: "tl;dv",
+                          fireflies: "Fireflies",
+                        };
+                        const sourceTone: Record<string, { bg: string; fg: string; border: string }> = {
+                          google_calendar: { bg: "#eef5ff", fg: "#1d4ed8", border: "#bfdbfe" },
+                          manual:          { bg: "#f1f5f9", fg: "#475569", border: "#cbd5e1" },
+                          tldv:            { bg: "#faf5ff", fg: "#7c3aed", border: "#e9d5ff" },
+                          fireflies:       { bg: "#ecfdf5", fg: "#047857", border: "#a7f3d0" },
+                        };
+                        const tone = sourceTone[source] ?? sourceTone.manual;
+                        const label = sourceLabel[source] ?? source;
+                        const adder = m.synced_by_user_id
+                          ? users.find((u) => u.id === m.synced_by_user_id)?.name
+                          : undefined;
+                        const when = m.synced_at ? new Date(m.synced_at) : null;
+                        const whenLabel = when
+                          ? (() => {
+                              const diffMs = Date.now() - when.getTime();
+                              const mins = Math.max(0, Math.round(diffMs / 60_000));
+                              if (mins < 60) return mins <= 1 ? "just now" : `${mins}m ago`;
+                              const hrs = Math.round(mins / 60);
+                              if (hrs < 24) return `${hrs}h ago`;
+                              const days = Math.round(hrs / 24);
+                              return `${days}d ago`;
+                            })()
+                          : null;
+                        return (
+                          <div style={{ display: "grid", gap: 3 }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", width: "fit-content", padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}` }}>
+                              {label}
+                            </span>
+                            {adder && (
+                              <span style={{ fontSize: 11.5, color: "#546679" }}>by {adder}</span>
+                            )}
+                            {whenLabel && (
+                              <span style={{ fontSize: 11, color: "#94a3b8" }}>{whenLabel}</span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td style={styles.td}>{m.meeting_score ?? "-"}</td>
                   </tr>
                 ))}
                 {meetings.length === 0 && (
                   <tr>
-                    <td colSpan={6} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "48px 12px" }}>
+                    <td colSpan={7} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "48px 12px" }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#25384d", marginBottom: 6 }}>
                         {totalMeetings === 0 ? "No meetings scheduled" : "No meetings match these filters"}
                       </div>

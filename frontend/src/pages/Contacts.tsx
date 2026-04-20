@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary, LifecycleStep, LifecycleStepState } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
@@ -201,6 +201,11 @@ export default function Contacts() {
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
+  // Company filter — optional narrowing to a single company's prospects.
+  // Backend's contacts list already accepts `company_id`; this just wires a
+  // dropdown to it. Value is a single company UUID (or "" for all).
+  const [companyFilter, setCompanyFilter] = useState<string>(() => searchParams.get("co") ?? "");
+  const [companyOptions, setCompanyOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
   const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
@@ -263,6 +268,7 @@ export default function Contacts() {
       skip: (page - 1) * pageSize,
       limit: pageSize,
       q: debouncedSearch || undefined,
+      companyId: companyFilter || undefined,
       persona: personaFilter.length ? personaFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
       callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
@@ -394,6 +400,23 @@ export default function Contacts() {
     authApi.listUsers().then(setTeamUsers).catch(() => setTeamUsers([]));
   }, []);
 
+  // Load a lightweight company list once so the Prospecting tab's company
+  // filter has options. We intentionally pull the first 500 — plenty for a
+  // dropdown; if it grows past that we'll swap to a typeahead, but for now
+  // a static select is simpler than a search endpoint + server-side filter.
+  useEffect(() => {
+    companiesApi
+      .list(0, 500)
+      .then((rows) => {
+        const opts = rows
+          .map((c) => ({ id: c.id, name: (c.name || c.domain || "").trim() }))
+          .filter((o) => o.id && o.name)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setCompanyOptions(opts);
+      })
+      .catch(() => setCompanyOptions([]));
+  }, []);
+
   useEffect(() => {
     setTab(location.pathname === "/angel-mapping" ? "angel-mapping" : "contacts");
   }, [location.pathname]);
@@ -407,10 +430,11 @@ export default function Contacts() {
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
+      companyFilter ? next.set("co", companyFilter) : next.delete("co");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [search, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, page]);
+  }, [search, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, companyFilter, page]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -421,12 +445,12 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter]);
+  }, [debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, companyFilter]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [tab, page, debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter]);
+  }, [tab, page, debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, companyFilter]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
   // one batch call. Gives each row a progress bar (●━●━◉━○━○) and "Day 7 ·
@@ -1065,6 +1089,7 @@ export default function Contacts() {
                 callDispositionFilter.length ||
                 aeFilter.length ||
                 sdrFilter.length ||
+                companyFilter ||
                 search
               );
               const teamUserOptions = teamUsers.map((u) => ({
@@ -1082,6 +1107,37 @@ export default function Contacts() {
                   top: 16,
                   zIndex: 5,
                 }}>
+                  {/* Company filter — narrow the prospecting list to one
+                      account. Populated from the full company list on page
+                      mount; for >500 accounts the list is still scannable
+                      because entries are alphabetical. */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>Company</span>
+                    <select
+                      value={companyFilter}
+                      onChange={(e) => setCompanyFilter(e.target.value)}
+                      style={{
+                        height: 34,
+                        padding: "0 28px 0 10px",
+                        borderRadius: 9,
+                        border: "1px solid #c8d9e8",
+                        fontSize: 13,
+                        color: "#0f2744",
+                        background: "#fff",
+                        outline: "none",
+                        minWidth: 200,
+                        maxWidth: 260,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <option value="">All companies</option>
+                      {companyOptions.map((co) => (
+                        <option key={co.id} value={co.id}>
+                          {co.name.length > 40 ? co.name.slice(0, 38) + "…" : co.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <MultiSelectFilter
                     label="Sequence"
                     values={sequenceFilter}
@@ -1140,6 +1196,7 @@ export default function Contacts() {
                         setSearch("");
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setAeFilter([]); setSdrFilter([]);
+                        setCompanyFilter("");
                       }}
                       style={{
                         display: "inline-flex", alignItems: "center", gap: 5,

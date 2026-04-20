@@ -657,6 +657,8 @@ export const meetingsApi = {
     linkState?: string[];
     hasIntel?: boolean;
     order?: "asc" | "desc";
+    q?: string;
+    syncedAfter?: string;
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -670,6 +672,9 @@ export const meetingsApi = {
     for (const value of params.linkState ?? []) search.append("link_state", value);
     if (params.hasIntel !== undefined) search.set("has_intel", params.hasIntel ? "true" : "false");
     if (params.order) search.set("order", params.order);
+    const qTrimmed = (params.q ?? "").trim();
+    if (qTrimmed) search.set("q", qTrimmed);
+    if (params.syncedAfter) search.set("synced_after", params.syncedAfter);
     return requestPaginated<Meeting>(`/api/v1/meetings/?${search.toString()}`);
   },
   get: (id: string) => request<Meeting>(`/api/v1/meetings/${id}`),
@@ -1261,13 +1266,33 @@ export type SalesQuotaState = {
   message: string;
 };
 
+export type SalesHighlightDrilldown = {
+  entity_type: "deal";
+  stage_key?: string | null;
+  rep_user_id?: string | null;
+  stalled_only?: boolean;
+  overdue_close_date?: boolean;
+  missing_close_date?: boolean;
+  close_month?: string | null;
+};
+
+export type SalesHighlight = {
+  key: string;
+  message: string;
+  title?: string | null;
+  subtitle?: string | null;
+  drilldown?: SalesHighlightDrilldown | null;
+};
+
 export type SalesDashboard = {
   generated_at: string;
   window_days: number;
   from_date?: string | null;
   to_date?: string | null;
   summary: SalesDashboardSummary;
-  highlights: string[];
+  // Accept both the new (object) and legacy (string) shapes so the UI
+  // doesn't crash if the backend rollout lags behind the frontend.
+  highlights: Array<SalesHighlight | string>;
   rep_activity: SalesRepActivityRow[];
   pipeline_by_stage: SalesStageBucket[];
   pipeline_by_owner: SalesPipelineOwnerRow[];
