@@ -565,8 +565,42 @@ export const activitiesApi = {
 };
 
 export const tasksApi = {
-  list: (entityType: "company" | "contact" | "deal", entityId: string, includeClosed = true) =>
-    request<TaskItem[]>(`/api/v1/tasks/?entity_type=${encodeURIComponent(entityType)}&entity_id=${encodeURIComponent(entityId)}&include_closed=${includeClosed ? "true" : "false"}`),
+  listDetailed: async (
+    entityType: "company" | "contact" | "deal",
+    entityId: string,
+    includeClosed = true,
+    refreshMode: "auto" | "force" | "none" = "auto",
+  ) => {
+    const res = await fetch(
+      `${BASE}/api/v1/tasks/?entity_type=${encodeURIComponent(entityType)}&entity_id=${encodeURIComponent(entityId)}&include_closed=${includeClosed ? "true" : "false"}&refresh_mode=${refreshMode}`,
+      {
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      },
+    );
+    if (res.status === 401) {
+      localStorage.removeItem("beacon_token");
+      window.location.href = "/login";
+      throw new Error("Session expired");
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail ?? "Request failed");
+    }
+    const payload = normalizeUtcDateStrings(await res.json()) as TaskItem[];
+    return {
+      items: payload,
+      refreshMode: res.headers.get("X-Beacon-Refresh-Mode") ?? "skipped",
+    };
+  },
+  list: async (
+    entityType: "company" | "contact" | "deal",
+    entityId: string,
+    includeClosed = true,
+    refreshMode: "auto" | "force" | "none" = "auto",
+  ) => {
+    const result = await tasksApi.listDetailed(entityType, entityId, includeClosed, refreshMode);
+    return result.items;
+  },
   workspace: (params?: {
     includeClosed?: boolean;
     taskType?: "manual" | "system";
@@ -1200,11 +1234,38 @@ export type SalesRepActivityRow = {
   user_id?: string | null;
   rep_name: string;
   calls: number;
+  connected_calls: number;
+  live_calls: number;
   emails: number;
+  linkedin_reachouts: number;
   meetings: number;
   total: number;
   active_deals: number;
   pipeline_amount: number;
+};
+
+export type SalesRepActivityWeekRow = {
+  week_key: string;
+  label: string;
+  week_start: string;
+  week_end: string;
+  emails: number;
+  calls: number;
+  connected_calls: number;
+  live_calls: number;
+  linkedin_reachouts: number;
+  meetings: number;
+  total: number;
+};
+
+export type SalesRepWeeklyActivityRow = {
+  key: string;
+  user_id?: string | null;
+  rep_name: string;
+  active_deals: number;
+  pipeline_amount: number;
+  totals: SalesRepActivityRow;
+  weeks: SalesRepActivityWeekRow[];
 };
 
 export type SalesStageBucket = {
@@ -1294,6 +1355,7 @@ export type SalesDashboard = {
   // doesn't crash if the backend rollout lags behind the frontend.
   highlights: Array<SalesHighlight | string>;
   rep_activity: SalesRepActivityRow[];
+  rep_weekly_activity: SalesRepWeeklyActivityRow[];
   pipeline_by_stage: SalesStageBucket[];
   pipeline_by_owner: SalesPipelineOwnerRow[];
   velocity_by_stage: SalesVelocityRow[];

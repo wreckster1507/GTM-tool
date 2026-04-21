@@ -84,6 +84,9 @@ class Deal(DealBase, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     next_step: Optional[str] = Field(default=None, sa_column=Column(Text))
     commit_to_deal: bool = Field(default=False)
+    ai_tasks_refreshed_at: Optional[datetime] = None
+    ai_tasks_input_hash: Optional[str] = None
+    ai_tasks_refresh_requested_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -135,6 +138,8 @@ class DealRead(DealBase):
     seller_engagement_reason: Optional[str] = None
     client_engagement_reason: Optional[str] = None
     commit_to_deal: bool = False
+    ai_tasks_refreshed_at: Optional[datetime] = None
+    ai_tasks_refresh_requested_at: Optional[datetime] = None
 
 
 class DealUpdate(SQLModel):

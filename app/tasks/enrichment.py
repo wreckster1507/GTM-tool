@@ -8,11 +8,23 @@ error on Windows when the global engine's connection pool outlives the loop.
 import asyncio
 import logging
 from datetime import datetime
+from typing import Awaitable, Callable, TypeVar
 from uuid import UUID
 
 from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
+
+
+def _run_async(coro: Awaitable[T]) -> T:
+    """Run an async coroutine on a fresh event loop for Celery sync tasks."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 @celery_app.task(
@@ -24,12 +36,7 @@ logger = logging.getLogger(__name__)
 def enrich_company_task(self, company_id: str) -> dict:
     """Enrich a company by ID. Retries up to 3x on failure."""
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_async_enrich(UUID(company_id)))
-        finally:
-            loop.close()
+        _run_async(_async_enrich(UUID(company_id)))
         return {"status": "completed", "company_id": company_id}
     except Exception as exc:
         logger.error(f"Enrichment task failed for {company_id}: {exc}")
@@ -71,6 +78,16 @@ def _make_session():
     return engine, SessionLocal
 
 
+async def _run_with_fresh_session(handler: Callable) -> None:
+    """Run an async handler with a short-lived engine/session pair."""
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await handler(session)
+    finally:
+        await engine.dispose()
+
+
 @celery_app.task(
     name="app.tasks.enrichment.enrich_batch_task",
     bind=True,
@@ -80,14 +97,9 @@ def _make_session():
 def enrich_batch_task(self, batch_id: str) -> dict:
     """Process all companies in a sourcing batch through tiered enrichment."""
     try:
-        # Celery tasks are synchronous entrypoints, so we create a fresh event loop
-        # to run the async enrichment pipeline inside the worker process.
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_async_enrich_batch(UUID(batch_id)))
-        finally:
-            loop.close()
+        # Celery tasks are synchronous entrypoints, so each task runs an isolated
+        # event loop to execute async pipeline code in the worker process.
+        _run_async(_async_enrich_batch(UUID(batch_id)))
         return {"status": "completed", "batch_id": batch_id}
     except Exception as exc:
         logger.error(f"Batch enrichment task failed for {batch_id}: {exc}")
@@ -194,12 +206,7 @@ async def _async_enrich_batch(batch_id: UUID) -> None:
 def re_enrich_company_task(self, company_id: str) -> dict:
     """Re-enrich a single company through the tiered pipeline."""
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_async_re_enrich_company(UUID(company_id)))
-        finally:
-            loop.close()
+        _run_async(_async_re_enrich_company(UUID(company_id)))
         return {"status": "completed", "company_id": company_id}
     except Exception as exc:
         logger.error(f"Re-enrich task failed for {company_id}: {exc}")
@@ -208,12 +215,7 @@ def re_enrich_company_task(self, company_id: str) -> dict:
 
 async def _async_re_enrich_company(company_id: UUID) -> None:
     from app.services.account_sourcing import re_enrich_company
-    engine, SessionLocal = _make_session()
-    try:
-        async with SessionLocal() as session:
-            await re_enrich_company(company_id, session)
-    finally:
-        await engine.dispose()
+    await _run_with_fresh_session(lambda session: re_enrich_company(company_id, session))
 
 
 @celery_app.task(
@@ -225,12 +227,7 @@ async def _async_re_enrich_company(company_id: UUID) -> None:
 def re_enrich_contact_task(self, contact_id: str) -> dict:
     """Re-enrich a single contact."""
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_async_re_enrich_contact(UUID(contact_id)))
-        finally:
-            loop.close()
+        _run_async(_async_re_enrich_contact(UUID(contact_id)))
         return {"status": "completed", "contact_id": contact_id}
     except Exception as exc:
         logger.error(f"Contact re-enrich failed for {contact_id}: {exc}")
@@ -239,12 +236,7 @@ def re_enrich_contact_task(self, contact_id: str) -> dict:
 
 async def _async_re_enrich_contact(contact_id: UUID) -> None:
     from app.services.account_sourcing import re_enrich_contact_service
-    engine, SessionLocal = _make_session()
-    try:
-        async with SessionLocal() as session:
-            await re_enrich_contact_service(contact_id, session)
-    finally:
-        await engine.dispose()
+    await _run_with_fresh_session(lambda session: re_enrich_contact_service(contact_id, session))
 
 
 # ── ICP Intelligence Pipeline Tasks ──────────────────────────────────────────
@@ -262,12 +254,7 @@ def icp_research_batch_task(self, batch_id: str) -> dict:
     Each company goes through: web research → Apollo → Claude ICP analysis.
     """
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_async_icp_research_batch(UUID(batch_id)))
-        finally:
-            loop.close()
+        _run_async(_async_icp_research_batch(UUID(batch_id)))
         return {"status": "completed", "batch_id": batch_id}
     except Exception as exc:
         logger.error(f"ICP research batch task failed for {batch_id}: {exc}")
@@ -377,12 +364,7 @@ async def _async_icp_research_batch(batch_id: UUID) -> None:
 def icp_research_free_task(self, company_id: str) -> dict:
     """Run ICP research using only free data sources (no Apollo/Hunter credits)."""
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_async_icp_research_free(UUID(company_id)))
-        finally:
-            loop.close()
+        _run_async(_async_icp_research_free(UUID(company_id)))
         return {"status": "completed", "company_id": company_id}
     except Exception as exc:
         logger.error(f"Free ICP research task failed for {company_id}: {exc}")
@@ -391,12 +373,7 @@ def icp_research_free_task(self, company_id: str) -> dict:
 
 async def _async_icp_research_free(company_id: UUID) -> None:
     from app.services.icp_intelligence import research_company_and_update_free
-    engine, SessionLocal = _make_session()
-    try:
-        async with SessionLocal() as session:
-            await research_company_and_update_free(company_id, session)
-    finally:
-        await engine.dispose()
+    await _run_with_fresh_session(lambda session: research_company_and_update_free(company_id, session))
 
 
 @celery_app.task(
@@ -408,12 +385,7 @@ async def _async_icp_research_free(company_id: UUID) -> None:
 def icp_research_single_task(self, company_id: str) -> dict:
     """Run ICP intelligence pipeline for a single company."""
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_async_icp_research_single(UUID(company_id)))
-        finally:
-            loop.close()
+        _run_async(_async_icp_research_single(UUID(company_id)))
         return {"status": "completed", "company_id": company_id}
     except Exception as exc:
         logger.error(f"ICP research task failed for {company_id}: {exc}")
@@ -422,9 +394,4 @@ def icp_research_single_task(self, company_id: str) -> dict:
 
 async def _async_icp_research_single(company_id: UUID) -> None:
     from app.services.icp_intelligence import research_company_and_update
-    engine, SessionLocal = _make_session()
-    try:
-        async with SessionLocal() as session:
-            await research_company_and_update(company_id, session)
-    finally:
-        await engine.dispose()
+    await _run_with_fresh_session(lambda session: research_company_and_update(company_id, session))

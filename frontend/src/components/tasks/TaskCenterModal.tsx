@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, MessageSquare, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react";
 
 import { authApi, tasksApi } from "../../lib/api";
@@ -43,7 +43,25 @@ const PRIORITY_LABEL_STYLE = {
   P2: { bg: colors.primarySoft, border: "#d5e5ff", color: colors.primary },
 } as const;
 
+const TASK_CACHE_TTL_MS = 5 * 60 * 1000;
+const taskListCache = new Map<string, { items: TaskItem[]; fetchedAt: number }>();
+
 type TaskPriorityLabel = "P0" | "P1" | "P2";
+type TaskRefreshMode = "auto" | "force" | "none";
+
+function taskCacheKey(entityType: "company" | "contact" | "deal", entityId: string) {
+  return `${entityType}:${entityId}`;
+}
+
+function getCachedTaskList(cacheKey: string) {
+  const entry = taskListCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > TASK_CACHE_TTL_MS) {
+    taskListCache.delete(cacheKey);
+    return null;
+  }
+  return entry;
+}
 
 function parseTaskMatrixMeta(payload?: Record<string, unknown>) {
   const priorityLabel: TaskPriorityLabel | null = payload?.priority_label === "P0" || payload?.priority_label === "P1" || payload?.priority_label === "P2"
@@ -314,8 +332,11 @@ export default function TaskCenterModal({
   mode?: "modal" | "inline";
 }) {
   const { user } = useAuth();
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const cacheKey = taskCacheKey(entityType, entityId);
+  const [tasks, setTasks] = useState<TaskItem[]>(() => getCachedTaskList(cacheKey)?.items ?? []);
+  const [loading, setLoading] = useState(() => !getCachedTaskList(cacheKey));
+  const [refreshing, setRefreshing] = useState(false);
+  const [queuedRefresh, setQueuedRefresh] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -325,24 +346,60 @@ export default function TaskCenterModal({
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [users, setUsers] = useState<UserType[]>([]);
   const isVisible = mode === "inline" ? true : Boolean(isOpen);
+  const refreshPollRef = useRef<number | null>(null);
 
-  const load = async () => {
+  const load = async (refreshMode: TaskRefreshMode = "auto", options?: { showSpinner?: boolean }) => {
     if (!isVisible) return;
-    setLoading(true);
+    const cached = getCachedTaskList(cacheKey);
+    const shouldBlock = options?.showSpinner ?? !cached;
+    if (shouldBlock) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
-      const rows = await tasksApi.list(entityType, entityId, true);
-      setTasks(rows);
+      const result = await tasksApi.listDetailed(entityType, entityId, true, refreshMode);
+      setTasks(result.items);
+      taskListCache.set(cacheKey, { items: result.items, fetchedAt: Date.now() });
+      const didQueueRefresh = result.refreshMode === "queued";
+      setQueuedRefresh(didQueueRefresh);
+      if (refreshPollRef.current) {
+        window.clearTimeout(refreshPollRef.current);
+        refreshPollRef.current = null;
+      }
+      if (didQueueRefresh) {
+        refreshPollRef.current = window.setTimeout(() => {
+          void load("none", { showSpinner: false });
+        }, 1800);
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
+    const cached = getCachedTaskList(cacheKey);
+    setTasks(cached?.items ?? []);
+    setLoading(!cached);
+    setQueuedRefresh(false);
+    setRefreshing(false);
+    if (refreshPollRef.current) {
+      window.clearTimeout(refreshPollRef.current);
+      refreshPollRef.current = null;
+    }
     if (isVisible) {
-      void load();
+      void load("auto", { showSpinner: !cached });
       authApi.listAllUsers().then(setUsers).catch(() => setUsers([]));
     }
-  }, [isVisible, entityType, entityId]);
+  }, [cacheKey, isVisible, entityType, entityId]);
+
+  useEffect(() => () => {
+    if (refreshPollRef.current) {
+      window.clearTimeout(refreshPollRef.current);
+      refreshPollRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     setAssignedToId(user?.id || "");
@@ -397,13 +454,13 @@ export default function TaskCenterModal({
     });
     resetForm();
     onChanged?.();
-    await load();
+    await load("none", { showSpinner: false });
   };
 
   const patchTask = async (taskId: string, data: Parameters<typeof tasksApi.update>[1]) => {
     await tasksApi.update(taskId, data);
     onChanged?.();
-    await load();
+    await load("none", { showSpinner: false });
   };
 
   const addComment = async (taskId: string) => {
@@ -412,13 +469,13 @@ export default function TaskCenterModal({
     await tasksApi.addComment(taskId, body);
     setCommentDrafts((current) => ({ ...current, [taskId]: "" }));
     onChanged?.();
-    await load();
+    await load("none", { showSpinner: false });
   };
 
   const acceptTask = async (taskId: string) => {
     await tasksApi.accept(taskId);
     onChanged?.();
-    await load();
+    await load("none", { showSpinner: false });
   };
 
   const takeManualOwnership = async (task: TaskItem) => {
@@ -433,14 +490,18 @@ export default function TaskCenterModal({
     });
     await tasksApi.update(task.id, { status: "dismissed" });
     onChanged?.();
-    await load();
+    await load("none", { showSpinner: false });
   };
 
   const deleteTask = async (task: TaskItem) => {
     if (!window.confirm(`Delete "${task.title}"?`)) return;
     await tasksApi.remove(task.id);
     onChanged?.();
-    await load();
+    await load("none", { showSpinner: false });
+  };
+
+  const refreshRecommendations = async () => {
+    await load("force", { showSpinner: false });
   };
 
   if (!isVisible) return null;
@@ -474,6 +535,11 @@ export default function TaskCenterModal({
             <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
               Manual tasks keep human follow-ups visible. System tasks are Beacon recommendations created from synced signals and record state.
             </div>
+            {entityType === "deal" && (refreshing || queuedRefresh) ? (
+              <div style={{ color: colors.faint, fontSize: 12.5, lineHeight: 1.5 }}>
+                {queuedRefresh ? "Beacon is updating recommendations in the background. Stored tasks stay visible while it refreshes." : "Checking whether this deal has fresher recommendation inputs..."}
+              </div>
+            ) : null}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {openCriticalTasks.length > 0 ? (
@@ -688,9 +754,16 @@ export default function TaskCenterModal({
               Track manual follow-ups and review system-recommended actions for {entityLabel}.
             </div>
           </div>
-          <button type="button" onClick={() => setShowCreate((current) => !current)} style={{ borderRadius: 10, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <Plus size={14} /> Manual task
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {entityType === "deal" ? (
+              <button type="button" onClick={() => void refreshRecommendations()} disabled={refreshing} style={{ borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: refreshing ? "default" : "pointer", display: "inline-flex", gap: 6, alignItems: "center", opacity: refreshing ? 0.7 : 1 }}>
+                <Sparkles size={14} /> {refreshing ? "Refreshing..." : "Refresh AI"}
+              </button>
+            ) : null}
+            <button type="button" onClick={() => setShowCreate((current) => !current)} style={{ borderRadius: 10, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <Plus size={14} /> Manual task
+            </button>
+          </div>
         </div>
         {content}
       </div>
@@ -713,6 +786,11 @@ export default function TaskCenterModal({
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {entityType === "deal" ? (
+                <button type="button" onClick={() => void refreshRecommendations()} disabled={refreshing} style={{ borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: refreshing ? "default" : "pointer", display: "inline-flex", gap: 6, alignItems: "center", opacity: refreshing ? 0.7 : 1 }}>
+                  <Sparkles size={14} /> {refreshing ? "Refreshing..." : "Refresh AI"}
+                </button>
+              ) : null}
               <button type="button" onClick={() => setShowCreate((current) => !current)} style={{ borderRadius: 10, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center" }}>
                 <Plus size={14} /> Manual task
               </button>

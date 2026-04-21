@@ -4,9 +4,13 @@ import {
   ArrowUpRight,
   BarChart3,
   CalendarRange,
+  CalendarDays,
   Check,
   ChevronDown,
+  Link2,
   LoaderCircle,
+  Mail,
+  Phone,
   Search,
   Sigma,
   TrendingUp,
@@ -25,6 +29,7 @@ import {
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
   type SalesRepActivityRow,
+  type SalesRepWeeklyActivityRow,
   type SalesStageBucket,
   type SalesVelocityRow,
 } from "../lib/api";
@@ -513,24 +518,31 @@ function RepActivityTable({ rows }: { rows: SalesRepActivityRow[] }) {
           key={row.key}
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(140px, 2fr) repeat(5, minmax(64px, 1fr))",
-            gap: 10,
-            alignItems: "center",
+            gap: 14,
             padding: "14px 16px",
             borderRadius: 15,
             border: "1px solid #e7edf5",
             background: index === 0 ? "linear-gradient(135deg, #fffdf8 0%, #fff6e9 100%)" : "#fff",
           }}
         >
-          <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#223446", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#708195" }}>{row.active_deals} active deals • {formatShortCurrency(row.pipeline_amount)} pipeline</p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#223446", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#708195" }}>{row.active_deals} active deals • {formatShortCurrency(row.pipeline_amount)} pipeline</p>
+            </div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 999, background: "#f5f7fb", color: "#5a697e", fontSize: 11, fontWeight: 800 }}>
+              Rank #{index + 1}
+            </div>
           </div>
-          <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" />
-          <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" />
-          <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" />
-          <StatPill label="Touches" value={row.total} tone="#faf1ff" text="#8052be" />
-          <StatPill label="Rank" value={index + 1} tone="#f5f7fb" text="#5a697e" />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 10 }}>
+            <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" />
+            <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" />
+            <StatPill label="Connected" value={row.connected_calls} tone="#edf9f8" text="#15736d" />
+            <StatPill label="Live Calls" value={row.live_calls} tone="#f4efff" text="#6b4bd6" />
+            <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" />
+            <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" />
+            <StatPill label="Touches" value={row.total} tone="#faf1ff" text="#8052be" />
+          </div>
         </div>
       ))}
     </div>
@@ -542,6 +554,133 @@ function StatPill({ label, value, tone, text }: { label: string; value: string |
     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", padding: "10px 8px", borderRadius: 12, background: tone }}>
       <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
       <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+    </div>
+  );
+}
+
+const REP_ACTIVITY_METRICS: Array<{
+  key: keyof SalesRepActivityRow;
+  label: string;
+  color: string;
+  tone: string;
+  icon: LucideIcon;
+}> = [
+  { key: "emails", label: "Emails", color: "#2f8d5d", tone: "#eefbf2", icon: Mail },
+  { key: "calls", label: "Calls", color: "#445fd0", tone: "#eef3ff", icon: Phone },
+  { key: "connected_calls", label: "Connected", color: "#15736d", tone: "#edf9f8", icon: Phone },
+  { key: "live_calls", label: "Live Calls", color: "#6b4bd6", tone: "#f4efff", icon: Phone },
+  { key: "linkedin_reachouts", label: "LinkedIn", color: "#0a66c2", tone: "#eef4ff", icon: Link2 },
+  { key: "meetings", label: "Meetings", color: "#c16a18", tone: "#fff4ea", icon: CalendarDays },
+];
+
+function ActivityTrendRow({
+  label,
+  color,
+  values,
+  weeks,
+  showWeekLabels = false,
+}: {
+  label: string;
+  color: string;
+  values: number[];
+  weeks: Array<{ label: string; week_start: string }>;
+  showWeekLabels?: boolean;
+}) {
+  const maxValue = Math.max(...values, 1);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `92px repeat(${weeks.length}, minmax(42px, 1fr))`,
+        gap: 8,
+        alignItems: "end",
+        minWidth: 92 + weeks.length * 50,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", height: 58 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#66788d", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+      </div>
+      {weeks.map((week, index) => {
+        const value = values[index] ?? 0;
+        const height = value > 0 ? Math.max((value / maxValue) * 44, 6) : 0;
+        return (
+          <div key={`${week.week_start}-${label}`} style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+            <div
+              title={`${label}: ${value} in week of ${week.label}`}
+              style={{
+                width: "100%",
+                height: 50,
+                borderRadius: 12,
+                background: "#f6f8fb",
+                border: "1px solid #e8eef5",
+                display: "flex",
+                alignItems: "flex-end",
+                justifyContent: "center",
+                padding: "0 6px 5px",
+              }}
+            >
+              <div style={{ width: "100%", height, borderRadius: 999, background: color, transition: "height 0.2s ease" }} />
+            </div>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#8a9aae", lineHeight: 1.1 }}>
+              {showWeekLabels ? week.label : value}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RepWeeklyActivityCards({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
+  if (rows.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No weekly rep activity yet for this time range.</p>;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      {rows.map((row) => (
+        <div key={row.key} style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <p style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#203244" }}>{row.rep_name}</p>
+              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#708195" }}>
+                {row.active_deals} active deals • {formatShortCurrency(row.pipeline_amount)} pipeline • {row.weeks.length} weekly buckets
+              </p>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(84px, 1fr))", gap: 8, minWidth: "min(100%, 520px)" }}>
+              {REP_ACTIVITY_METRICS.map((metric) => {
+                const Icon = metric.icon;
+                const value = row.totals[metric.key] as number;
+                return (
+                  <div key={`${row.key}-${String(metric.key)}`} style={{ borderRadius: 12, background: metric.tone, padding: "10px 10px 9px", display: "grid", gap: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: metric.color }}>
+                      <Icon size={12} />
+                      <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>{metric.label}</span>
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: metric.color, lineHeight: 1 }}>{value}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ overflowX: "auto", paddingBottom: 2 }}>
+            <div style={{ display: "grid", gap: 10, minWidth: 720 }}>
+              {REP_ACTIVITY_METRICS.map((metric, index) => (
+                <ActivityTrendRow
+                  key={`${row.key}-${String(metric.key)}-trend`}
+                  label={metric.label}
+                  color={metric.color}
+                  values={row.weeks.map((week) => week[metric.key as keyof typeof week] as number)}
+                  weeks={row.weeks}
+                  showWeekLabels={index === REP_ACTIVITY_METRICS.length - 1}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1091,6 +1230,11 @@ export default function SalesAnalytics() {
     [data?.rep_activity, hideDeveloper, user?.id],
   );
 
+  const visibleRepWeeklyActivity = useMemo(
+    () => (!hideDeveloper ? data?.rep_weekly_activity ?? [] : (data?.rep_weekly_activity ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
+    [data?.rep_weekly_activity, hideDeveloper, user?.id],
+  );
+
   const visiblePipelineByOwner = useMemo(
     () => (!hideDeveloper ? data?.pipeline_by_owner ?? [] : (data?.pipeline_by_owner ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
     [data?.pipeline_by_owner, hideDeveloper, user?.id],
@@ -1322,7 +1466,7 @@ export default function SalesAnalytics() {
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(320px, 1fr)", gap: 18 }}>
             <SectionCard
               title="Rep Activity Leaderboard"
-              subtitle="Calls, emails, and meetings aggregated by rep, alongside the amount of live pipeline they currently own."
+              subtitle="Weekly-touch totals by rep across email, calls, connected/live conversations, LinkedIn, and meetings, alongside the live pipeline they own."
             >
               <RepActivityTable rows={visibleRepActivity} />
             </SectionCard>
@@ -1341,6 +1485,13 @@ export default function SalesAnalytics() {
               </div>
             </SectionCard>
           </div>
+
+          <SectionCard
+            title="Weekly Rep Activity"
+            subtitle="Small-multiple weekly graphs for each rep. Connected includes connected plus callback outcomes; live calls are actual conversations. Use the rep and geography filters above to narrow the view."
+          >
+            <RepWeeklyActivityCards rows={visibleRepWeeklyActivity} />
+          </SectionCard>
 
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr)", gap: 18 }}>
             <SectionCard

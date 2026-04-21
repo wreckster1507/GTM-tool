@@ -75,11 +75,38 @@ class RepActivityRow(BaseModel):
     user_id: Optional[UUID] = None
     rep_name: str
     calls: int
+    connected_calls: int = 0
+    live_calls: int = 0
     emails: int
+    linkedin_reachouts: int = 0
     meetings: int
     total: int
     active_deals: int
     pipeline_amount: float
+
+
+class RepActivityWeekRow(BaseModel):
+    week_key: str
+    label: str
+    week_start: str
+    week_end: str
+    emails: int = 0
+    calls: int = 0
+    connected_calls: int = 0
+    live_calls: int = 0
+    linkedin_reachouts: int = 0
+    meetings: int = 0
+    total: int = 0
+
+
+class RepWeeklyActivityRow(BaseModel):
+    key: str
+    user_id: Optional[UUID] = None
+    rep_name: str
+    active_deals: int
+    pipeline_amount: float
+    totals: RepActivityRow
+    weeks: list[RepActivityWeekRow]
 
 
 class StageBucket(BaseModel):
@@ -167,6 +194,7 @@ class SalesDashboardRead(BaseModel):
     summary: SalesSummary
     highlights: list[SalesHighlight]
     rep_activity: list[RepActivityRow]
+    rep_weekly_activity: list[RepWeeklyActivityRow]
     pipeline_by_stage: list[StageBucket]
     pipeline_by_owner: list[PipelineOwnerRow]
     velocity_by_stage: list[VelocityRow]
@@ -186,6 +214,29 @@ def _month_label(month_key: str) -> str:
 
 def _month_key_for_datetime(value: datetime) -> str:
     return value.strftime("%Y-%m")
+
+
+def _start_of_week(value: datetime) -> date:
+    return (value.date() - timedelta(days=value.weekday()))
+
+
+def _week_key(week_start: date) -> str:
+    return week_start.isoformat()
+
+
+def _week_label(week_start: date) -> str:
+    return f"{week_start.strftime('%b')} {week_start.day}"
+
+
+def _rolling_week_starts(start: datetime, end: datetime) -> list[date]:
+    first_week = _start_of_week(start)
+    last_week = _start_of_week(end)
+    weeks: list[date] = []
+    cursor = first_week
+    while cursor <= last_week:
+        weeks.append(cursor)
+        cursor += timedelta(days=7)
+    return weeks
 
 
 def _stage_probability(stage_id: str) -> float:
@@ -430,6 +481,9 @@ async def sales_dashboard(
     if filter_geographies:
         contact_rows = [row for row in contact_rows if _normalize_geography_key(row.company_region) in filter_geographies]
     allowed_contact_ids = {row.id for row in contact_rows}
+    contact_owner = {row.id: row.assigned_to_id for row in contact_rows}
+    deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
+    week_starts = _rolling_week_starts(window_start, window_end)
 
     activity_rows = (
         await session.execute(
@@ -443,6 +497,8 @@ async def sales_dashboard(
                 Activity.created_at,
                 Activity.created_by_id,
                 Activity.aircall_user_name,
+                Activity.call_outcome,
+                Activity.call_duration,
             ).where(Activity.created_at >= window_start, Activity.created_at <= window_end)
         )
     ).all()
@@ -469,8 +525,8 @@ async def sales_dashboard(
                 Meeting.external_source,
             ).where(
                 or_(
-                    Meeting.scheduled_at >= window_start,
-                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start),
+                    (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
+                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
                 )
             )
         )
@@ -487,14 +543,12 @@ async def sales_dashboard(
     user_rows = (await session.execute(select(User.id, User.name))).all()
     users = {row.id: row.name for row in user_rows}
 
-    contact_owner = {row.id: row.assigned_to_id for row in contact_rows}
-    deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
-
     pipeline_by_stage: dict[str, dict[str, float | int | str]] = {}
     pipeline_by_owner: dict[str, dict] = {}
     velocity_by_stage: dict[str, dict[str, object]] = {}
     forecast_by_month: dict[str, dict[str, float | int | str]] = {}
     rep_activity: dict[str, dict[str, object]] = {}
+    weekly_rep_activity: dict[str, dict[str, object]] = {}
 
     pipeline_amount = 0.0
     weighted_pipeline_amount = 0.0
@@ -608,11 +662,37 @@ async def sales_dashboard(
             "user_id": owner_bucket["user_id"],
             "rep_name": owner_bucket["rep_name"],
             "calls": 0,
+            "connected_calls": 0,
+            "live_calls": 0,
             "emails": 0,
+            "linkedin_reachouts": 0,
             "meetings": 0,
             "total": 0,
             "active_deals": owner_bucket["deal_count"],
             "pipeline_amount": round(float(owner_bucket["amount"]), 2),
+        }
+        weekly_rep_activity[rep_key] = {
+            "key": rep_key,
+            "user_id": owner_bucket["user_id"],
+            "rep_name": owner_bucket["rep_name"],
+            "active_deals": owner_bucket["deal_count"],
+            "pipeline_amount": round(float(owner_bucket["amount"]), 2),
+            "weeks": {
+                _week_key(week_start): {
+                    "week_key": _week_key(week_start),
+                    "label": _week_label(week_start),
+                    "week_start": week_start.isoformat(),
+                    "week_end": (week_start + timedelta(days=6)).isoformat(),
+                    "emails": 0,
+                    "calls": 0,
+                    "connected_calls": 0,
+                    "live_calls": 0,
+                    "linkedin_reachouts": 0,
+                    "meetings": 0,
+                    "total": 0,
+                }
+                for week_start in week_starts
+            },
         }
 
     for row in activity_rows:
@@ -631,22 +711,80 @@ async def sales_dashboard(
                 "user_id": rep_user_id,
                 "rep_name": rep_name,
                 "calls": 0,
+                "connected_calls": 0,
+                "live_calls": 0,
                 "emails": 0,
+                "linkedin_reachouts": 0,
                 "meetings": 0,
                 "total": 0,
                 "active_deals": 0,
                 "pipeline_amount": 0.0,
             },
         )
+        weekly_bucket = weekly_rep_activity.setdefault(
+            rep_key,
+            {
+                "key": rep_key,
+                "user_id": rep_user_id,
+                "rep_name": rep_name,
+                "active_deals": int(activity_bucket["active_deals"]),
+                "pipeline_amount": float(activity_bucket["pipeline_amount"]),
+                "weeks": {
+                    _week_key(week_start): {
+                        "week_key": _week_key(week_start),
+                        "label": _week_label(week_start),
+                        "week_start": week_start.isoformat(),
+                        "week_end": (week_start + timedelta(days=6)).isoformat(),
+                        "emails": 0,
+                        "calls": 0,
+                        "connected_calls": 0,
+                        "live_calls": 0,
+                        "linkedin_reachouts": 0,
+                        "meetings": 0,
+                        "total": 0,
+                    }
+                    for week_start in week_starts
+                },
+            },
+        )
+        week_key = _week_key(_start_of_week(row.created_at))
+        week_counts = weekly_bucket["weeks"].get(week_key)
         medium = str(row.medium or "").strip().lower()
         kind = str(row.type or "").strip().lower()
+        outcome = str(row.call_outcome or "").strip().lower()
         if medium == "call" or kind == "call":
             activity_bucket["calls"] += 1
+            if week_counts is not None:
+                week_counts["calls"] += 1
+            if outcome in {"connected", "callback", "answered"}:
+                activity_bucket["connected_calls"] += 1
+                if week_counts is not None:
+                    week_counts["connected_calls"] += 1
+            if outcome in {"connected", "answered"}:
+                activity_bucket["live_calls"] += 1
+                if week_counts is not None:
+                    week_counts["live_calls"] += 1
         elif medium == "email" or kind == "email":
             activity_bucket["emails"] += 1
-        elif medium == "meeting" or kind == "meeting":
-            activity_bucket["meetings"] += 1
-        activity_bucket["total"] = activity_bucket["calls"] + activity_bucket["emails"] + activity_bucket["meetings"]
+            if week_counts is not None:
+                week_counts["emails"] += 1
+        elif medium == "linkedin" or kind == "linkedin":
+            activity_bucket["linkedin_reachouts"] += 1
+            if week_counts is not None:
+                week_counts["linkedin_reachouts"] += 1
+        activity_bucket["total"] = (
+            activity_bucket["calls"]
+            + activity_bucket["emails"]
+            + activity_bucket["linkedin_reachouts"]
+            + activity_bucket["meetings"]
+        )
+        if week_counts is not None:
+            week_counts["total"] = (
+                week_counts["calls"]
+                + week_counts["emails"]
+                + week_counts["linkedin_reachouts"]
+                + week_counts["meetings"]
+            )
 
     for row in meetings_rows:
         if row.status == "cancelled":
@@ -663,15 +801,59 @@ async def sales_dashboard(
                 "user_id": rep_user_id,
                 "rep_name": rep_name,
                 "calls": 0,
+                "connected_calls": 0,
+                "live_calls": 0,
                 "emails": 0,
+                "linkedin_reachouts": 0,
                 "meetings": 0,
                 "total": 0,
                 "active_deals": 0,
                 "pipeline_amount": 0.0,
             },
         )
+        weekly_bucket = weekly_rep_activity.setdefault(
+            rep_key,
+            {
+                "key": rep_key,
+                "user_id": rep_user_id,
+                "rep_name": rep_name,
+                "active_deals": int(meeting_bucket["active_deals"]),
+                "pipeline_amount": float(meeting_bucket["pipeline_amount"]),
+                "weeks": {
+                    _week_key(week_start): {
+                        "week_key": _week_key(week_start),
+                        "label": _week_label(week_start),
+                        "week_start": week_start.isoformat(),
+                        "week_end": (week_start + timedelta(days=6)).isoformat(),
+                        "emails": 0,
+                        "calls": 0,
+                        "connected_calls": 0,
+                        "live_calls": 0,
+                        "linkedin_reachouts": 0,
+                        "meetings": 0,
+                        "total": 0,
+                    }
+                    for week_start in week_starts
+                },
+            },
+        )
+        meeting_timestamp = row.scheduled_at or row.created_at
+        week_counts = weekly_bucket["weeks"].get(_week_key(_start_of_week(meeting_timestamp)))
         meeting_bucket["meetings"] += 1
-        meeting_bucket["total"] = meeting_bucket["calls"] + meeting_bucket["emails"] + meeting_bucket["meetings"]
+        meeting_bucket["total"] = (
+            meeting_bucket["calls"]
+            + meeting_bucket["emails"]
+            + meeting_bucket["linkedin_reachouts"]
+            + meeting_bucket["meetings"]
+        )
+        if week_counts is not None:
+            week_counts["meetings"] += 1
+            week_counts["total"] = (
+                week_counts["calls"]
+                + week_counts["emails"]
+                + week_counts["linkedin_reachouts"]
+                + week_counts["meetings"]
+            )
 
     rep_activity_rows = [
         RepActivityRow(
@@ -679,7 +861,10 @@ async def sales_dashboard(
             user_id=bucket["user_id"],
             rep_name=str(bucket["rep_name"]),
             calls=int(bucket["calls"]),
+            connected_calls=int(bucket["connected_calls"]),
+            live_calls=int(bucket["live_calls"]),
             emails=int(bucket["emails"]),
+            linkedin_reachouts=int(bucket["linkedin_reachouts"]),
             meetings=int(bucket["meetings"]),
             total=int(bucket["total"]),
             active_deals=int(bucket["active_deals"]),
@@ -688,6 +873,70 @@ async def sales_dashboard(
         for bucket in sorted(
             rep_activity.values(),
             key=lambda value: (-int(value["total"]), -float(value["pipeline_amount"]), str(value["rep_name"]).lower()),
+        )
+    ]
+
+    rep_totals_by_key = {row.key: row for row in rep_activity_rows}
+    rep_weekly_activity_rows = [
+        RepWeeklyActivityRow(
+            key=str(bucket["key"]),
+            user_id=bucket["user_id"],
+            rep_name=str(bucket["rep_name"]),
+            active_deals=int(bucket["active_deals"]),
+            pipeline_amount=round(float(bucket["pipeline_amount"]), 2),
+            totals=rep_totals_by_key.get(
+                str(bucket["key"]),
+                RepActivityRow(
+                    key=str(bucket["key"]),
+                    user_id=bucket["user_id"],
+                    rep_name=str(bucket["rep_name"]),
+                    calls=0,
+                    connected_calls=0,
+                    live_calls=0,
+                    emails=0,
+                    linkedin_reachouts=0,
+                    meetings=0,
+                    total=0,
+                    active_deals=int(bucket["active_deals"]),
+                    pipeline_amount=round(float(bucket["pipeline_amount"]), 2),
+                ),
+            ),
+            weeks=[
+                RepActivityWeekRow(
+                    week_key=str(week["week_key"]),
+                    label=str(week["label"]),
+                    week_start=str(week["week_start"]),
+                    week_end=str(week["week_end"]),
+                    emails=int(week["emails"]),
+                    calls=int(week["calls"]),
+                    connected_calls=int(week["connected_calls"]),
+                    live_calls=int(week["live_calls"]),
+                    linkedin_reachouts=int(week["linkedin_reachouts"]),
+                    meetings=int(week["meetings"]),
+                    total=int(week["total"]),
+                )
+                for week in bucket["weeks"].values()
+            ],
+        )
+        for bucket in sorted(
+            weekly_rep_activity.values(),
+            key=lambda value: (
+                -rep_totals_by_key.get(str(value["key"]), RepActivityRow(
+                    key=str(value["key"]),
+                    rep_name=str(value["rep_name"]),
+                    calls=0,
+                    connected_calls=0,
+                    live_calls=0,
+                    emails=0,
+                    linkedin_reachouts=0,
+                    meetings=0,
+                    total=0,
+                    active_deals=int(value["active_deals"]),
+                    pipeline_amount=float(value["pipeline_amount"]),
+                )).total,
+                -float(value["pipeline_amount"]),
+                str(value["rep_name"]).lower(),
+            ),
         )
     ]
 
@@ -938,6 +1187,7 @@ async def sales_dashboard(
         ),
         highlights=highlights[:5],
         rep_activity=rep_activity_rows,
+        rep_weekly_activity=rep_weekly_activity_rows,
         pipeline_by_stage=pipeline_stage_rows,
         pipeline_by_owner=owner_rows,
         velocity_by_stage=velocity_rows,

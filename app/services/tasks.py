@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Callable, Iterable
@@ -30,6 +32,9 @@ from app.services.task_codes import CODE_TO_ACTION, track_for_code
 logger = logging.getLogger(__name__)
 
 STAGE_INDEX = {stage: idx for idx, stage in enumerate(DEAL_STAGES)}
+AI_TASK_REFRESH_TTL = timedelta(minutes=10)
+AI_TASK_REFRESH_DEBOUNCE = timedelta(seconds=45)
+AI_TASK_SIGNAL_WINDOW = 25
 STAGE_OWNER_MATRIX: dict[str, tuple[str, str, str]] = {
     "reprospect": ("SDR", "AE shadow; Marketing for trigger content", "sdr"),
     "demo_scheduled": ("AE", "SDR for rescheduling; Rakesh for strategic accounts", "ae"),
@@ -57,6 +62,126 @@ def _normalize(text: str | None) -> str:
 
 def _contains_any(text: str, terms: Iterable[str]) -> bool:
     return any(term in text for term in terms)
+
+
+def _stable_json_hash(payload: dict) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+async def compute_deal_task_input_hash(session: AsyncSession, deal: Deal) -> str:
+    activities = (
+        await session.execute(
+            select(Activity)
+            .where(Activity.deal_id == deal.id)
+            .order_by(Activity.created_at.desc())
+            .limit(AI_TASK_SIGNAL_WINDOW)
+        )
+    ).scalars().all()
+    contacts = (
+        await session.execute(
+            select(Contact)
+            .join(DealContact, DealContact.contact_id == Contact.id)
+            .where(DealContact.deal_id == deal.id)
+        )
+    ).scalars().all()
+
+    payload = {
+        "deal": {
+            "id": str(deal.id),
+            "stage": deal.stage,
+            "pipeline_type": deal.pipeline_type,
+            "value": str(deal.value) if deal.value is not None else None,
+            "close_date_est": deal.close_date_est.isoformat() if deal.close_date_est else None,
+            "assigned_to_id": str(deal.assigned_to_id) if deal.assigned_to_id else None,
+            "owner_id": deal.owner_id,
+            "commit_to_deal": deal.commit_to_deal,
+            "qualification": deal.qualification or {},
+            "next_step": deal.next_step,
+            "days_in_stage": deal.days_in_stage,
+            "stage_entered_at": deal.stage_entered_at.isoformat() if deal.stage_entered_at else None,
+            "last_activity_at": deal.last_activity_at.isoformat() if deal.last_activity_at else None,
+        },
+        "activities": [
+            {
+                "id": str(activity.id),
+                "type": activity.type,
+                "source": activity.source,
+                "medium": activity.medium,
+                "content": activity.content,
+                "ai_summary": activity.ai_summary,
+                "contact_id": str(activity.contact_id) if activity.contact_id else None,
+                "created_at": activity.created_at.isoformat() if activity.created_at else None,
+                "email_subject": activity.email_subject,
+                "email_from": activity.email_from,
+                "email_to": activity.email_to,
+                "email_cc": activity.email_cc,
+                "call_outcome": activity.call_outcome,
+                "event_metadata": activity.event_metadata,
+            }
+            for activity in activities
+        ],
+        "contacts": [
+            {
+                "id": str(contact.id),
+                "email": contact.email,
+                "first_name": contact.first_name,
+                "last_name": contact.last_name,
+                "title": contact.title,
+                "persona": contact.persona,
+                "persona_type": contact.persona_type,
+                "assigned_to_id": str(contact.assigned_to_id) if contact.assigned_to_id else None,
+                "updated_at": contact.updated_at.isoformat() if contact.updated_at else None,
+            }
+            for contact in sorted(contacts, key=lambda item: str(item.id))
+        ],
+    }
+    return _stable_json_hash(payload)
+
+
+def should_queue_deal_task_refresh(
+    deal: Deal,
+    *,
+    input_hash: str,
+    force: bool = False,
+    now: datetime | None = None,
+) -> bool:
+    current_time = now or datetime.utcnow()
+    if force:
+        return True
+    if not deal.ai_tasks_refreshed_at or not deal.ai_tasks_input_hash:
+        return True
+    if deal.ai_tasks_input_hash != input_hash:
+        pending_since = deal.ai_tasks_refresh_requested_at
+        if pending_since and pending_since > deal.ai_tasks_refreshed_at and pending_since >= current_time - AI_TASK_REFRESH_DEBOUNCE:
+            return False
+        return True
+    if deal.ai_tasks_refreshed_at <= current_time - AI_TASK_REFRESH_TTL:
+        pending_since = deal.ai_tasks_refresh_requested_at
+        if pending_since and pending_since >= current_time - AI_TASK_REFRESH_DEBOUNCE:
+            return False
+        return True
+    return False
+
+
+def mark_deal_task_refresh_requested(
+    deal: Deal,
+    *,
+    requested_at: datetime | None = None,
+) -> None:
+    deal.ai_tasks_refresh_requested_at = requested_at or datetime.utcnow()
+
+
+def mark_deal_task_refresh_completed(
+    deal: Deal,
+    *,
+    input_hash: str,
+    refreshed_at: datetime | None = None,
+) -> None:
+    completed_at = refreshed_at or datetime.utcnow()
+    deal.ai_tasks_input_hash = input_hash
+    deal.ai_tasks_refreshed_at = completed_at
+    deal.ai_tasks_refresh_requested_at = completed_at
 
 
 def _stage_allows_pricing_package(stage: str | None) -> bool:
@@ -3460,10 +3585,14 @@ async def refresh_system_tasks_for_entity(session: AsyncSession, entity_type: st
     elif entity_type == "contact":
         await _refresh_contact_tasks(session, entity_id)
     elif entity_type == "deal":
-        await _refresh_deal_tasks(session, entity_id)
         deal = await session.get(Deal, entity_id)
-        if deal:
-            await _refresh_sales_ai_tasks_for_deal(session, deal)
+        if not deal:
+            return
+        input_hash = await compute_deal_task_input_hash(session, deal)
+        await _refresh_deal_tasks(session, entity_id)
+        await _refresh_sales_ai_tasks_for_deal(session, deal)
+        mark_deal_task_refresh_completed(deal, input_hash=input_hash)
+        session.add(deal)
 
 
 async def apply_task_action(

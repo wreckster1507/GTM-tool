@@ -1,12 +1,14 @@
+import logging
 from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, BackgroundTasks, Query, Response
 from sqlalchemy import and_, case, delete, func, or_, select
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.database import AsyncSessionLocal
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
@@ -25,9 +27,17 @@ from app.models.task import (
     TaskWorkspaceRead,
 )
 from app.models.user import User
-from app.services.tasks import backfill_open_task_assignments, complete_system_task, refresh_system_tasks_for_entity
+from app.services.tasks import (
+    backfill_open_task_assignments,
+    complete_system_task,
+    compute_deal_task_input_hash,
+    mark_deal_task_refresh_requested,
+    refresh_system_tasks_for_entity,
+    should_queue_deal_task_refresh,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+logger = logging.getLogger(__name__)
 
 
 def _validate_entity_type(entity_type: str) -> None:
@@ -172,21 +182,7 @@ async def _build_workspace_task_reads(session: DBSession, tasks: list[Task]) -> 
     return reads
 
 
-@router.get("/", response_model=list[TaskRead])
-async def list_tasks(
-    session: DBSession,
-    current_user: CurrentUser,
-    entity_type: str = Query(...),
-    entity_id: UUID = Query(...),
-    include_closed: bool = Query(default=True),
-):
-    _ = current_user
-    _validate_entity_type(entity_type)
-
-    await refresh_system_tasks_for_entity(session, entity_type, entity_id)
-    await backfill_open_task_assignments(session)
-    await session.commit()
-
+def _task_list_stmt(entity_type: str, entity_id: UUID, include_closed: bool):
     status_rank = case(
         (Task.status == "open", 0),
         (Task.status == "completed", 1),
@@ -205,8 +201,78 @@ async def list_tasks(
     )
     if not include_closed:
         stmt = stmt.where(Task.status == "open")
+    return stmt
 
-    tasks = (await session.execute(stmt)).scalars().all()
+
+async def _list_entity_tasks(session: DBSession, entity_type: str, entity_id: UUID, include_closed: bool) -> list[Task]:
+    return (await session.execute(_task_list_stmt(entity_type, entity_id, include_closed))).scalars().all()
+
+
+async def _refresh_entity_tasks_background(entity_type: str, entity_id: UUID) -> None:
+    async with AsyncSessionLocal() as session:
+        try:
+            await refresh_system_tasks_for_entity(session, entity_type, entity_id)
+            await backfill_open_task_assignments(session)
+            await session.commit()
+        except Exception as exc:  # pragma: no cover - background safety net
+            logger.warning("background task refresh failed for %s %s: %s", entity_type, entity_id, exc)
+            await session.rollback()
+
+
+@router.get("/", response_model=list[TaskRead])
+async def list_tasks(
+    session: DBSession,
+    current_user: CurrentUser,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    entity_type: str = Query(...),
+    entity_id: UUID = Query(...),
+    include_closed: bool = Query(default=True),
+    refresh_mode: str = Query(default="auto"),
+):
+    _ = current_user
+    _validate_entity_type(entity_type)
+    if refresh_mode not in {"auto", "force", "none"}:
+        raise ValidationError("refresh_mode must be one of: ['auto', 'force', 'none']")
+
+    refresh_result = "skipped"
+    tasks: list[Task]
+
+    if refresh_mode == "force":
+        await refresh_system_tasks_for_entity(session, entity_type, entity_id)
+        await backfill_open_task_assignments(session)
+        await session.commit()
+        tasks = await _list_entity_tasks(session, entity_type, entity_id, include_closed)
+        refresh_result = "sync"
+    elif entity_type != "deal":
+        if refresh_mode == "auto":
+            await refresh_system_tasks_for_entity(session, entity_type, entity_id)
+            refresh_result = "sync"
+        await backfill_open_task_assignments(session)
+        await session.commit()
+        tasks = await _list_entity_tasks(session, entity_type, entity_id, include_closed)
+    else:
+        deal = await session.get(Deal, entity_id)
+        current_tasks = await _list_entity_tasks(session, entity_type, entity_id, include_closed)
+        if deal and refresh_mode == "auto" and deal.ai_tasks_refreshed_at is None:
+            await refresh_system_tasks_for_entity(session, entity_type, entity_id)
+            await backfill_open_task_assignments(session)
+            await session.commit()
+            tasks = await _list_entity_tasks(session, entity_type, entity_id, include_closed)
+            refresh_result = "sync"
+        else:
+            if deal and refresh_mode == "auto":
+                input_hash = await compute_deal_task_input_hash(session, deal)
+                if should_queue_deal_task_refresh(deal, input_hash=input_hash):
+                    mark_deal_task_refresh_requested(deal)
+                    session.add(deal)
+                    background_tasks.add_task(_refresh_entity_tasks_background, entity_type, entity_id)
+                    refresh_result = "queued"
+            await backfill_open_task_assignments(session)
+            await session.commit()
+            tasks = current_tasks if refresh_result != "queued" else await _list_entity_tasks(session, entity_type, entity_id, include_closed)
+
+    response.headers["X-Beacon-Refresh-Mode"] = refresh_result
     return await _build_task_reads(session, tasks)
 
 
