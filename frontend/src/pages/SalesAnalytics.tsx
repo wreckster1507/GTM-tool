@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  type TooltipProps,
+} from "recharts";
+import {
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
@@ -573,114 +584,277 @@ const REP_ACTIVITY_METRICS: Array<{
   { key: "meetings", label: "Meetings", color: "#c16a18", tone: "#fff4ea", icon: CalendarDays },
 ];
 
-function ActivityTrendRow({
-  label,
-  color,
-  values,
-  weeks,
-  showWeekLabels = false,
-}: {
-  label: string;
-  color: string;
-  values: number[];
-  weeks: Array<{ label: string; week_start: string }>;
-  showWeekLabels?: boolean;
-}) {
-  const maxValue = Math.max(...values, 1);
+type RepMetricKey = (typeof REP_ACTIVITY_METRICS)[number]["key"];
+
+const OUTREACH_MIX_KEYS: RepMetricKey[] = ["emails", "calls", "linkedin_reachouts", "meetings"];
+const CALL_QUALITY_KEYS: RepMetricKey[] = ["calls", "connected_calls", "live_calls"];
+
+const REP_ACTIVITY_META = Object.fromEntries(
+  REP_ACTIVITY_METRICS.map((metric) => [metric.key, metric]),
+) as Record<RepMetricKey, (typeof REP_ACTIVITY_METRICS)[number]>;
+
+function WeeklyRepTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
 
   return (
     <div
       style={{
-        display: "grid",
-        gridTemplateColumns: `92px repeat(${weeks.length}, minmax(42px, 1fr))`,
-        gap: 8,
-        alignItems: "end",
-        minWidth: 92 + weeks.length * 50,
+        borderRadius: 14,
+        border: "1px solid #dfe7f2",
+        background: "rgba(255,255,255,0.96)",
+        boxShadow: "0 18px 34px rgba(21, 42, 68, 0.12)",
+        padding: "12px 14px",
+        minWidth: 180,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", height: 58 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#66788d", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
-      </div>
-      {weeks.map((week, index) => {
-        const value = values[index] ?? 0;
-        const height = value > 0 ? Math.max((value / maxValue) * 44, 6) : 0;
-        return (
-          <div key={`${week.week_start}-${label}`} style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
-            <div
-              title={`${label}: ${value} in week of ${week.label}`}
-              style={{
-                width: "100%",
-                height: 50,
-                borderRadius: 12,
-                background: "#f6f8fb",
-                border: "1px solid #e8eef5",
-                display: "flex",
-                alignItems: "flex-end",
-                justifyContent: "center",
-                padding: "0 6px 5px",
-              }}
-            >
-              <div style={{ width: "100%", height, borderRadius: 999, background: color, transition: "height 0.2s ease" }} />
-            </div>
-            <span style={{ fontSize: 10, fontWeight: 700, color: "#8a9aae", lineHeight: 1.1 }}>
-              {showWeekLabels ? week.label : value}
+      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#1f3144" }}>{label}</p>
+      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+        {payload.map((entry) => (
+          <div key={String(entry.dataKey)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#62748a" }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, background: entry.color ?? "#4e6be6" }} />
+              {entry.name}
             </span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{Number(entry.value ?? 0)}</span>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
 
-function RepWeeklyActivityCards({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
-  if (rows.length === 0) {
+function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
+  const sortedRows = useMemo(
+    () => [...rows].sort((a, b) => {
+      const totalDelta = (b.totals.total ?? 0) - (a.totals.total ?? 0);
+      if (totalDelta !== 0) return totalDelta;
+      const meetingsDelta = (b.totals.meetings ?? 0) - (a.totals.meetings ?? 0);
+      if (meetingsDelta !== 0) return meetingsDelta;
+      return (b.pipeline_amount ?? 0) - (a.pipeline_amount ?? 0);
+    }),
+    [rows],
+  );
+  const [selectedRepKey, setSelectedRepKey] = useState(sortedRows[0]?.key ?? "");
+
+  useEffect(() => {
+    if (!sortedRows.some((row) => row.key === selectedRepKey)) {
+      setSelectedRepKey(sortedRows[0]?.key ?? "");
+    }
+  }, [selectedRepKey, sortedRows]);
+
+  if (sortedRows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>No weekly rep activity yet for this time range.</p>;
   }
 
+  const selectedIndex = Math.max(sortedRows.findIndex((row) => row.key === selectedRepKey), 0);
+  const selectedRow = sortedRows[selectedIndex] ?? sortedRows[0];
+  const selectedRank = selectedIndex + 1;
+  const weeklyChartData = selectedRow.weeks.map((week) => ({
+    label: week.label,
+    shortLabel: week.label.replace("Week of ", ""),
+    emails: week.emails,
+    calls: week.calls,
+    connected_calls: week.connected_calls,
+    live_calls: week.live_calls,
+    linkedin_reachouts: week.linkedin_reachouts,
+    meetings: week.meetings,
+    total: week.total,
+  }));
+  const callConnectionRate = selectedRow.totals.calls > 0 ? Math.round((selectedRow.totals.connected_calls / selectedRow.totals.calls) * 100) : 0;
+  const liveCallRate = selectedRow.totals.calls > 0 ? Math.round((selectedRow.totals.live_calls / selectedRow.totals.calls) * 100) : 0;
+
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      {rows.map((row) => (
-        <div key={row.key} style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 16 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+    <div style={{ display: "grid", gap: 18 }}>
+      <div
+        style={{
+          borderRadius: 22,
+          border: "1px solid #e7edf5",
+          background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+          padding: 20,
+          display: "grid",
+          gap: 18,
+        }}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18, alignItems: "start" }}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: selectedRank === 1 ? "#fff5df" : "#f2f5fb", color: selectedRank === 1 ? "#b66a10" : "#5e7288", border: selectedRank === 1 ? "1px solid #ffd8a8" : "1px solid #e2eaf3", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                <Trophy size={14} />
+                {selectedRank === 1 ? "Top rep in window" : `Rank #${selectedRank}`}
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: "#eef4ff", color: "#3856c8", border: "1px solid #d7e2fb", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                <BarChart3 size={14} />
+                Focus mode
+              </span>
+            </div>
+
             <div>
-              <p style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#203244" }}>{row.rep_name}</p>
-              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#708195" }}>
-                {row.active_deals} active deals • {formatShortCurrency(row.pipeline_amount)} pipeline • {row.weeks.length} weekly buckets
+              <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>{selectedRow.rep_name}</h3>
+              <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.7, color: "#687b92", maxWidth: 720 }}>
+                Spotlighting one rep at a time keeps the weekly story readable. Use the rep buttons to switch context without redrawing a wall of charts.
               </p>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(84px, 1fr))", gap: 8, minWidth: "min(100%, 520px)" }}>
-              {REP_ACTIVITY_METRICS.map((metric) => {
-                const Icon = metric.icon;
-                const value = row.totals[metric.key] as number;
-                return (
-                  <div key={`${row.key}-${String(metric.key)}`} style={{ borderRadius: 12, background: metric.tone, padding: "10px 10px 9px", display: "grid", gap: 4 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: metric.color }}>
-                      <Icon size={12} />
-                      <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>{metric.label}</span>
-                    </div>
-                    <span style={{ fontSize: 18, fontWeight: 800, color: metric.color, lineHeight: 1 }}>{value}</span>
-                  </div>
-                );
-              })}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))", gap: 10 }}>
+              <StatPill label="Touches" value={selectedRow.totals.total} tone="#f5efff" text="#7245d7" />
+              <StatPill label="Emails" value={selectedRow.totals.emails} tone="#eefbf2" text="#2f8d5d" />
+              <StatPill label="Calls" value={selectedRow.totals.calls} tone="#eef3ff" text="#445fd0" />
+              <StatPill label="Connected %" value={`${callConnectionRate}%`} tone="#edf9f8" text="#15736d" />
+              <StatPill label="Live %" value={`${liveCallRate}%`} tone="#f4efff" text="#6b4bd6" />
+              <StatPill label="Meetings" value={selectedRow.totals.meetings} tone="#fff4ea" text="#c16a18" />
             </div>
           </div>
 
-          <div style={{ overflowX: "auto", paddingBottom: 2 }}>
-            <div style={{ display: "grid", gap: 10, minWidth: 720 }}>
-              {REP_ACTIVITY_METRICS.map((metric, index) => (
-                <ActivityTrendRow
-                  key={`${row.key}-${String(metric.key)}-trend`}
-                  label={metric.label}
-                  color={metric.color}
-                  values={row.weeks.map((week) => week[metric.key as keyof typeof week] as number)}
-                  weeks={row.weeks}
-                  showWeekLabels={index === REP_ACTIVITY_METRICS.length - 1}
-                />
-              ))}
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#f8fafc", padding: 14, display: "grid", gap: 10 }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Rep</p>
+                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by total weekly touches in the current window, so the strongest rep is always the default first view.</p>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {sortedRows.map((row, index) => {
+                  const selected = row.key === selectedRow.key;
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      onClick={() => setSelectedRepKey(row.key)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "10px 12px",
+                        borderRadius: 14,
+                        border: selected ? "1px solid #b8cff7" : "1px solid #dde6f0",
+                        background: selected ? "#eef4ff" : "#fff",
+                        color: selected ? "#2948b9" : "#2a3d54",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        boxShadow: selected ? "0 8px 18px rgba(66, 98, 197, 0.12)" : "none",
+                      }}
+                    >
+                      <span style={{ display: "inline-grid", placeItems: "center", width: 22, height: 22, borderRadius: 999, background: selected ? "#dfe9ff" : "#f2f5fa", color: selected ? "#2948b9" : "#6f8095", fontSize: 11, fontWeight: 800 }}>
+                        {index + 1}
+                      </span>
+                      <span style={{ display: "grid", textAlign: "left" }}>
+                        <span style={{ lineHeight: 1.2 }}>{row.rep_name}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: selected ? "#5e75c8" : "#75879a" }}>{row.totals.total} touches</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 14, display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Pipeline</p>
+                  <p style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#1f3144" }}>{formatShortCurrency(selectedRow.pipeline_amount)}</p>
+                </div>
+                <div>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Active Deals</p>
+                  <p style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#1f3144" }}>{selectedRow.active_deals}</p>
+                </div>
+                <div>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Buckets</p>
+                  <p style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#1f3144" }}>{selectedRow.weeks.length}</p>
+                </div>
+              </div>
+              <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: "#6f8195" }}>
+                Use the first chart to read weekly outreach mix, then use the second chart to judge call quality and whether conversations are converting into real connects.
+              </p>
             </div>
           </div>
         </div>
-      ))}
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18 }}>
+          <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
+            <div>
+              <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Outreach Mix</p>
+              <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars make weekly volume comparisons easier than separate mini-charts, while still showing which channel did the work.</p>
+            </div>
+            <div style={{ width: "100%", height: 320 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                  <CartesianGrid vertical={false} stroke="#edf2f8" />
+                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
+                  <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(78, 107, 230, 0.05)" }} />
+                  <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+                  {OUTREACH_MIX_KEYS.map((key) => {
+                    const metric = REP_ACTIVITY_META[key as keyof SalesRepActivityRow];
+                    return (
+                      <Bar
+                        key={String(key)}
+                        dataKey={key}
+                        name={metric.label}
+                        stackId="outreach"
+                        fill={metric.color}
+                        radius={[6, 6, 0, 0]}
+                        maxBarSize={42}
+                      />
+                    );
+                  })}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: 18 }}>
+            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Call Quality</p>
+                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Grouped bars show whether raw dials are becoming connected calls and real conversations week over week.</p>
+              </div>
+              <div style={{ width: "100%", height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barGap={6}>
+                    <CartesianGrid vertical={false} stroke="#edf2f8" />
+                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
+                    <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(21, 115, 109, 0.05)" }} />
+                    <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+                    {CALL_QUALITY_KEYS.map((key) => {
+                      const metric = REP_ACTIVITY_META[key as keyof SalesRepActivityRow];
+                      return (
+                        <Bar
+                          key={String(key)}
+                          dataKey={key}
+                          name={metric.label}
+                          fill={metric.color}
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={20}
+                        />
+                      );
+                    })}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
+              <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Metric Totals</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+                {REP_ACTIVITY_METRICS.map((metric) => {
+                  const Icon = metric.icon;
+                  const value = selectedRow.totals[metric.key] as number;
+                  return (
+                    <div key={`${selectedRow.key}-${String(metric.key)}`} style={{ borderRadius: 14, background: metric.tone, padding: "11px 12px", display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, color: metric.color }}>
+                        <Icon size={12} />
+                        <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>{metric.label}</span>
+                      </div>
+                      <span style={{ fontSize: 20, fontWeight: 800, color: metric.color, lineHeight: 1 }}>{value}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1488,9 +1662,9 @@ export default function SalesAnalytics() {
 
           <SectionCard
             title="Weekly Rep Activity"
-            subtitle="Small-multiple weekly graphs for each rep. Connected includes connected plus callback outcomes; live calls are actual conversations. Use the rep and geography filters above to narrow the view."
+            subtitle="Focus on the highest-activity rep by default, then switch reps with the selector. Stacked weekly bars show outreach mix, and grouped bars show call quality without overwhelming the screen."
           >
-            <RepWeeklyActivityCards rows={visibleRepWeeklyActivity} />
+            <RepWeeklyActivityFocus rows={visibleRepWeeklyActivity} />
           </SectionCard>
 
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr)", gap: 18 }}>
