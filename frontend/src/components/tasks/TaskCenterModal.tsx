@@ -37,6 +37,24 @@ const TYPE_STYLE = {
   system: { bg: colors.violetSoft, border: "#eadbff", color: colors.violet },
 } as const;
 
+const PRIORITY_LABEL_STYLE = {
+  P0: { bg: colors.redSoft, border: "#ffd0d8", color: colors.red },
+  P1: { bg: colors.amberSoft, border: "#ffe3b3", color: colors.amber },
+  P2: { bg: colors.primarySoft, border: "#d5e5ff", color: colors.primary },
+} as const;
+
+type TaskPriorityLabel = "P0" | "P1" | "P2";
+
+function parseTaskMatrixMeta(payload?: Record<string, unknown>) {
+  const priorityLabel: TaskPriorityLabel | null = payload?.priority_label === "P0" || payload?.priority_label === "P1" || payload?.priority_label === "P2"
+    ? payload.priority_label
+    : null;
+  const ownerHint = typeof payload?.owner_hint === "string" ? payload.owner_hint.trim() : "";
+  const escalationHint = typeof payload?.escalation_hint === "string" ? payload.escalation_hint.trim() : "";
+  const slaLabel = typeof payload?.sla_label === "string" ? payload.sla_label.trim() : "";
+  return { priorityLabel, ownerHint, escalationHint, slaLabel };
+}
+
 function parseMeetingPayload(payload?: Record<string, unknown>) {
   const meetingTitle = typeof payload?.meeting_title === "string" ? payload.meeting_title.trim() : "";
   const meetingSummary = typeof payload?.meeting_summary === "string" ? payload.meeting_summary.trim() : "";
@@ -143,6 +161,8 @@ function TaskCard({
   const isOpen = task.status === "open";
   const ownerText = task.assigned_to_name || "Unassigned";
   const systemGuidance = getSystemTaskGuidance(task);
+  const matrixMeta = parseTaskMatrixMeta(task.action_payload);
+  const priorityLabelStyle = matrixMeta.priorityLabel ? PRIORITY_LABEL_STYLE[matrixMeta.priorityLabel] : null;
 
   return (
     <div style={{ border: `1px solid ${colors.border}`, background: "#fff", borderRadius: 16, padding: "14px 16px", display: "grid", gap: 10 }}>
@@ -155,6 +175,11 @@ function TaskCard({
             <span style={{ borderRadius: 999, padding: "4px 9px", background: priorityStyle.bg, border: `1px solid ${priorityStyle.border}`, color: priorityStyle.color, fontSize: 11, fontWeight: 800 }}>
               {task.priority}
             </span>
+            {matrixMeta.priorityLabel && priorityLabelStyle ? (
+              <span style={{ borderRadius: 999, padding: "4px 9px", background: priorityLabelStyle.bg, border: `1px solid ${priorityLabelStyle.border}`, color: priorityLabelStyle.color, fontSize: 11, fontWeight: 800 }}>
+                {matrixMeta.priorityLabel}
+              </span>
+            ) : null}
             <span style={{ borderRadius: 999, padding: "4px 9px", background: task.status === "completed" ? colors.greenSoft : task.status === "dismissed" ? "#eef2f7" : "#f8fbff", border: `1px solid ${task.status === "completed" ? "#cdeedc" : colors.border}`, color: task.status === "completed" ? colors.green : colors.sub, fontSize: 11, fontWeight: 800 }}>
               {task.status}
             </span>
@@ -168,6 +193,8 @@ function TaskCard({
           <div>{formatDate(task.created_at)}</div>
           {task.due_at ? <div>Due {formatDate(task.due_at)}</div> : null}
           <div>{ownerText}</div>
+          {matrixMeta.ownerHint ? <div>Owner {matrixMeta.ownerHint}</div> : null}
+          {matrixMeta.slaLabel ? <div>SLA {matrixMeta.slaLabel}</div> : null}
           <div>{task.created_by_name ? `Created by ${task.created_by_name}` : task.source || "Beacon"}</div>
           {canDelete ? (
             <button
@@ -181,6 +208,12 @@ function TaskCard({
           ) : null}
         </div>
       </div>
+
+      {matrixMeta.escalationHint ? (
+        <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "10px 12px", color: colors.sub, fontSize: 12.5, lineHeight: 1.6 }}>
+          Escalation: {matrixMeta.escalationHint}
+        </div>
+      ) : null}
 
       {task.task_type === "system" && isOpen ? (
         <div style={{ borderRadius: 12, background: "#fbf7ff", border: "1px solid #eadbff", padding: "12px 12px", display: "grid", gap: 10 }}>

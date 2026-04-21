@@ -29,6 +29,7 @@ from app.config import settings
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.deal import DEAL_STAGES, Deal, DealContact, MEDDPICC_FIELDS
+from app.models.reminder import Reminder
 from app.models.task import Task
 from app.services.meddpicc_updates import (
     MEDDPICC_CHANGE_REASONS,
@@ -45,6 +46,126 @@ CONFIDENCE_THRESHOLD = 0.7
 MAX_ACTIVITIES_IN_BUNDLE = 12
 MAX_ACTIVITY_TEXT = 600
 MEDDPICC_DEDUPE_DAYS = 7
+SIGNAL_DEDUPE_DAYS = 7
+
+MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+
+SCHEDULING_TERMS = (
+    "calendar",
+    "reschedul",
+    "proposed new time",
+    "new time",
+    "does tuesday work",
+    "does thursday work",
+    "what time works",
+    "find a time",
+    "invite attached",
+    "calendar invite",
+    "accepted the invite",
+    "see you on",
+    "works for me",
+)
+SUBSTANTIVE_SIGNAL_TERMS = (
+    "pricing",
+    "proposal",
+    "quote",
+    "budget",
+    "security",
+    "soc2",
+    "integration",
+    "criteria",
+    "decision",
+    "procurement",
+    "legal",
+    "onboarding",
+    "implementation",
+    "pain",
+    "problem",
+    "hours",
+    "tickets",
+    "churn",
+    "competitor",
+    "evaluating",
+    "build vs buy",
+    "cfo",
+    "coo",
+)
+AUTO_REPLY_TERMS = (
+    "automatic reply",
+    "auto reply",
+    "out of office",
+    "out-of-office",
+    "ooo",
+    "i am out until",
+    "i'm out until",
+    "i will be out until",
+    "away from email",
+    "returning on",
+    "back on",
+)
+PLEASANTRY_TERMS = (
+    "thanks",
+    "thank you",
+    "appreciate it",
+    "great call",
+    "great meeting",
+    "sounds good",
+    "talk soon",
+    "have a great weekend",
+)
+ACK_TERMS = (
+    "got it",
+    "will review",
+    "i'll review",
+    "will take a look",
+    "i'll take a look",
+    "received",
+    "got the deck",
+)
+MARKETING_TERMS = (
+    "webinar",
+    "newsletter",
+    "register here",
+    "join us",
+    "event invite",
+    "marketing",
+    "unsubscribe",
+    "announcement",
+)
+CLARIFYING_QUESTION_TERMS = (
+    "can you clarify",
+    "quick question",
+    "where can i find",
+    "does this support",
+    "how does this work",
+    "which integration",
+    "what does this mean",
+)
 
 
 @dataclass(frozen=True)
@@ -74,14 +195,177 @@ def _activity_snippet(activity: Activity) -> str:
     return raw
 
 
+def _internal_domains() -> set[str]:
+    domains = {"beacon.li"}
+    shared_inbox = (settings.GMAIL_SHARED_INBOX or "").strip().lower()
+    if "@" in shared_inbox:
+        domains.add(shared_inbox.split("@", 1)[1])
+    return {domain for domain in domains if domain}
+
+
+def _email_domain(value: str | None) -> str:
+    email = (value or "").strip().lower()
+    if "@" not in email:
+        return ""
+    return email.split("@", 1)[1]
+
+
+def _parse_address_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    raw = re.split(r"[;,]", value)
+    addresses: list[str] = []
+    for item in raw:
+        token = item.strip().lower()
+        if not token:
+            continue
+        if "<" in token and ">" in token:
+            token = token[token.find("<") + 1 : token.find(">")].strip().lower()
+        addresses.append(token)
+    return addresses
+
+
+def _contains_any_term(text: str, terms: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(term in lowered for term in terms)
+
+
+def _looks_like_auto_reply(text: str) -> bool:
+    return _contains_any_term(text, AUTO_REPLY_TERMS)
+
+
+def _looks_like_pleasantry(text: str) -> bool:
+    lowered = text.lower()
+    if len(lowered) > 220:
+        return False
+    if _contains_any_term(lowered, PLEASANTRY_TERMS) and not _contains_any_term(lowered, SUBSTANTIVE_SIGNAL_TERMS):
+        return True
+    return False
+
+
+def _looks_like_attachment_ack(text: str) -> bool:
+    lowered = text.lower()
+    return _contains_any_term(lowered, ACK_TERMS) and not _contains_any_term(lowered, SUBSTANTIVE_SIGNAL_TERMS)
+
+
+def _looks_like_marketing(text: str) -> bool:
+    lowered = text.lower()
+    return _contains_any_term(lowered, MARKETING_TERMS)
+
+
+def _looks_like_scheduling_only(text: str) -> bool:
+    lowered = text.lower()
+    return _contains_any_term(lowered, SCHEDULING_TERMS) and not _contains_any_term(lowered, SUBSTANTIVE_SIGNAL_TERMS)
+
+
+def _looks_like_clarifying_question(text: str) -> bool:
+    lowered = text.lower()
+    return ("?" in lowered or _contains_any_term(lowered, CLARIFYING_QUESTION_TERMS)) and not _contains_any_term(lowered, SUBSTANTIVE_SIGNAL_TERMS)
+
+
+def _activity_flags(activity: Activity, internal_domains: set[str]) -> dict[str, bool]:
+    text = _activity_snippet(activity).lower()
+    from_domain = _email_domain(activity.email_from)
+    recipients = _parse_address_list(activity.email_to) + _parse_address_list(activity.email_cc)
+    recipient_domains = {_email_domain(addr) for addr in recipients if addr}
+    internal_only = bool(
+        activity.type == "email"
+        and from_domain in internal_domains
+        and (not recipient_domains or recipient_domains.issubset(internal_domains))
+    )
+    return {
+        "internal_only": internal_only,
+        "auto_reply": _looks_like_auto_reply(text),
+        "pleasantry": _looks_like_pleasantry(text),
+        "attachment_ack": _looks_like_attachment_ack(text),
+        "marketing": _looks_like_marketing(text),
+        "scheduling_only": _looks_like_scheduling_only(text),
+        "clarifying_question": _looks_like_clarifying_question(text),
+    }
+
+
+def _parse_return_date(text: str, now: datetime) -> datetime | None:
+    lowered = text.lower()
+    month_day = re.search(r"\b(" + "|".join(MONTH_NAME_TO_NUMBER.keys()) + r")\s+(\d{1,2})(?:st|nd|rd|th)?\b", lowered)
+    if month_day:
+        month = MONTH_NAME_TO_NUMBER[month_day.group(1)]
+        day = int(month_day.group(2))
+        year = now.year
+        if (month, day) < (now.month, now.day):
+            year += 1
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return None
+
+    day_only = re.search(r"\b(?:until|through|back on|returning on)\s+the\s+(\d{1,2})(?:st|nd|rd|th)?\b", lowered)
+    if day_only:
+        day = int(day_only.group(1))
+        month = now.month
+        year = now.year
+        if day < now.day:
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return None
+    return None
+
+
+async def _shift_pending_reminders_for_auto_reply(
+    session: AsyncSession,
+    activity: Activity,
+    *,
+    now: datetime,
+) -> None:
+    if not activity.contact_id:
+        return
+    return_date = _parse_return_date(_activity_snippet(activity), now)
+    if return_date is None:
+        return
+    shifted_due = return_date + timedelta(days=1)
+    reminders = (
+        await session.execute(
+            select(Reminder).where(
+                Reminder.contact_id == activity.contact_id,
+                Reminder.status == "pending",
+                Reminder.due_at <= shifted_due,
+            )
+        )
+    ).scalars().all()
+    for reminder in reminders:
+        reminder.due_at = shifted_due
+
+
+def _activity_reason_to_stay_silent(activity: Activity, flags: dict[str, bool]) -> str | None:
+    if flags["internal_only"]:
+        return "internal_only_forward"
+    if flags["auto_reply"]:
+        return "out_of_office"
+    if flags["marketing"]:
+        return "marketing_email"
+    if flags["pleasantry"]:
+        return "routine_pleasantry"
+    if flags["attachment_ack"]:
+        return "attachment_acknowledged"
+    if flags["scheduling_only"]:
+        return "scheduling_back_and_forth"
+    return None
+
+
 def _build_signal_bundle(
     deal: Deal,
     activities: list[Activity],
     contacts: list[Contact],
     recent_meddpicc_updates: dict[str, str],
+    manual_coverage: list[str],
 ) -> dict[str, Any]:
     qualification = deal.qualification if isinstance(deal.qualification, dict) else {}
     meddpicc_snapshot = get_meddpicc_snapshot(qualification)
+    internal_domains = _internal_domains()
     meddpicc_details = {
         field: {
             "summary": detail.get("summary"),
@@ -127,6 +411,7 @@ def _build_signal_bundle(
             }
             for c in contacts if c.id
         ],
+        "manual_coverage_last_7d": manual_coverage[:8],
         "recent_activities": [
             {
                 "id": str(a.id) if a.id else None,
@@ -135,6 +420,7 @@ def _build_signal_bundle(
                 "from": (a.email_from or "").lower() or None,
                 "at": a.created_at.isoformat() if a.created_at else None,
                 "text": _activity_snippet(a),
+                "flags": _activity_flags(a, internal_domains),
             }
             for a in activities[:MAX_ACTIVITIES_IN_BUNDLE]
             if _activity_snippet(a)
@@ -182,14 +468,23 @@ Hard rules:
 1. If nothing clearly fits, return {"proposals": []}. Silence is correct.
 2. NEVER emit T-CRITICAL — rules handle that.
 3. NEVER propose a stage that is not in allowed_stages.
-4. Only propose T-MEDPICC when the field is empty, OR the new information clearly contradicts or materially refines the current field detail.
-5. If meddpicc_recently_updated_fields contains this field, DO NOT re-propose it.
-6. For metrics, do not propose unless the metric was missing or the new number contradicts/refines the stored metric.
-7. For economic_buyer or champion, include contact whenever a specific person is named, even if no email is available.
-8. NEVER propose T-CONTACT for an email that already exists in contacts unless the title/role has changed.
-9. Every proposal MUST cite evidence_activity_id from recent_activities.
-10. Confidence is 0.0-1.0. Be honest — proposals below 0.7 will be dropped.
-11. Respond with ONLY a single JSON object, no prose."""
+4. If the activity flags show internal_only, auto_reply, pleasantry, attachment_ack, marketing, or scheduling_only, prefer silence unless there is clear new qualification information in that same message.
+5. Out-of-office auto replies, scheduling back-and-forth, routine thank-yous, mass marketing emails, and internal-only forwards should almost always produce NO task.
+6. NEVER treat a same-week demo reschedule or calendar-only movement as a T-CLOSE unless the buyer's actual deal timeline moved by 14+ days.
+7. Only propose T-MEDPICC when the field is empty, OR the new information clearly contradicts or materially refines the current field detail.
+8. If meddpicc_recently_updated_fields contains this field, DO NOT re-propose it.
+9. For metrics, do not propose unless the metric was missing or the new number contradicts/refines the stored metric.
+10. For economic_buyer or champion, include contact whenever a specific person is named, even if no email is available.
+11. NEVER propose T-CONTACT for an email that already exists in contacts unless the title/role has changed.
+12. If a junior/non-champion stakeholder is just asking a clarifying question, prefer silence.
+13. If manual_coverage_last_7d already reflects the same action, prefer silence.
+14. Every proposal MUST cite evidence_activity_id from recent_activities.
+15. Confidence is 0.0-1.0. Be honest — proposals below 0.7 will be dropped.
+16. If you are uncertain between a stronger move and a lower-commitment one, prefer the lower-commitment update.
+17. Do NOT jump to commercial_negotiation before the deal has reached poc_done.
+18. Do NOT jump to msa_review or workshop before commercials are actually underway.
+19. Do NOT jump to poc_agreed unless the buyer explicitly mentions a poc, proof of concept, or pilot.
+20. Respond with ONLY a single JSON object, no prose."""
 
 
 USER_PROMPT_TEMPLATE = """Deal bundle:
@@ -375,6 +670,140 @@ def _derive_contact_proposal_from_meddpicc(
     )
 
 
+def _manual_coverage_texts(tasks: list[Task], activities: list[Activity]) -> list[str]:
+    coverage: list[str] = []
+    for task in tasks:
+        parts = [task.title or "", task.description or ""]
+        text = " ".join(part.strip() for part in parts if part).strip()
+        if text:
+            coverage.append(text[:300])
+    for activity in activities:
+        text = _activity_snippet(activity)
+        if text:
+            coverage.append(text[:300])
+    return coverage
+
+
+def _proposal_matches_manual_coverage(proposal: TaskProposal, manual_coverage: list[str]) -> bool:
+    haystacks = [text.lower() for text in manual_coverage if text]
+    if not haystacks:
+        return False
+
+    payload = proposal.payload
+    if proposal.code == "T-STAGE":
+        target = str(payload.get("target_stage") or "").replace("_", " ").lower()
+        return any(target and target in text for text in haystacks)
+    if proposal.code == "T-MEDPICC":
+        field = str(payload.get("field") or "").replace("_", " ").lower()
+        return any(field and field in text for text in haystacks)
+    if proposal.code == "T-CLOSE":
+        target_date = str(payload.get("new_close_date") or "").lower()
+        return any(
+            ("close date" in text or "timeline" in text or target_date in text)
+            for text in haystacks
+        )
+    if proposal.code == "T-AMOUNT":
+        amount = payload.get("new_value")
+        amount_text = f"{amount}".lower() if amount is not None else ""
+        return any(
+            ("pricing" in text or "quote" in text or amount_text and amount_text in text)
+            for text in haystacks
+        )
+    if proposal.code == "T-CONTACT":
+        email = str(payload.get("email") or "").lower()
+        name = str(payload.get("name") or "").lower()
+        return any(
+            (email and email in text) or (name and name in text)
+            for text in haystacks
+        )
+    return False
+
+
+def _proposal_dedupe_key(code: str, payload: dict[str, Any], system_key: str) -> str:
+    if code == "T-STAGE":
+        target = str(payload.get("target_stage") or "").strip().lower()
+        return f"t_stage:{target}" if target else system_key
+    if code == "T-AMOUNT":
+        try:
+            value = round(float(payload.get("new_value")))
+        except (TypeError, ValueError):
+            return system_key
+        return f"t_amount:{value}"
+    if code == "T-CLOSE":
+        target = str(payload.get("new_close_date") or "").strip()
+        return f"t_close:{target}" if target else system_key
+    if code == "T-CONTACT":
+        email = str(payload.get("email") or "").strip().lower()
+        name = _normalized_name(str(payload.get("name") or ""))
+        if email:
+            return f"t_contact:{email}"
+        if name:
+            return f"t_contact_name:{name}"
+    return system_key
+
+
+def _proposal_priority_label(proposal: TaskProposal) -> str:
+    if proposal.code == "T-STAGE":
+        return "P0"
+    if proposal.code in {"T-AMOUNT", "T-CLOSE", "T-MEDPICC", "T-CONTACT"}:
+        return "P1"
+    return "P2"
+
+
+def _proposal_priority_rank(proposal: TaskProposal) -> tuple[int, float]:
+    label = _proposal_priority_label(proposal)
+    rank = 0 if label == "P0" else 1 if label == "P1" else 2
+    return rank, -proposal.confidence
+
+
+def _proposal_blocked_by_silence_rules(
+    proposal: TaskProposal,
+    *,
+    evidence_activity: Activity | None,
+    evidence_flags: dict[str, bool] | None,
+    deal: Deal,
+    contacts_by_email: dict[str, Contact],
+    recent_signal_tasks: dict[str, datetime],
+    permanently_dismissed_signals: set[str],
+    manual_coverage: list[str],
+) -> bool:
+    dedupe_key = _proposal_dedupe_key(proposal.code, proposal.payload, proposal.system_key)
+    if dedupe_key in permanently_dismissed_signals:
+        return True
+    if dedupe_key in recent_signal_tasks:
+        return True
+    if _proposal_matches_manual_coverage(proposal, manual_coverage):
+        return True
+    if evidence_activity is None:
+        return False
+
+    flags = evidence_flags or {}
+    if flags.get("internal_only") or flags.get("auto_reply") or flags.get("marketing") or flags.get("pleasantry") or flags.get("attachment_ack"):
+        return True
+
+    if proposal.code == "T-CLOSE" and flags.get("scheduling_only"):
+        new_close_raw = str(proposal.payload.get("new_close_date") or "").strip()
+        try:
+            new_close = datetime.strptime(new_close_raw, "%Y-%m-%d").date()
+        except ValueError:
+            return True
+        if deal.close_date_est is None:
+            return True
+        if abs((new_close - deal.close_date_est).days) < 14:
+            return True
+
+    if proposal.code in {"T-STAGE", "T-AMOUNT", "T-CLOSE"} and flags.get("scheduling_only"):
+        return True
+
+    if proposal.code == "T-CONTACT" and flags.get("clarifying_question"):
+        sender = (evidence_activity.email_from or "").strip().lower()
+        sender_contact = contacts_by_email.get(sender)
+        if sender_contact is not None and (sender_contact.persona_type or "").strip().lower() != "champion":
+            return True
+
+    return False
+
+
 def _validate_proposal(
     raw: dict[str, Any],
     deal: Deal,
@@ -383,6 +812,11 @@ def _validate_proposal(
     meddpicc_snapshot: dict[str, int],
     meddpicc_details: dict[str, dict[str, Any]],
     recent_meddpicc_updates: dict[str, datetime],
+    recent_signal_tasks: dict[str, datetime],
+    permanently_dismissed_signals: set[str],
+    manual_coverage: list[str],
+    activities_by_id: dict[str, Activity],
+    internal_domains: set[str],
 ) -> TaskProposal | None:
     code = str(raw.get("code") or "").strip().upper()
     if code not in LLM_CODES:
@@ -404,10 +838,20 @@ def _validate_proposal(
     if not title or not description or not evidence_id:
         return None
 
+    evidence_activity = activities_by_id.get(evidence_id)
+    evidence_flags = _activity_flags(evidence_activity, internal_domains) if evidence_activity is not None else None
+    evidence_text = _activity_snippet(evidence_activity).lower() if evidence_activity is not None else ""
+
     # Code-specific payload validation — reject silently on malformed shapes.
     if code == "T-STAGE":
         target = str(payload.get("target_stage") or "").strip()
         if target not in DEAL_STAGES or target == deal.stage:
+            return None
+        if target == "poc_agreed" and not _contains_any_term(evidence_text, ("poc", "proof of concept", "pilot")):
+            return None
+        if target == "commercial_negotiation" and not _stage_reached(deal.stage, "poc_done"):
+            return None
+        if target in {"msa_review", "workshop"} and not _stage_reached(deal.stage, "commercial_negotiation"):
             return None
         payload = {"target_stage": target}
         system_key = "t_stage"
@@ -542,7 +986,7 @@ def _validate_proposal(
     else:
         return None
 
-    return TaskProposal(
+    candidate = TaskProposal(
         code=code,
         title=title,
         description=description,
@@ -552,6 +996,20 @@ def _validate_proposal(
         evidence_activity_id=evidence_id,
         confidence=confidence,
     )
+
+    if _proposal_blocked_by_silence_rules(
+        candidate,
+        evidence_activity=evidence_activity,
+        evidence_flags=evidence_flags,
+        deal=deal,
+        contacts_by_email=contacts_by_email,
+        recent_signal_tasks=recent_signal_tasks,
+        permanently_dismissed_signals=permanently_dismissed_signals,
+        manual_coverage=manual_coverage,
+    ):
+        return None
+
+    return candidate
 
 
 # ── Entry point ─────────────────────────────────────────────────────────────
@@ -579,6 +1037,30 @@ async def emit_ai_tasks(
             .where(DealContact.deal_id == deal.id)
         )
     ).scalars().all()
+    now = datetime.utcnow()
+    recent_sales_ai_tasks = (
+        await session.execute(
+            select(Task).where(
+                Task.entity_type == "deal",
+                Task.entity_id == deal.id,
+                Task.task_type == "system",
+                Task.task_track == "sales_ai",
+                Task.status.in_(["open", "completed"]),
+                Task.updated_at >= now - timedelta(days=SIGNAL_DEDUPE_DAYS),
+            )
+        )
+    ).scalars().all()
+    dismissed_sales_ai_tasks = (
+        await session.execute(
+            select(Task).where(
+                Task.entity_type == "deal",
+                Task.entity_id == deal.id,
+                Task.task_type == "system",
+                Task.task_track == "sales_ai",
+                Task.status == "dismissed",
+            )
+        )
+    ).scalars().all()
     recent_meddpicc_tasks = (
         await session.execute(
             select(Task)
@@ -587,7 +1069,26 @@ async def emit_ai_tasks(
                 Task.entity_id == deal.id,
                 Task.system_key.like("t_medpicc:%"),
                 Task.status.in_(["open", "completed"]),
-                Task.updated_at >= datetime.utcnow() - timedelta(days=MEDDPICC_DEDUPE_DAYS),
+                Task.updated_at >= now - timedelta(days=MEDDPICC_DEDUPE_DAYS),
+            )
+        )
+    ).scalars().all()
+    manual_tasks = (
+        await session.execute(
+            select(Task).where(
+                Task.entity_type == "deal",
+                Task.entity_id == deal.id,
+                Task.task_type == "manual",
+                Task.updated_at >= now - timedelta(days=SIGNAL_DEDUPE_DAYS),
+            )
+        )
+    ).scalars().all()
+    manual_activities = (
+        await session.execute(
+            select(Activity).where(
+                Activity.deal_id == deal.id,
+                Activity.created_at >= now - timedelta(days=SIGNAL_DEDUPE_DAYS),
+                Activity.source == "manual",
             )
         )
     ).scalars().all()
@@ -595,7 +1096,57 @@ async def emit_ai_tasks(
     if not activities:
         return []
 
-    now = datetime.utcnow()
+    internal_domains = _internal_domains()
+    latest_activity = activities[0]
+    latest_flags = _activity_flags(latest_activity, internal_domains)
+    if latest_flags["auto_reply"]:
+        await _shift_pending_reminders_for_auto_reply(session, latest_activity, now=now)
+    silence_reason = _activity_reason_to_stay_silent(latest_activity, latest_flags)
+    if silence_reason is not None:
+        logger.info("ai_task_emitter: staying silent for deal %s due to %s", deal.id, silence_reason)
+        return []
+
+    recent_signal_tasks: dict[str, datetime] = {}
+    permanently_dismissed_signals: set[str] = set()
+    for task in recent_sales_ai_tasks:
+        if not task.system_key:
+            continue
+        updated_at = _meddpicc_recently_updated_at(task)
+        if updated_at is None:
+            continue
+        action_payload = task.action_payload if isinstance(task.action_payload, dict) else {}
+        task_code = ""
+        if task.recommended_action == "t_stage_apply":
+            task_code = "T-STAGE"
+        elif task.recommended_action == "t_amount_apply":
+            task_code = "T-AMOUNT"
+        elif task.recommended_action == "t_close_apply":
+            task_code = "T-CLOSE"
+        elif task.recommended_action == "t_medpicc_apply":
+            task_code = "T-MEDPICC"
+        elif task.recommended_action == "t_contact_apply":
+            task_code = "T-CONTACT"
+        dedupe_key = _proposal_dedupe_key(task_code, action_payload, task.system_key)
+        existing = recent_signal_tasks.get(dedupe_key)
+        if existing is None or updated_at > existing:
+            recent_signal_tasks[dedupe_key] = updated_at
+    for task in dismissed_sales_ai_tasks:
+        if not task.system_key:
+            continue
+        action_payload = task.action_payload if isinstance(task.action_payload, dict) else {}
+        task_code = ""
+        if task.recommended_action == "t_stage_apply":
+            task_code = "T-STAGE"
+        elif task.recommended_action == "t_amount_apply":
+            task_code = "T-AMOUNT"
+        elif task.recommended_action == "t_close_apply":
+            task_code = "T-CLOSE"
+        elif task.recommended_action == "t_medpicc_apply":
+            task_code = "T-MEDPICC"
+        elif task.recommended_action == "t_contact_apply":
+            task_code = "T-CONTACT"
+        permanently_dismissed_signals.add(_proposal_dedupe_key(task_code, action_payload, task.system_key))
+
     recent_meddpicc_updates: dict[str, datetime] = {}
     for field in MEDDPICC_FIELDS:
         detail = get_meddpicc_detail(deal.qualification, field)
@@ -615,11 +1166,14 @@ async def emit_ai_tasks(
         if existing is None or task_updated_at > existing:
             recent_meddpicc_updates[field] = task_updated_at
 
+    manual_coverage = _manual_coverage_texts(manual_tasks, manual_activities)
+
     bundle = _build_signal_bundle(
         deal,
         activities,
         contacts,
         {field: updated.isoformat() for field, updated in recent_meddpicc_updates.items()},
+        manual_coverage,
     )
     contacts_by_email = {
         (c.email or "").lower(): c for c in contacts if c.email
@@ -633,6 +1187,11 @@ async def emit_ai_tasks(
     meddpicc_details = {
         field: get_meddpicc_detail(deal.qualification, field)
         for field in MEDDPICC_FIELDS
+    }
+    activities_by_id = {
+        str(activity.id): activity
+        for activity in activities
+        if activity.id is not None
     }
 
     client = ClaudeClient()
@@ -672,6 +1231,11 @@ async def emit_ai_tasks(
             meddpicc_snapshot,
             meddpicc_details,
             recent_meddpicc_updates,
+            recent_signal_tasks,
+            permanently_dismissed_signals,
+            manual_coverage,
+            activities_by_id,
+            internal_domains,
         )
         if validated is None:
             continue
@@ -684,7 +1248,11 @@ async def emit_ai_tasks(
             seen_keys.add(derived_contact.system_key)
             proposals.append(derived_contact)
 
-    return proposals
+    if any(proposal.code == "T-STAGE" for proposal in proposals):
+        proposals = [proposal for proposal in proposals if proposal.code != "T-CLOSE"]
+
+    proposals.sort(key=_proposal_priority_rank)
+    return proposals[:2]
 
 
 def action_for_code(code: str) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Iterable
+from typing import Callable, Iterable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -13,6 +13,7 @@ from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import DEAL_STAGES, Deal, DealContact
+from app.models.meeting import Meeting
 from app.models.task import Task
 from app.models.user import User
 from app.repositories.deal import DealRepository
@@ -20,14 +21,34 @@ from app.services.account_sourcing import append_company_activity_log
 from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
+from app.services.deal_stage_playbook import stage_allows_stage_move, stage_allows_system_key
 from app.services.deal_health import compute_health
-from app.services.meddpicc_updates import get_meddpicc_details
+from app.services.meddpicc_updates import field_has_capture, get_meddpicc_details
 from app.services.system_task_actions import get_system_task_action_spec
 from app.services.task_codes import CODE_TO_ACTION, track_for_code
 
 logger = logging.getLogger(__name__)
 
 STAGE_INDEX = {stage: idx for idx, stage in enumerate(DEAL_STAGES)}
+STAGE_OWNER_MATRIX: dict[str, tuple[str, str, str]] = {
+    "reprospect": ("SDR", "AE shadow; Marketing for trigger content", "sdr"),
+    "demo_scheduled": ("AE", "SDR for rescheduling; Rakesh for strategic accounts", "ae"),
+    "demo_done": ("AE", "Rakesh / Product on unanswered questions", "ae"),
+    "qualified_lead": ("AE", "Rakesh for deep tech / strategic; SE for architecture", "ae"),
+    "poc_agreed": ("AE", "SE for environment; Legal for NDA only", "ae"),
+    "poc_wip": ("AE", "Product on blockers; Rakesh on scope issues", "ae"),
+    "poc_done": ("AE", "Rakesh for commercials framing", "ae"),
+    "commercial_negotiation": ("AE", "Finance on terms; Legal on custom clauses", "ae"),
+    "msa_review": ("AE", "Rakesh for stalled redlines; Delivery for workshop", "ae"),
+    "workshop": ("AE", "Rakesh for stalled redlines; Delivery for workshop", "ae"),
+    "closed_won": ("AE -> Delivery", "Finance for invoice; CS for onboarding", "ae"),
+    "churned": ("AE + CS", "Rakesh for exit learnings", "ae"),
+    "not_a_fit": ("AE", "Marketing if later triggers appear", "ae"),
+    "cold": ("SDR", "AE on trigger event", "sdr"),
+    "closed_lost": ("AE", "Rakesh + Product for win-loss", "ae"),
+    "on_hold": ("AE (light touch)", "Marketing for nurture content", "ae"),
+    "nurture": ("Marketing", "AE on inbound reply", "ae"),
+}
 
 
 def _normalize(text: str | None) -> str:
@@ -36,6 +57,100 @@ def _normalize(text: str | None) -> str:
 
 def _contains_any(text: str, terms: Iterable[str]) -> bool:
     return any(term in text for term in terms)
+
+
+def _stage_allows_pricing_package(stage: str | None) -> bool:
+    return bool(stage and _stage_reached(stage, "poc_done"))
+
+
+def _stage_allows_workshop_booking(stage: str | None) -> bool:
+    return bool(stage and _stage_reached(stage, "commercial_negotiation"))
+
+
+def _priority_label_for_task(
+    *,
+    system_key: str | None,
+    recommended_action: str | None,
+    task_track: str | None,
+) -> str:
+    key = (system_key or "").lower()
+    action = (recommended_action or "").lower()
+    track = (task_track or "").lower()
+    if track == "critical" or action == "t_critical_apply":
+        return "P0"
+    if action == "t_stage_apply" or action == "move_deal_stage":
+        return "P0"
+    if any(token in key for token in ("nda", "reschedule", "blocker", "stuck", "redline", "invoice")):
+        return "P0"
+    if action in {"t_amount_apply", "t_close_apply", "t_medpicc_apply", "t_contact_apply"}:
+        return "P1"
+    if any(
+        token in key
+        for token in (
+            "roi",
+            "proposal",
+            "stakeholder",
+            "kickoff",
+            "readout",
+            "results",
+            "setup",
+            "security",
+            "procurement",
+            "terms",
+            "workshop",
+            "handoff",
+            "commercial",
+            "redline",
+        )
+    ):
+        return "P1"
+    return "P2"
+
+
+def _default_due_at_for_priority(label: str, now: datetime) -> datetime:
+    if label == "P0":
+        return now + timedelta(hours=8)
+    if label == "P1":
+        return now + timedelta(hours=36)
+    return now + timedelta(days=5)
+
+
+def _sla_label_for_priority(label: str) -> str:
+    if label == "P0":
+        return "Same day"
+    if label == "P1":
+        return "24-48h"
+    return "3-7 days"
+
+
+def _owner_hint_for_task(
+    *,
+    stage: str | None,
+    system_key: str | None,
+    assigned_role: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    key = (system_key or "").lower()
+    owner_hint: str | None = None
+    escalation_hint: str | None = None
+    schema_role = assigned_role
+
+    if stage and stage in STAGE_OWNER_MATRIX:
+        owner_hint, escalation_hint, default_role = STAGE_OWNER_MATRIX[stage]
+        if schema_role is None:
+            schema_role = default_role
+
+    if "invoice" in key:
+        owner_hint = "Finance + AE"
+    elif "handoff" in key or "kickoff" in key and stage == "closed_won":
+        owner_hint = "AE -> Delivery"
+    elif "nda" in key:
+        owner_hint = "AE"
+    elif "redline" in key or "legal" in key:
+        owner_hint = "AE"
+    elif "blocker" in key:
+        owner_hint = "AE + SE"
+
+    return schema_role, owner_hint, escalation_hint
 
 
 async def _find_open_system_task(
@@ -55,6 +170,27 @@ async def _find_open_system_task(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def _recent_system_task_exists(
+    session: AsyncSession,
+    *,
+    entity_type: str,
+    entity_id: UUID,
+    system_key: str,
+    days: int,
+) -> bool:
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    result = await session.execute(
+        select(Task.id).where(
+            Task.entity_type == entity_type,
+            Task.entity_id == entity_id,
+            Task.system_key == system_key,
+            Task.task_type == "system",
+            Task.created_at >= cutoff,
+        )
+    )
+    return result.first() is not None
 
 
 async def _resolve_task_assignee(
@@ -101,13 +237,39 @@ async def _upsert_system_task(
     action_payload: dict | None = None,
     assigned_role: str | None = None,
     task_track: str = "hygiene",
+    due_at: datetime | None = None,
 ) -> Task:
+    deal_stage: str | None = None
+    if entity_type == "deal":
+        deal = await session.get(Deal, entity_id)
+        deal_stage = deal.stage if deal else None
+
+    priority_label = _priority_label_for_task(
+        system_key=system_key,
+        recommended_action=recommended_action,
+        task_track=task_track,
+    )
+    effective_due_at = due_at or _default_due_at_for_priority(priority_label, datetime.utcnow())
+    resolved_assigned_role, owner_hint, escalation_hint = _owner_hint_for_task(
+        stage=deal_stage,
+        system_key=system_key,
+        assigned_role=assigned_role,
+    )
+
     assigned_to_id, resolved_role = await _resolve_task_assignee(
         session,
         entity_type=entity_type,
         entity_id=entity_id,
-        preferred_role=assigned_role,
+        preferred_role=resolved_assigned_role,
     )
+    effective_payload = dict(action_payload or {})
+    effective_payload.setdefault("priority_label", priority_label)
+    effective_payload.setdefault("sla_label", _sla_label_for_priority(priority_label))
+    if owner_hint:
+        effective_payload.setdefault("owner_hint", owner_hint)
+    if escalation_hint:
+        effective_payload.setdefault("escalation_hint", escalation_hint)
+
     existing = await _find_open_system_task(
         session,
         entity_type=entity_type,
@@ -120,10 +282,11 @@ async def _upsert_system_task(
         existing.priority = priority
         existing.source = source
         existing.recommended_action = recommended_action
-        existing.action_payload = action_payload
+        existing.action_payload = effective_payload
         existing.assigned_role = resolved_role
         existing.assigned_to_id = assigned_to_id
         existing.task_track = task_track
+        existing.due_at = effective_due_at
         existing.updated_at = datetime.utcnow()
         session.add(existing)
         return existing
@@ -137,11 +300,12 @@ async def _upsert_system_task(
         priority=priority,
         source=source,
         recommended_action=recommended_action,
-        action_payload=action_payload,
+        action_payload=effective_payload,
         system_key=system_key,
         assigned_role=resolved_role,
         assigned_to_id=assigned_to_id,
         task_track=task_track,
+        due_at=effective_due_at,
     )
     session.add(task)
     return task
@@ -336,6 +500,76 @@ def _has_security_stakeholder(contacts: list[Contact]) -> bool:
         if _contains_any(signal, ["security", "procurement", "legal", "compliance", "it"]):
             return True
     return False
+
+
+def _has_internal_email_after(
+    activities: list[Activity],
+    *,
+    after: datetime | None,
+    internal_domain: str,
+) -> bool:
+    if not after or not internal_domain:
+        return False
+    return any(
+        activity.type == "email"
+        and _email_domain(activity.email_from) == internal_domain
+        and activity.created_at >= after
+        for activity in activities
+    )
+
+
+def _has_external_email_after(
+    activities: list[Activity],
+    *,
+    after: datetime | None,
+    internal_domain: str,
+) -> bool:
+    if not after:
+        return False
+    return any(
+        activity.type == "email"
+        and _email_domain(activity.email_from) != internal_domain
+        and activity.created_at >= after
+        for activity in activities
+    )
+
+
+def _recent_buyer_thread_texts(
+    activities: list[Activity],
+    *,
+    max_items: int = 5,
+) -> list[str]:
+    texts: list[str] = []
+    seen_threads: set[str] = set()
+    for activity in activities:
+        if activity.type != "email":
+            continue
+        metadata = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
+        thread_id = str(metadata.get("gmail_thread_id") or activity.email_message_id or "").strip()
+        if thread_id:
+            if thread_id in seen_threads:
+                continue
+            seen_threads.add(thread_id)
+        text = _activity_signal_text(activity)
+        if text:
+            texts.append(text)
+        if len(texts) >= max_items:
+            break
+    return texts
+
+
+def _text_contains_any(texts: list[str], terms: Iterable[str]) -> bool:
+    return any(_contains_any(text, terms) for text in texts)
+
+
+def _latest_matching_activity(
+    activities: list[Activity],
+    predicate: Callable[[Activity], bool],
+) -> Activity | None:
+    for activity in activities:
+        if predicate(activity):
+            return activity
+    return None
 
 
 def _detect_competitor_signal(text: str) -> str | None:
@@ -782,7 +1016,7 @@ def _deal_signal_task(text: str, current_stage: str) -> tuple[str, str, str] | N
             "Move deal to POC Agreed",
             "Buyer language indicates alignment on a POC or pilot. Move the deal forward to keep the board accurate.",
         )
-    if not _stage_reached(current_stage, "msa_review") and _contains_any(
+    if _stage_reached(current_stage, "commercial_negotiation") and not _stage_reached(current_stage, "msa_review") and _contains_any(
         text,
         ["msa", "master services agreement", "legal review", "redline", "procurement", "security review"],
     ):
@@ -791,7 +1025,7 @@ def _deal_signal_task(text: str, current_stage: str) -> tuple[str, str, str] | N
             "Move deal to MSA Review",
             "Recent communication suggests legal, procurement, or paper-process work has started. Update the stage to MSA Review.",
         )
-    if not _stage_reached(current_stage, "commercial_negotiation") and _contains_any(
+    if _stage_reached(current_stage, "poc_done") and not _stage_reached(current_stage, "commercial_negotiation") and _contains_any(
         text,
         ["pricing", "proposal", "commercial terms", "quote", "budget review", "negotiat"],
     ):
@@ -800,7 +1034,7 @@ def _deal_signal_task(text: str, current_stage: str) -> tuple[str, str, str] | N
             "Move deal to Commercial Negotiation",
             "The latest buyer signal looks commercial. Move the deal into negotiation so the pipeline reflects what the team is discussing.",
         )
-    if not _stage_reached(current_stage, "workshop") and _contains_any(
+    if _stage_reached(current_stage, "commercial_negotiation") and not _stage_reached(current_stage, "workshop") and _contains_any(
         text,
         ["workshop", "discovery workshop", "working session"],
     ) and _contains_any(text, ["schedule", "agreed", "book", "set up"]):
@@ -858,6 +1092,1767 @@ def _deal_signal_task_from_intent(intent_key: str | None, current_stage: str) ->
     return target_stage, title, description
 
 
+async def _apply_stage_playbook_tasks(
+    session: AsyncSession,
+    deal: Deal,
+    activity_rows: list[Activity],
+    linked_contacts: list[Contact],
+    *,
+    created_keys: set[str],
+) -> None:
+    now = datetime.utcnow()
+    internal_domain = _email_domain(settings.GMAIL_SHARED_INBOX or "zippy@beacon.li")
+    recent_texts = _recent_buyer_thread_texts(activity_rows)
+
+    if deal.stage == "reprospect":
+        latest_external = next(
+            (
+                activity
+                for activity in activity_rows
+                if activity.type == "email" and _email_domain(activity.email_from) != internal_domain
+            ),
+            None,
+        )
+        internal_after_reply = [
+            activity
+            for activity in activity_rows
+            if activity.type == "email"
+            and _email_domain(activity.email_from) == internal_domain
+            and (latest_external is None or activity.created_at > latest_external.created_at)
+        ]
+        if (
+            len(internal_after_reply) >= 2
+            and internal_after_reply[0].created_at <= now - timedelta(hours=48)
+        ):
+            created_keys.add("deal_reprospect_reengage")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_reprospect_reengage",
+                title="Re-engage this cold account with a new angle",
+                description="This reprospect thread has already had 2+ outreach attempts without a buyer reply. Use a fresh hook or a break-up style touch instead of repeating the same message.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="sdr",
+            )
+
+        if _text_contains_any(recent_texts, ["not the right person", "wrong person", "reach out to", "better contact", "best person"]):
+            created_keys.add("deal_reprospect_redirect")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_reprospect_redirect",
+                title="Map the redirected stakeholder and re-engage",
+                description="A buyer reply indicates this is not the right person. Update the stakeholder map, capture the redirect, and restart outreach with the right owner.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="sdr",
+            )
+
+        if _text_contains_any(recent_texts, ["left the company", "moved on", "no longer with", "changed roles", "new role"]):
+            created_keys.add("deal_reprospect_successor")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_reprospect_successor",
+                title="Map the successor stakeholder",
+                description="Recent outreach suggests the prior contact left or changed roles. Update CRM ownership and find the next relevant stakeholder before continuing outreach.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="sdr",
+            )
+        return
+
+    if deal.stage == "qualified_lead":
+        pricing_or_budget_signal = _text_contains_any(
+            recent_texts,
+            [
+                "pricing",
+                "price",
+                "cost",
+                "budget",
+                "commercial terms",
+                "roi",
+                "business case",
+            ],
+        )
+        if pricing_or_budget_signal:
+            created_keys.add("deal_qualified_lead_roi")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_qualified_lead_roi",
+                title="Build or refresh the ROI case",
+                description="The buyer is asking about pricing, budget, or cost. Stay in qualification mode: tighten the ROI model, anchor the value case, and line up an ROI review instead of jumping straight to a proposal.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            [
+                "architecture",
+                "technical question",
+                "integration",
+                "api",
+                "security questionnaire",
+                "security review",
+                "soc2",
+                "sso",
+                "implementation question",
+            ],
+        ) and not await _recent_system_task_exists(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_qualified_lead_tech_follow_up",
+            days=7,
+        ):
+            created_keys.add("deal_qualified_lead_tech_follow_up")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_qualified_lead_tech_follow_up",
+                title="Coordinate the technical follow-up",
+                description="The buyer asked a technical or architecture question. Pull in Product, Rakesh, or an SE as needed and send the right technical asset while the thread is active.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            [
+                "cto",
+                "chief technology officer",
+                "cfo",
+                "chief financial officer",
+                "coo",
+                "chief operating officer",
+                "head of ps",
+                "head of professional services",
+                "vp of professional services",
+                "vp professional services",
+            ],
+        ):
+            created_keys.add("deal_qualified_lead_stakeholder")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_qualified_lead_stakeholder",
+                title="Map the new stakeholder and tailor the story",
+                description="A senior stakeholder showed up in the buyer thread. Add them to the stakeholder map, research their lens, and tailor the follow-up for their priorities before the next meeting.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        poc_signal = _text_contains_any(
+            recent_texts,
+            [
+                "let's do a poc",
+                "lets do a poc",
+                "let's do a pilot",
+                "lets do a pilot",
+                "move forward with a poc",
+                "move forward with a pilot",
+                "start the poc",
+                "start the pilot",
+            ],
+        )
+        if poc_signal:
+            created_keys.add("deal_move_poc_agreed")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_move_poc_agreed",
+                title="Move deal to POC Agreed",
+                description="The buyer is explicitly asking to start a POC or pilot. Move the deal forward so the board reflects the motion and the next execution step is visible.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": "poc_agreed"},
+                assigned_role="ae",
+            )
+            created_keys.add("deal_qualified_lead_poc_kickoff")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_qualified_lead_poc_kickoff",
+                title="Schedule the POC kickoff",
+                description="The buyer is aligned on a POC or pilot. Get the kickoff on the calendar quickly so the deal can move from agreement into execution without drift.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(recent_texts, ["reference", "references", "case study", "customer story"]) and not await _recent_system_task_exists(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_qualified_lead_case_study",
+            days=7,
+        ):
+            created_keys.add("deal_qualified_lead_case_study")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_qualified_lead_case_study",
+                title="Send a relevant reference or case study",
+                description="The buyer asked for proof from a similar customer. Send the most relevant case study or reference so the value story feels concrete for this account.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            [
+                "procurement",
+                "security team",
+                "security review",
+                "security questionnaire",
+                "soc2",
+                "vendor onboarding",
+                "compliance",
+            ],
+        ):
+            created_keys.add("deal_qualified_lead_security_follow_up")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_qualified_lead_security_follow_up",
+                title="Coordinate the security or procurement response",
+                description="Security or procurement entered the thread while the deal is still qualified lead. Pull in the right internal owner and send the security one-pager or supporting material instead of treating this like full paper process work.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        recent_internal = next(
+            (
+                activity
+                for activity in activity_rows
+                if activity.type == "email" and _email_domain(activity.email_from) == internal_domain
+            ),
+            None,
+        )
+        recent_external = next(
+            (
+                activity
+                for activity in activity_rows
+                if activity.type == "email" and _email_domain(activity.email_from) != internal_domain
+            ),
+            None,
+        )
+        if (
+            recent_internal
+            and (recent_external is None or recent_external.created_at < recent_internal.created_at)
+            and recent_internal.created_at < now - timedelta(days=7)
+        ):
+            created_keys.add("deal_qualified_lead_follow_up")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_qualified_lead_follow_up",
+                title="Send a value-forward follow-up",
+                description="This qualified lead has gone quiet for 7+ days after the latest outbound touch. Follow up with a value reminder and a crisp CTA rather than defaulting to a generic nudge or break-up.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "poc_agreed":
+        meetings = (
+            await session.execute(
+                select(Meeting)
+                .where(Meeting.deal_id == deal.id)
+                .order_by(Meeting.scheduled_at.desc(), Meeting.updated_at.desc())
+            )
+        ).scalars().all()
+        upcoming_poc = next(
+            (
+                meeting
+                for meeting in meetings
+                if meeting.meeting_type == "poc"
+                and meeting.status == "scheduled"
+                and meeting.scheduled_at is not None
+                and meeting.scheduled_at >= now
+            ),
+            None,
+        )
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+
+        nda_sent = _latest_matching_activity(
+            activity_rows,
+            lambda activity: activity.type == "email"
+            and _contains_any(_activity_signal_text(activity), ["nda", "non-disclosure", "non disclosure"])
+            and _contains_any(_activity_signal_text(activity), ["sent", "attached", "please sign", "for signature", "docusign"]),
+        )
+        nda_signed = _latest_matching_activity(
+            activity_rows,
+            lambda activity: activity.type == "email"
+            and (nda_sent is None or activity.created_at >= nda_sent.created_at)
+            and _contains_any(_activity_signal_text(activity), ["nda", "non-disclosure", "non disclosure", "docusign"])
+            and _contains_any(_activity_signal_text(activity), ["signed", "executed", "countersigned", "completed"]),
+        )
+
+        if nda_sent and not nda_signed and nda_sent.created_at <= now - timedelta(days=5):
+            created_keys.add("deal_poc_agreed_nda_chase")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_agreed_nda_chase",
+                title="Chase the unsigned NDA",
+                description="The NDA appears to have been sent 5+ days ago with no signed confirmation back yet. Follow up directly and offer a quick unblock call so the POC does not stall before kickoff.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if nda_signed and not upcoming_poc:
+            created_keys.add("deal_poc_agreed_kickoff")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_agreed_kickoff",
+                title="Schedule the POC kickoff",
+                description="The NDA looks signed, but Beacon does not see a POC kickoff on the calendar yet. Lock in the kickoff quickly so the POC starts with a clear owner and timeline.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+            created_keys.add("deal_poc_agreed_plan")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_agreed_plan",
+                title="Draft the scoped POC plan",
+                description="The deal is ready to kick off the POC, but Beacon does not see a scoped plan yet. Send the POC plan or 2-pager so the customer, AE, and SE align on success criteria and ownership.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            [
+                "what data do you need",
+                "what do you need from us",
+                "what data do you need from us",
+                "data checklist",
+                "technical requirements",
+                "what access do you need",
+            ],
+        ) and not await _recent_system_task_exists(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_poc_agreed_setup",
+            days=7,
+        ):
+            created_keys.add("deal_poc_agreed_setup")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_agreed_setup",
+                title="Send the POC setup checklist",
+                description="The buyer is asking what Beacon needs to start the POC. Send the data checklist, access requirements, and technical setup notes so the team can get moving.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if (
+            deal.stage_entered_at
+            and deal.stage_entered_at <= now - timedelta(hours=48)
+            and not _text_contains_any(
+                activity_texts,
+                [
+                    "rakesh approved",
+                    "internal approval",
+                    "clickup",
+                    "poc approval",
+                    "approved internally",
+                    "se is ready",
+                    "environment ready",
+                ],
+            )
+        ):
+            created_keys.add("deal_poc_agreed_internal_approval")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_agreed_internal_approval",
+                title="Raise internal POC approval",
+                description="This deal has been in POC Agreed for 48+ hours and Beacon does not see the internal approval motion yet. Pull in Rakesh, raise the internal approval, and make sure the execution handoff is actually underway.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            [
+                "pricing",
+                "price",
+                "commercials",
+                "proposal",
+                "quote",
+                "budget",
+            ],
+        ):
+            created_keys.add("deal_poc_agreed_commercial_hold")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_agreed_commercial_hold",
+                title="Reply with a post-POC commercial hold",
+                description="Commercial questions are coming up during POC setup. Respond with a holding answer and keep the full proposal for after the POC rather than jumping early into final commercials.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        criteria_documented = field_has_capture(deal.qualification, "decision_criteria") or _contains_any(
+            " ".join(filter(None, [deal.description, deal.next_step])),
+            ["success criteria", "success metric", "business case", "poc plan"],
+        )
+        if (
+            deal.stage_entered_at
+            and deal.stage_entered_at <= now - timedelta(hours=72)
+            and not criteria_documented
+        ):
+            created_keys.add("deal_poc_agreed_success_criteria")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_agreed_success_criteria",
+                title="Document measurable POC success criteria",
+                description="The deal is in POC Agreed, but Beacon still does not see measurable success criteria documented. Draft the business case or POC brief so everyone agrees on what success looks like.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "poc_wip":
+        meetings = (
+            await session.execute(
+                select(Meeting)
+                .where(Meeting.deal_id == deal.id)
+                .order_by(Meeting.scheduled_at.desc(), Meeting.updated_at.desc())
+            )
+        ).scalars().all()
+        poc_meetings = [meeting for meeting in meetings if meeting.meeting_type == "poc" and meeting.scheduled_at is not None]
+        recent_or_upcoming_checkpoint = next(
+            (
+                meeting
+                for meeting in poc_meetings
+                if now - timedelta(days=7) <= meeting.scheduled_at <= now + timedelta(days=7)
+            ),
+            None,
+        )
+        if not recent_or_upcoming_checkpoint:
+            created_keys.add("deal_poc_wip_checkpoint")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_wip_checkpoint",
+                title="Schedule the weekly POC checkpoint",
+                description="Beacon does not see a recent or upcoming POC checkpoint. Put a 30-minute weekly checkpoint on the calendar so the POC stays active and the customer sees steady progress.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            [
+                "blocker",
+                "blocked",
+                "bug",
+                "issue",
+                "error",
+                "not working",
+                "isn't working",
+                "isnt working",
+            ],
+        ):
+            created_keys.add("deal_poc_wip_blocker")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_wip_blocker",
+                title="Escalate the POC blocker internally",
+                description="The customer reported a blocker or bug during the POC. Pull in Product or the SE immediately, get an ETA, and close the loop with the buyer while the issue is fresh.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        criteria_documented = field_has_capture(deal.qualification, "decision_criteria") or _contains_any(
+            " ".join(filter(None, [deal.description, deal.next_step])),
+            ["success criteria", "success metric", "business case", "poc plan"],
+        )
+        recent_scored_poc = next(
+            (
+                meeting
+                for meeting in poc_meetings
+                if meeting.status == "completed" and any([meeting.raw_notes, meeting.ai_summary, meeting.next_steps])
+            ),
+            None,
+        )
+        if (
+            deal.stage_entered_at
+            and deal.stage_entered_at <= now - timedelta(days=7)
+            and (not criteria_documented or recent_scored_poc is None)
+        ):
+            created_keys.add("deal_poc_wip_midpoint_review")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_wip_midpoint_review",
+                title="Run the mid-POC review",
+                description="This POC is underway, but Beacon does not yet see strong validation against success criteria. Schedule the midpoint review and send a progress update so the buyer sees concrete movement.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        champion_emails = {
+            (contact.email or "").strip().lower()
+            for contact in linked_contacts
+            if (contact.persona_type or "").strip().lower() == "champion" and contact.email
+        }
+        if champion_emails:
+            latest_champion_inbound = _latest_matching_activity(
+                activity_rows,
+                lambda activity: activity.type == "email" and (activity.email_from or "").strip().lower() in champion_emails,
+            )
+            last_champion_touch = latest_champion_inbound.created_at if latest_champion_inbound else deal.stage_entered_at
+            if last_champion_touch and last_champion_touch <= now - timedelta(days=7):
+                created_keys.add("deal_poc_wip_champion")
+                await _upsert_system_task(
+                    session,
+                    entity_type="deal",
+                    entity_id=deal.id,
+                    system_key="deal_poc_wip_champion",
+                    title="Re-engage the champion and widen coverage",
+                    description="The champion has been quiet for 7+ days during the POC. Re-engage them directly and consider widening coverage to the economic buyer before momentum slips.",
+                    priority="high",
+                    source="playbook",
+                    recommended_action=None,
+                    action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                    assigned_role="ae",
+                )
+
+        if _text_contains_any(
+            recent_texts,
+            [
+                "pricing",
+                "price",
+                "commercials",
+                "proposal",
+                "quote",
+                "budget",
+            ],
+        ):
+            created_keys.add("deal_poc_wip_pricing_reply")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_wip_pricing_reply",
+                title="Reply with directional pricing guidance",
+                description="The buyer is asking about pricing while the POC is still running. Answer directionally and line up the post-POC commercial conversation rather than jumping to a final proposal now.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "poc_done":
+        meetings = (
+            await session.execute(
+                select(Meeting)
+                .where(Meeting.deal_id == deal.id)
+                .order_by(Meeting.scheduled_at.desc(), Meeting.updated_at.desc())
+            )
+        ).scalars().all()
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        readout_scheduled = next(
+            (
+                meeting
+                for meeting in meetings
+                if meeting.scheduled_at is not None
+                and meeting.scheduled_at >= now
+                and (
+                    meeting.meeting_type in {"poc", "qbr"}
+                    or _contains_any((meeting.title or "").lower(), ["readout", "results", "commercial", "decision"])
+                )
+            ),
+            None,
+        )
+        results_deck_built = _text_contains_any(
+            activity_texts,
+            ["results deck", "poc results", "roi v2", "before and after", "before/after", "readout deck"],
+        ) or _contains_any(
+            " ".join(filter(None, [deal.description, deal.next_step])),
+            ["results deck", "poc results", "roi v2", "readout"],
+        )
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(hours=48) and not results_deck_built:
+            created_keys.add("deal_poc_done_results_deck")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_done_results_deck",
+                title="Build the POC results deck",
+                description="The deal is in POC Done, but Beacon does not yet see a results deck or refreshed ROI readout. Build the before-and-after story quickly so the team can convert proof into a commercial next step.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if results_deck_built and not readout_scheduled and deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(hours=72):
+            created_keys.add("deal_poc_done_readout")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_done_readout",
+                title="Schedule the POC results readout",
+                description="The results story looks ready, but Beacon does not see a readout or commercial conversation scheduled yet. Get the economic buyer and the decision team into the readout quickly.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        criteria_met = _text_contains_any(
+            activity_texts,
+            ["success criteria met", "criteria met", "successful poc", "poc successful", "met the goals", "met our goals", "worked as expected"],
+        )
+        criteria_missed = _text_contains_any(
+            activity_texts,
+            ["success criteria not met", "criteria not met", "missed the criteria", "missed the goal", "did not meet", "didn't meet", "partial success", "partially met"],
+        )
+        if criteria_met and not deal.next_step and not readout_scheduled:
+            created_keys.add("deal_poc_done_close_motion")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_done_close_motion",
+                title="Push for the commercial next step",
+                description="The POC looks successful, but Beacon does not see a clear next step on the deal yet. Send the direct close question and put the commercial readout on the calendar.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if criteria_missed:
+            created_keys.add("deal_poc_done_internal_decision")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_done_internal_decision",
+                title="Make the post-POC decision with Rakesh",
+                description="The POC outcome looks partial or unsuccessful. Pull in Rakesh immediately to decide whether to extend, descope, or disqualify rather than drifting in place.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        recent_internal = next(
+            (
+                activity
+                for activity in activity_rows
+                if activity.type == "email" and _email_domain(activity.email_from) == internal_domain
+            ),
+            None,
+        )
+        recent_external = next(
+            (
+                activity
+                for activity in activity_rows
+                if activity.type == "email" and _email_domain(activity.email_from) != internal_domain
+            ),
+            None,
+        )
+        if (
+            recent_internal
+            and (recent_external is None or recent_external.created_at < recent_internal.created_at)
+            and recent_internal.created_at <= now - timedelta(days=5)
+        ):
+            created_keys.add("deal_poc_done_quiet")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_poc_done_quiet",
+                title="Re-engage after the POC",
+                description="The buyer has gone quiet after the POC. Follow up with the champion, loop in the decision maker if needed, and push toward the commercial conversation before the proof cools off.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "commercial_negotiation":
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        proposal_sent = _latest_matching_activity(
+            activity_rows,
+            lambda activity: activity.type == "email"
+            and _contains_any(_activity_signal_text(activity), ["proposal", "pricing", "quote", "commercial terms"])
+            and _contains_any(_activity_signal_text(activity), ["attached", "sent", "for your review", "please find", "shared"]),
+        )
+        proposal_reply = _latest_matching_activity(
+            activity_rows,
+            lambda activity: proposal_sent is not None
+            and activity.created_at > proposal_sent.created_at
+            and activity.type in {"email", "call", "meeting"},
+        )
+        if proposal_sent and not proposal_reply and proposal_sent.created_at <= now - timedelta(days=5):
+            created_keys.add("deal_commercial_negotiation_follow_up")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_commercial_negotiation_follow_up",
+                title="Follow up on the proposal and schedule review",
+                description="Beacon sees a proposal or pricing package was sent 5+ days ago with no buyer reply yet. Follow up and try to lock a proposal review call instead of silently waiting.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            ["too expensive", "budget is tight", "budget constraint", "price is high", "discount", "cost concern", "expensive"],
+        ):
+            created_keys.add("deal_commercial_negotiation_value_reanchor")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_commercial_negotiation_value_reanchor",
+                title="Re-anchor on ROI before discounting",
+                description="The buyer is pushing back on price. Re-anchor the conversation on value and pull in Rakesh before offering any discount so the commercial motion stays disciplined.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            ["payment terms", "payment schedule", "milestones", "carve-out", "carve out", "custom terms", "net 30", "net30", "net 45", "net45"],
+        ):
+            created_keys.add("deal_commercial_negotiation_terms")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_commercial_negotiation_terms",
+                title="Review custom commercial terms internally",
+                description="The buyer is asking for custom payment or scope terms. Pull in Rakesh and finance, then respond with a controlled proposal revision rather than editing terms ad hoc.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            ["procurement", "vendor onboarding", "vendor form", "security questionnaire", "company info", "w-9", "w9", "insurance certificate"],
+        ) and not await _recent_system_task_exists(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_commercial_negotiation_procurement",
+            days=7,
+        ):
+            created_keys.add("deal_commercial_negotiation_procurement")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_commercial_negotiation_procurement",
+                title="Coordinate procurement and vendor docs",
+                description="Procurement or vendor onboarding is entering the thread. Pull in the right internal owner and send the vendor onboarding package without derailing the core commercial discussion.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        commercials_agreed = _text_contains_any(
+            recent_texts,
+            ["commercials agreed", "pricing works", "approved the pricing", "we are aligned on pricing", "looks good from our side", "ready for contract", "send the msa", "move to contract"],
+        )
+        if commercials_agreed:
+            created_keys.add("deal_move_msa_review")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_move_msa_review",
+                title="Move deal to MSA Review",
+                description="The commercial discussion sounds aligned and the thread is ready for contract motion. Move the deal into MSA review so legal and implementation planning are tracked in the right place.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": "msa_review"},
+                assigned_role="ae",
+            )
+            created_keys.add("deal_commercial_negotiation_workshop")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_commercial_negotiation_workshop",
+                title="Schedule the implementation workshop",
+                description="Commercials look agreed. Lock in the workshop or implementation alignment session quickly so the deal does not sit between pricing and execution.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        legal_early = _text_contains_any(
+            recent_texts,
+            ["legal review", "msa", "master services agreement", "redline", "our legal team", "send the contract"],
+        )
+        if legal_early and not commercials_agreed:
+            created_keys.add("deal_commercial_negotiation_sequence_legal")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_commercial_negotiation_sequence_legal",
+                title="Sequence legal behind pricing confirmation",
+                description="Legal is surfacing before commercials are clearly settled. Pull in the right internal owner and reply with sequencing guidance so the deal does not jump into full legal motion too early.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage in {"msa_review", "workshop"}:
+        meetings = (
+            await session.execute(
+                select(Meeting)
+                .where(Meeting.deal_id == deal.id)
+                .order_by(Meeting.scheduled_at.desc(), Meeting.updated_at.desc())
+            )
+        ).scalars().all()
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        workshop_scheduled = next(
+            (
+                meeting
+                for meeting in meetings
+                if meeting.scheduled_at is not None
+                and meeting.scheduled_at >= now
+                and _contains_any((meeting.title or "").lower(), ["workshop", "working session", "implementation", "kickoff"])
+            ),
+            None,
+        )
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(days=7) and not workshop_scheduled:
+            created_keys.add("deal_workshop_msa_schedule")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_workshop_msa_schedule",
+                title="Schedule the workshop and prep the deck",
+                description="This deal has been sitting in workshop or MSA motion for 7+ days without a visible workshop on the calendar. Schedule it and prepare the workshop deck or SOW draft so the stage keeps moving.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        redline_received = _latest_matching_activity(
+            activity_rows,
+            lambda activity: _contains_any(_activity_signal_text(activity), ["redline", "redlined", "track changes", "markup", "msa comments"]),
+        )
+        if redline_received:
+            created_keys.add("deal_workshop_msa_redline")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_workshop_msa_redline",
+                title="Run the MSA redline cycle",
+                description="Beacon sees MSA redlines in the thread. Pull in legal, keep a clean decision log, and turn the next version quickly so paper process does not stall.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            recent_texts,
+            ["security questionnaire", "infosec questionnaire", "security review", "vendor questionnaire", "soc2", "infosec"],
+        ) and not await _recent_system_task_exists(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_workshop_msa_security",
+            days=7,
+        ):
+            created_keys.add("deal_workshop_msa_security")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_workshop_msa_security",
+                title="Send the security and infosec pack",
+                description="Security or infosec requests are active on this deal. Pull in the right internal owner and send the security pack so the paper process keeps moving.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if redline_received and redline_received.created_at <= now - timedelta(days=7):
+            newer_after_redline = _latest_matching_activity(
+                activity_rows,
+                lambda activity: activity.created_at > redline_received.created_at and activity.type in {"email", "call", "meeting"},
+            )
+            if newer_after_redline is None:
+                created_keys.add("deal_workshop_msa_stuck")
+                await _upsert_system_task(
+                    session,
+                    entity_type="deal",
+                    entity_id=deal.id,
+                    system_key="deal_workshop_msa_stuck",
+                    title="Escalate the stuck legal redlines",
+                    description="The redline cycle appears stalled for 7+ days. Pull in Rakesh and get the legal call scheduled before the deal sits in contract limbo.",
+                    priority="high",
+                    source="playbook",
+                    recommended_action=None,
+                    action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                    assigned_role="ae",
+                )
+
+        workshop_done_signal = _latest_matching_activity(
+            activity_rows,
+            lambda activity: activity.type in {"meeting", "transcript"}
+            and _contains_any(_activity_signal_text(activity), ["workshop", "working session"])
+            and activity.created_at >= now - timedelta(hours=48),
+        )
+        if workshop_done_signal and not _text_contains_any(activity_texts, ["outcomes", "decision log", "sow v2", "recap", "next steps"]):
+            created_keys.add("deal_workshop_msa_outcomes")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_workshop_msa_outcomes",
+                title="Document the workshop outcomes",
+                description="The workshop appears to have happened, but Beacon does not see documented outcomes or a recap yet. Capture the decisions and send the next version of the scope artifact quickly.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(recent_texts, ["pricing", "price", "discount", "commercials", "proposal", "quote"]):
+            created_keys.add("deal_workshop_msa_hold_pricing")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_workshop_msa_hold_pricing",
+                title="Hold firm on reopened pricing",
+                description="The buyer is trying to reopen pricing while the deal is in workshop or MSA motion. Reply with the agreed commercial frame and pull in Rakesh only if the ask is materially changing the deal.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "closed_won":
+        meetings = (
+            await session.execute(
+                select(Meeting)
+                .where(Meeting.deal_id == deal.id)
+                .order_by(Meeting.scheduled_at.desc(), Meeting.updated_at.desc())
+            )
+        ).scalars().all()
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        kickoff_scheduled = next(
+            (
+                meeting
+                for meeting in meetings
+                if meeting.scheduled_at is not None
+                and meeting.scheduled_at >= now
+                and _contains_any((meeting.title or "").lower(), ["kickoff", "implementation", "onboarding"])
+            ),
+            None,
+        )
+        handoff_signal = _text_contains_any(activity_texts, ["handoff", "implementation owner", "delivery intro", "internal handoff"])
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(hours=48) and not handoff_signal:
+            created_keys.add("deal_closed_won_handoff")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_won_handoff",
+                title="Schedule the internal handoff",
+                description="The deal is closed won, but Beacon does not yet see a clear internal handoff motion. Set the handoff quickly and prepare the handoff artifact so delivery and finance are aligned.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if handoff_signal and not kickoff_scheduled and deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(hours=72):
+            created_keys.add("deal_closed_won_kickoff")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_won_kickoff",
+                title="Schedule the client kickoff",
+                description="The internal handoff is underway, but Beacon does not see the client kickoff on the calendar yet. Get delivery and the customer booked so the win turns into implementation momentum.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        go_live_signal = _latest_matching_activity(
+            activity_rows,
+            lambda activity: _contains_any(_activity_signal_text(activity), ["go-live", "go live", "went live", "live now", "launch date confirmed"]),
+        )
+        if go_live_signal:
+            created_keys.add("deal_closed_won_invoice")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_won_invoice",
+                title="Coordinate invoicing after go-live",
+                description="The customer appears to be live. Coordinate with finance and update the CRM notes so invoicing and implementation tracking stay accurate.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+            if go_live_signal.created_at <= now - timedelta(days=14):
+                created_keys.add("deal_closed_won_reference")
+                await _upsert_system_task(
+                    session,
+                    entity_type="deal",
+                    entity_id=deal.id,
+                    system_key="deal_closed_won_reference",
+                    title="Ask for the reference or case study",
+                    description="It has been at least two weeks since the customer appears to have gone live. If the rollout is healthy, this is a good time to ask for a reference or case study conversation.",
+                    priority="medium",
+                    source="playbook",
+                    recommended_action=None,
+                    action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                    assigned_role="ae",
+                )
+
+        if _text_contains_any(recent_texts, ["clickup account", "create the client account", "clickup space", "clickup workspace"]):
+            created_keys.add("deal_closed_won_clickup")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_won_clickup",
+                title="Create the ClickUp client account",
+                description="The delivery tooling setup is still outstanding. Create the ClickUp client account and populate the basics so the post-sale handoff is complete.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "churned":
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        reason_captured = _contains_any(
+            " ".join(filter(None, [deal.description, deal.next_step])),
+            ["churn", "cancelled", "reason", "renewal", "what we could have done"],
+        ) or any(
+            activity.type == "note"
+            and (deal.stage_entered_at is None or activity.created_at >= deal.stage_entered_at)
+            for activity in activity_rows
+        )
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(hours=72) and not reason_captured:
+            created_keys.add("deal_churned_exit_notes")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_churned_exit_notes",
+                title="Capture the churn reason and learnings",
+                description="The deal is marked churned, but Beacon does not yet see clear exit notes. Capture the churn reason, what Beacon could have done better, and anything worth preserving for a future return.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(activity_texts, ["moved to", "joined", "new company", "at my new company"]):
+            created_keys.add("deal_churned_champion_move")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_churned_champion_move",
+                title="Track the champion at the new company",
+                description="A champion appears to have moved companies. Research the new company and re-engage there rather than spending more effort on the churned account.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(days=180):
+            created_keys.add("deal_churned_nurture")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_churned_nurture",
+                title="Restart nurture for the churned account",
+                description="It has been roughly six months since this customer churned. If the relationship is still warm enough, restart a light nurture motion with product updates or a value reminder.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "not_a_fit":
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        reason_captured = bool((deal.description or "").strip() or (deal.next_step or "").strip()) or any(
+            activity.type == "note"
+            and (deal.stage_entered_at is None or activity.created_at >= deal.stage_entered_at)
+            for activity in activity_rows
+        )
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(hours=24) and not reason_captured:
+            created_keys.add("deal_not_fit_reason")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_not_fit_reason",
+                title="Capture the disqualification reason",
+                description="This deal is marked not a fit, but Beacon does not yet see a clear reason captured. Add the reason code and short notes so the pipeline stays honest and reusable.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(activity_texts, ["pivoted", "new use case", "different use case", "new initiative", "new priority"]):
+            created_keys.add("deal_not_fit_reopen")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_not_fit_reopen",
+                title="Re-evaluate fit and reopen if warranted",
+                description="The buyer situation appears to have changed. Re-evaluate the ICP fit, and if Beacon is now relevant, move the deal back to Reprospect instead of leaving it buried as not-a-fit.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": "reprospect"},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "cold":
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        trigger_signal = _text_contains_any(
+            activity_texts,
+            ["funding", "series a", "series b", "rfp", "new cto", "new cio", "new exec", "product launch", "hiring", "expansion"],
+        )
+        if trigger_signal:
+            created_keys.add("deal_cold_trigger_reopen")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_cold_trigger_reopen",
+                title="Reopen the cold deal on the trigger",
+                description="A new trigger event is showing up on this cold deal. Move it back to Reprospect and use the trigger as the re-engagement hook instead of leaving it dormant.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": "reprospect"},
+                assigned_role="sdr",
+            )
+            created_keys.add("deal_cold_trigger_reengage")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_cold_trigger_reengage",
+                title="Re-engage with the trigger-specific hook",
+                description="The account has a fresh signal. Send a concise re-engagement rooted in the new event instead of recycling the old outreach thread.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="sdr",
+            )
+
+        last_touch = deal.last_activity_at or deal.stage_entered_at
+        if last_touch and last_touch <= now - timedelta(days=30):
+            created_keys.add("deal_cold_monthly_reengage")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_cold_monthly_reengage",
+                title="Send the monthly cold re-engagement",
+                description="This cold deal has had no activity for 30+ days. If it is still worth touching, send a low-frequency break-up or value-add touch rather than letting it silently decay.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="sdr",
+            )
+
+        recent_external = _latest_matching_activity(
+            activity_rows,
+            lambda activity: activity.created_at >= now - timedelta(days=2)
+            and activity.type in {"email", "call", "meeting"}
+            and _email_domain(activity.email_from) != internal_domain,
+        )
+        if recent_external:
+            target_stage = "demo_scheduled" if _contains_any(_activity_signal_text(recent_external), ["demo", "calendar invite", "schedule", "meeting"]) else "reprospect"
+            created_keys.add("deal_cold_reopen_engagement")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_cold_reopen_engagement",
+                title="Reopen the cold deal on new engagement",
+                description="The prospect has engaged again. Move the deal back into active motion so the team can respond at the right stage instead of treating it as still cold.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": target_stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "closed_lost":
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        reason_captured = bool((deal.description or "").strip() or (deal.next_step or "").strip()) or any(
+            activity.type == "note"
+            and (deal.stage_entered_at is None or activity.created_at >= deal.stage_entered_at)
+            for activity in activity_rows
+        )
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(hours=48) and not reason_captured:
+            created_keys.add("deal_closed_lost_reason")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_lost_reason",
+                title="Capture the loss reason",
+                description="This deal is closed lost, but Beacon does not yet see the loss reason documented. Capture the reason and the revisit logic so the outcome is reusable instead of anecdotal.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        competitor = next((name for text in activity_texts for name in [_detect_competitor_signal(text)] if name), None)
+        if competitor:
+            created_keys.add("deal_closed_lost_competitor")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_lost_competitor",
+                title="Run the competitive loss debrief",
+                description=f"The deal appears to have gone to {competitor}. Capture the competitive intel and pull in Rakesh or product so the team learns from the loss rather than just logging it.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "competitor": competitor, "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        future_fit = not _contains_any(" ".join(filter(None, [deal.description, deal.next_step])), ["never fit", "not future fit", "bad fit"])
+        if deal.stage_entered_at and deal.stage_entered_at <= now - timedelta(days=180) and future_fit:
+            created_keys.add("deal_closed_lost_nurture")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_lost_nurture",
+                title="Restart the closed-lost nurture motion",
+                description="It has been roughly six months since the deal was lost. If the account is still future-fit, restart a low-intensity nurture with what is new and why the timing may now be different.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(activity_texts, ["moved to", "joined", "new company", "at my new company"]):
+            created_keys.add("deal_closed_lost_champion_move")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_closed_lost_champion_move",
+                title="Re-engage the champion at the new company",
+                description="A former champion appears to have moved companies. Follow the person to the new account instead of trying to revive the already-lost one.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "on_hold":
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        if deal.close_date_est and deal.close_date_est <= now.date():
+            created_keys.add("deal_on_hold_revisit_due")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_on_hold_revisit_due",
+                title="Revisit the paused deal",
+                description="The revisit date for this on-hold deal appears to have arrived. Refresh the context, check for new triggers, and send the right low-pressure follow-up.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(
+            activity_texts,
+            ["funding", "series a", "series b", "rfp", "new cto", "new cio", "new exec", "product launch", "hiring", "expansion"],
+        ):
+            created_keys.add("deal_on_hold_trigger_reopen")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_on_hold_trigger_reopen",
+                title="Reopen the paused deal on the trigger",
+                description="A new trigger event is showing up on this on-hold deal. Move it back into active motion and follow up while the trigger is still relevant.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": "reprospect"},
+                assigned_role="ae",
+            )
+
+        revisit_documented = bool(deal.close_date_est) or _contains_any(
+            " ".join(filter(None, [deal.description, deal.next_step])),
+            ["revisit", "circle back", "check back", "next review"],
+        )
+        if not revisit_documented:
+            created_keys.add("deal_on_hold_revisit_date")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_on_hold_revisit_date",
+                title="Set the revisit date and pause reason",
+                description="This deal is on hold, but Beacon does not see a clear revisit date yet. Set the date and short pause reason so the pause is intentional rather than indefinite.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage == "nurture":
+        activity_texts = [text for text in (_activity_signal_text(activity) for activity in activity_rows) if text]
+        last_touch = deal.last_activity_at or deal.stage_entered_at
+        if last_touch and last_touch <= now - timedelta(days=90):
+            created_keys.add("deal_nurture_quarterly")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_nurture_quarterly",
+                title="Send the quarterly nurture touch",
+                description="This nurture-stage deal has gone roughly a quarter without a touch. Send a light asset such as a case study, product update, or relevant insight rather than a hard sales nudge.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        trigger_signal = _text_contains_any(
+            activity_texts,
+            ["funding", "series a", "series b", "rfp", "new cto", "new cio", "new exec", "product launch", "hiring", "expansion"],
+        )
+        if trigger_signal:
+            created_keys.add("deal_nurture_trigger_reopen")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_nurture_trigger_reopen",
+                title="Reopen nurture on the trigger event",
+                description="A real trigger event is appearing on this nurture deal. Move it back to Reprospect and restart an active outreach motion while the timing looks better.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": "reprospect"},
+                assigned_role="ae",
+            )
+
+        recent_external = _latest_matching_activity(
+            activity_rows,
+            lambda activity: activity.created_at >= now - timedelta(days=2)
+            and activity.type in {"email", "call", "meeting"}
+            and _email_domain(activity.email_from) != internal_domain,
+        )
+        if recent_external:
+            target_stage = "demo_scheduled" if _contains_any(_activity_signal_text(recent_external), ["demo", "calendar invite", "schedule", "meeting"]) else "reprospect"
+            created_keys.add("deal_nurture_reopen_reply")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_nurture_reopen_reply",
+                title="Reopen nurture on the reply",
+                description="The prospect replied to a nurture motion. Move the deal back into active pipeline work so the team responds with the right urgency.",
+                priority="high",
+                source="playbook",
+                recommended_action="move_deal_stage",
+                action_payload={"deal_id": str(deal.id), "stage": target_stage},
+                assigned_role="ae",
+            )
+        return
+
+    if deal.stage not in {"demo_scheduled", "demo_done"}:
+        return
+
+    meetings = (
+        await session.execute(
+            select(Meeting)
+            .where(Meeting.deal_id == deal.id)
+            .order_by(Meeting.scheduled_at.desc(), Meeting.updated_at.desc())
+        )
+    ).scalars().all()
+    upcoming_demo = next(
+        (
+            meeting
+            for meeting in meetings
+            if meeting.meeting_type == "demo"
+            and meeting.status == "scheduled"
+            and meeting.scheduled_at is not None
+            and meeting.scheduled_at >= now
+            and meeting.scheduled_at <= now + timedelta(hours=48)
+        ),
+        None,
+    )
+    latest_completed_demo = next(
+        (
+            meeting
+            for meeting in meetings
+            if meeting.meeting_type == "demo"
+            and meeting.status == "completed"
+            and meeting.scheduled_at is not None
+        ),
+        None,
+    )
+
+    if deal.stage == "demo_scheduled":
+        if upcoming_demo and not (upcoming_demo.pre_brief or upcoming_demo.research_data):
+            created_keys.add("deal_demo_prep")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_demo_prep",
+                title="Prep for the upcoming demo",
+                description="A demo is scheduled inside 48 hours and Beacon does not see a pre-brief or prep work yet. Research the account, tighten the agenda, and make sure the demo is tailored.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "meeting_id": str(upcoming_demo.id) if upcoming_demo.id else None},
+                assigned_role="ae",
+            )
+
+        if upcoming_demo:
+            attendee_payloads = upcoming_demo.attendees if isinstance(upcoming_demo.attendees, list) else []
+            linked_emails = {(contact.email or "").strip().lower() for contact in linked_contacts if contact.email}
+            has_new_attendees = any(
+                isinstance(attendee, dict)
+                and str(attendee.get("email") or "").strip().lower()
+                and str(attendee.get("email") or "").strip().lower() not in linked_emails
+                for attendee in attendee_payloads
+            )
+            if has_new_attendees:
+                created_keys.add("deal_demo_attendees")
+                await _upsert_system_task(
+                    session,
+                    entity_type="deal",
+                    entity_id=deal.id,
+                    system_key="deal_demo_attendees",
+                    title="Research the newly added demo attendees",
+                    description="The scheduled demo has attendees who are not yet mapped on the deal. Add the stakeholders and do a quick role-based read before the meeting.",
+                    priority="medium",
+                    source="playbook",
+                    recommended_action=None,
+                    action_payload={"deal_id": str(deal.id), "meeting_id": str(upcoming_demo.id) if upcoming_demo.id else None},
+                    assigned_role="ae",
+                )
+
+        if _text_contains_any(recent_texts, ["send the deck", "send the deck before", "send the one pager", "1-pager", "one-pager", "pre-read", "before the demo", "architecture diagram"]) and not await _recent_system_task_exists(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_demo_send_asset",
+            days=7,
+        ):
+            created_keys.add("deal_demo_send_asset")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_demo_send_asset",
+                title="Send the requested pre-demo asset",
+                description="The buyer asked for pre-demo material. Send the deck, one-pager, or short pre-read so the meeting starts with the right context.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if _text_contains_any(recent_texts, ["reschedul", "move the demo", "push the demo", "can we do thursday", "can we move", "new time"]):
+            created_keys.add("deal_demo_reschedule")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_demo_reschedule",
+                title="Reschedule the demo and update CRM",
+                description="The buyer asked to move the demo. Lock the new time quickly and update the meeting date so prep and follow-up stay aligned.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+        return
+
+    if latest_completed_demo:
+        demo_moment = latest_completed_demo.scheduled_at
+        if (
+            demo_moment is not None
+            and demo_moment >= now - timedelta(hours=24)
+            and not any([latest_completed_demo.raw_notes, latest_completed_demo.ai_summary, latest_completed_demo.next_steps])
+        ):
+            created_keys.add("deal_demo_notes")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_demo_notes",
+                title="Log demo notes and next step",
+                description="The demo finished recently, but Beacon does not see notes or a committed next step on the meeting yet. Capture the outcome while it is still fresh.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "meeting_id": str(latest_completed_demo.id) if latest_completed_demo.id else None},
+                assigned_role="ae",
+            )
+
+        if (
+            demo_moment is not None
+            and demo_moment >= now - timedelta(hours=24)
+            and not _has_internal_email_after(activity_rows, after=demo_moment, internal_domain=internal_domain)
+            and "deal_send_meeting_recap" not in created_keys
+        ):
+            created_keys.add("deal_demo_follow_up")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_demo_follow_up",
+                title="Send the post-demo recap",
+                description="The demo is done and Beacon does not see a recap or next-step email yet. Send the recap within 24 hours so the qualification motion stays crisp.",
+                priority="high",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "meeting_id": str(latest_completed_demo.id) if latest_completed_demo.id else None},
+                assigned_role="ae",
+            )
+
+        if demo_moment is not None and _text_contains_any(recent_texts, ["tech faq", "architecture diagram", "architecture", "security doc", "technical faq"]) and not await _recent_system_task_exists(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_demo_tech_asset",
+            days=7,
+        ):
+            created_keys.add("deal_demo_tech_asset")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_demo_tech_asset",
+                title="Send the requested technical asset",
+                description="The buyer asked for technical follow-up material after the demo. Send the FAQ, architecture diagram, or the right technical artifact while the context is still active.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+        if (
+            demo_moment is not None
+            and demo_moment <= now - timedelta(days=5)
+            and not _has_external_email_after(activity_rows, after=demo_moment, internal_domain=internal_domain)
+        ):
+            created_keys.add("deal_demo_nudge")
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key="deal_demo_nudge",
+                title="Nudge the buyer after the demo",
+                description="It has been 5+ days since the demo with no buyer response. Send a light next-step nudge rather than jumping straight to commercial tasks.",
+                priority="medium",
+                source="playbook",
+                recommended_action=None,
+                action_payload={"deal_id": str(deal.id), "playbook_stage": deal.stage},
+                assigned_role="ae",
+            )
+
+    if _text_contains_any(recent_texts, ["next year budget", "budget next year", "no budget this year", "6 months", "six months", "more than 6 months", "not this quarter"]):
+        created_keys.add("deal_move_nurture")
+        await _upsert_system_task(
+            session,
+            entity_type="deal",
+            entity_id=deal.id,
+            system_key="deal_move_nurture",
+            title="Move deal to Nurture",
+            description="The buyer signaled a long timeline or no near-term budget. Move the deal to Nurture so the pipeline reflects future-fit reality.",
+            priority="high",
+            source="playbook",
+            recommended_action="move_deal_stage",
+            action_payload={"deal_id": str(deal.id), "stage": "nurture"},
+            assigned_role="ae",
+        )
 async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
     deal = await session.get(Deal, entity_id)
     if not deal:
@@ -935,6 +2930,8 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             continue
         latest_thread_intent = str(metadata.get("thread_latest_intent") or "").strip() or None
         suggestion = _deal_signal_task_from_intent(latest_thread_intent, deal.stage) or _deal_signal_task(text, deal.stage)
+        if suggestion and not stage_allows_stage_move(deal.stage, suggestion[0]):
+            suggestion = None
         if suggestion and not move_recommendation_created:
             target_stage, title, description = suggestion
             system_key = f"deal_move_{target_stage}"
@@ -1034,7 +3031,13 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
                 assigned_role="ae",
             )
 
-    if pricing_request:
+    if pricing_request and stage_allows_system_key(deal.stage, "deal_send_pricing") and _stage_allows_pricing_package(deal.stage) and not await _recent_system_task_exists(
+        session,
+        entity_type="deal",
+        entity_id=deal.id,
+        system_key="deal_send_pricing",
+        days=1,
+    ):
         created_keys.add("deal_send_pricing")
         await _upsert_system_task(
             session,
@@ -1050,7 +3053,13 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             assigned_role="ae",
         )
 
-    if workshop_signal and not _stage_reached(deal.stage, "workshop"):
+    if workshop_signal and not _stage_reached(deal.stage, "workshop") and stage_allows_system_key(deal.stage, "deal_book_workshop") and _stage_allows_workshop_booking(deal.stage) and not await _recent_system_task_exists(
+        session,
+        entity_type="deal",
+        entity_id=deal.id,
+        system_key="deal_book_workshop",
+        days=1,
+    ):
         created_keys.add("deal_book_workshop")
         await _upsert_system_task(
             session,
@@ -1066,7 +3075,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             assigned_role="ae",
         )
 
-    if legal_signal and not _has_security_stakeholder(linked_contacts):
+    if legal_signal and not _has_security_stakeholder(linked_contacts) and stage_allows_system_key(deal.stage, "deal_add_security_contact"):
         created_keys.add("deal_add_security_contact")
         await _upsert_system_task(
             session,
@@ -1183,7 +3192,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
     recent_external = next((activity for activity in activity_rows if _email_domain(activity.email_from) != internal_domain), None)
     if recent_internal and (
         recent_external is None or recent_external.created_at < recent_internal.created_at
-    ) and recent_internal.created_at < datetime.utcnow() - timedelta(days=5):
+    ) and recent_internal.created_at < datetime.utcnow() - timedelta(days=5) and stage_allows_system_key(deal.stage, "deal_follow_up"):
         created_keys.add("deal_follow_up")
         await _upsert_system_task(
             session,
@@ -1199,7 +3208,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             assigned_role="ae",
         )
 
-    if pricing_pushback:
+    if pricing_pushback and stage_allows_system_key(deal.stage, "deal_pricing_pushback"):
         created_keys.add("deal_pricing_pushback")
         await _upsert_system_task(
             session,
@@ -1215,7 +3224,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             assigned_role="ae",
         )
 
-    if competitor_name:
+    if competitor_name and stage_allows_system_key(deal.stage, "deal_competitor_risk"):
         created_keys.add("deal_competitor_risk")
         await _upsert_system_task(
             session,
@@ -1230,6 +3239,14 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             action_payload={"deal_id": str(deal.id), "competitor": competitor_name},
             assigned_role="ae",
         )
+
+    await _apply_stage_playbook_tasks(
+        session,
+        deal,
+        activity_rows,
+        linked_contacts,
+        created_keys=created_keys,
+    )
 
     base_score, _ = compute_health(deal, activity_rows)
     score = base_score
@@ -1250,7 +3267,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
         score -= 6
     if "deal_voicemail_follow_up" in created_keys:
         score -= 3
-    if reschedule_mentions >= 2:
+    if reschedule_mentions >= 2 and stage_allows_system_key(deal.stage, "deal_reschedule_risk"):
         score -= 8
         created_keys.add("deal_reschedule_risk")
         await _upsert_system_task(
@@ -1278,6 +3295,21 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
         "deal_move_",
         "deal_attach_contact_",
         "deal_add_contact_",
+        "deal_reprospect_",
+        "deal_demo_",
+        "deal_qualified_lead_",
+        "deal_poc_agreed_",
+        "deal_poc_wip_",
+        "deal_poc_done_",
+        "deal_commercial_negotiation_",
+        "deal_workshop_msa_",
+        "deal_closed_won_",
+        "deal_churned_",
+        "deal_not_fit_",
+        "deal_cold_",
+        "deal_closed_lost_",
+        "deal_on_hold_",
+        "deal_nurture_",
         "deal_send_pricing",
         "deal_book_workshop",
         "deal_add_security_contact",
@@ -1649,6 +3681,10 @@ async def apply_task_action(
         }[action]
 
         stage_update: str | None = None
+        if action == "send_pricing_package" and not _stage_allows_pricing_package(deal.stage):
+            raise ValueError("Pricing package actions are gated until the deal reaches post-POC commercial motion.")
+        if action == "book_workshop_session" and not _stage_allows_workshop_booking(deal.stage):
+            raise ValueError("Workshop booking actions are gated until commercials are underway.")
         if action == "send_pricing_package" and not _stage_reached(deal.stage, "commercial_negotiation"):
             stage_update = "commercial_negotiation"
         elif action == "book_workshop_session" and not _stage_reached(deal.stage, "workshop"):
