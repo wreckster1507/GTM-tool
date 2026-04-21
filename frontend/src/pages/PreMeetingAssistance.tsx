@@ -79,6 +79,112 @@ function timeAgo(dateStr?: string): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
+type NormalizedMeetingAttendee = {
+  name: string;
+  email?: string;
+  title?: string;
+  contactId?: string;
+};
+
+type PrepStakeholder = {
+  name: string;
+  title?: string;
+  email?: string;
+  contactId?: string;
+  linkedinUrl?: string;
+  role: string;
+  roleLabel: string;
+  status: "attending" | "recommended";
+  likelyFocus?: string;
+  talkTrack?: string;
+  questions: string[];
+};
+
+function normalizeMeetingAttendees(attendees: unknown): NormalizedMeetingAttendee[] {
+  if (!Array.isArray(attendees)) return [];
+  return attendees
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map((item) => ({
+      name: String(item.name || item.email || "Unknown attendee").trim(),
+      email: typeof item.email === "string" ? item.email : undefined,
+      title: typeof item.title === "string" ? item.title : undefined,
+      contactId: typeof item.contact_id === "string" ? item.contact_id : undefined,
+    }));
+}
+
+function normalizeStakeholderCards(attendeeIntel: Record<string, any>, attendees: NormalizedMeetingAttendee[]): PrepStakeholder[] {
+  const cards = Array.isArray(attendeeIntel.stakeholder_cards) ? attendeeIntel.stakeholder_cards : [];
+  if (cards.length === 0) {
+    return attendees.map((attendee) => ({
+      name: attendee.name,
+      title: attendee.title,
+      email: attendee.email,
+      contactId: attendee.contactId,
+      role: "unknown",
+      roleLabel: "Stakeholder",
+      status: "attending",
+      questions: [],
+    }));
+  }
+
+  return cards
+    .filter((item): item is Record<string, any> => !!item && typeof item === "object")
+    .map((item) => ({
+      name: String(item.name || item.email || "Unknown stakeholder").trim(),
+      title: typeof item.title === "string" ? item.title : undefined,
+      email: typeof item.email === "string" ? item.email : undefined,
+      contactId: typeof item.contact_id === "string" ? item.contact_id : undefined,
+      linkedinUrl: typeof item.linkedin_url === "string" ? item.linkedin_url : undefined,
+      role: typeof item.role === "string" ? item.role : "unknown",
+      roleLabel: typeof item.role_label === "string" ? item.role_label : "Stakeholder",
+      status: item.status === "recommended" ? "recommended" : "attending",
+      likelyFocus: typeof item.likely_focus === "string" ? item.likely_focus : undefined,
+      talkTrack: typeof item.talk_track === "string" ? item.talk_track : undefined,
+      questions: Array.isArray(item.questions_to_ask) ? item.questions_to_ask.filter((value): value is string => typeof value === "string") : [],
+    }));
+}
+
+function activityChannel(activity: Activity): "email" | "call" | "linkedin" | "meeting" | "other" {
+  const medium = (activity.medium || "").toLowerCase();
+  const type = (activity.type || "").toLowerCase();
+  const source = (activity.source || "").toLowerCase();
+  if (medium === "linkedin" || source.includes("linkedin")) return "linkedin";
+  if (type === "email" || medium === "email" || source === "instantly") return "email";
+  if (type === "call" || medium === "call") return "call";
+  if (type === "meeting" || type === "transcript" || medium === "meeting" || medium === "in_person") return "meeting";
+  return "other";
+}
+
+function activityChannelLabel(channel: ReturnType<typeof activityChannel>): string {
+  switch (channel) {
+    case "email":
+      return "Email";
+    case "call":
+      return "Call";
+    case "linkedin":
+      return "LinkedIn";
+    case "meeting":
+      return "Meeting";
+    default:
+      return "Other";
+  }
+}
+
+function activitySnippet(activity: Activity): string {
+  if (activity.ai_summary) return activity.ai_summary;
+  if (activity.email_subject) return activity.email_subject;
+  if (activity.content) return activity.content;
+  if (activity.call_outcome) return `Call outcome: ${activity.call_outcome}`;
+  return "Activity logged";
+}
+
+function domainUrl(domain?: string): string | null {
+  if (!domain) return null;
+  const trimmed = domain.trim();
+  if (!trimmed) return null;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 function SectionHeader({ icon: Icon, label, color }: { icon: any; label: string; color: string }) {
   return (
     <div style={{ fontSize: 10, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
@@ -137,6 +243,7 @@ function MeetingIntelCard({
   company,
   deal,
   lastActivity,
+  dealActivities,
   assigneeName,
   allCompanies,
   onRunIntel,
@@ -150,6 +257,7 @@ function MeetingIntelCard({
   company?: Company;
   deal?: Deal;
   lastActivity?: Activity;
+  dealActivities: Activity[];
   assigneeName?: string;
   allCompanies: Company[];
   onRunIntel: (id: string) => void;
@@ -217,10 +325,9 @@ function MeetingIntelCard({
   const whyNow: Array<{ title: string; detail: string }> = rd.why_now_signals ?? [];
   const recommendations: string[] = rd.meeting_recommendations ?? [];
   const attendeeIntel = rd.attendee_intelligence ?? {};
-  const stakeholders: Array<{
-    name: string; title?: string; persona?: string; committee_role?: string;
-    talk_track?: string; discovery_questions?: string[]; linkedin_url?: string;
-  }> = attendeeIntel.stakeholder_cards ?? [];
+  const crmSignals = rd.crm_signals ?? {};
+  const meetingAttendees = normalizeMeetingAttendees(meeting.attendees);
+  const stakeholders = normalizeStakeholderCards(attendeeIntel, meetingAttendees);
   const coverage: number | null = attendeeIntel.committee_coverage?.coverage_score ?? null;
   const competitive: Array<{ name?: string; competitor?: string; summary?: string }> = rd.competitive_landscape ?? [];
   const intentSignals = rd.intent_signals ?? {};
@@ -230,8 +337,57 @@ function MeetingIntelCard({
   const pricingModel: string = websiteAnalysis.pricing_model ?? "";
   const hunterCo = rd.hunter_company ?? {};
   const companySnapshot = rd.company_snapshot ?? {};
+  const companyProfile = rd.company_profile ?? {};
+  const companyBackground = rd.company_background ?? {};
   const newsItems: Array<{ title?: string; url?: string; published?: string }> = rd.recent_news ?? rd.news ?? [];
   const battlecards: Array<{ competitor?: string; win_reasons?: string[]; objection_handling?: string }> = rd.battlecards ?? [];
+  const priorMeetings: Array<Record<string, any>> = Array.isArray(crmSignals.prior_meetings) ? crmSignals.prior_meetings : [];
+
+  const attendeeContactIds = new Set(stakeholders.map((stakeholder) => stakeholder.contactId).filter(Boolean));
+  const sortedDealActivities = [...dealActivities].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const attendeeActivities = sortedDealActivities.filter((activity) => activity.contact_id && attendeeContactIds.has(activity.contact_id));
+  const relevantActivities = attendeeActivities.length > 0 ? attendeeActivities : sortedDealActivities;
+  const activityCounts = relevantActivities.reduce(
+    (acc, activity) => {
+      const channel = activityChannel(activity);
+      if (channel === "email") acc.emails += 1;
+      else if (channel === "call") acc.calls += 1;
+      else if (channel === "linkedin") acc.linkedin += 1;
+      else if (channel === "meeting") acc.meetings += 1;
+      return acc;
+    },
+    { emails: 0, calls: 0, linkedin: 0, meetings: priorMeetings.length || 0 },
+  );
+  activityCounts.meetings = Math.max(activityCounts.meetings, priorMeetings.length);
+
+  const dominantChannel = ([
+    { key: "emails", label: "email", value: activityCounts.emails },
+    { key: "calls", label: "call", value: activityCounts.calls },
+    { key: "linkedin", label: "LinkedIn", value: activityCounts.linkedin },
+    { key: "meetings", label: "meeting", value: activityCounts.meetings },
+  ].sort((a, b) => b.value - a.value)[0]);
+
+  const likelyDecisionMaker =
+    stakeholders.find((stakeholder) => stakeholder.role === "economic_buyer" && stakeholder.status === "attending")
+    || stakeholders.find((stakeholder) => stakeholder.role === "economic_buyer")
+    || stakeholders.find((stakeholder) => stakeholder.role === "champion" && stakeholder.status === "attending")
+    || stakeholders.find((stakeholder) => stakeholder.role === "champion")
+    || stakeholders[0];
+  const championContact =
+    stakeholders.find((stakeholder) => stakeholder.role === "champion" && stakeholder.status === "attending")
+    || stakeholders.find((stakeholder) => stakeholder.role === "champion");
+  const companySummary =
+    companyBackground.description
+    || companyBackground.extract
+    || whyNow[0]?.detail
+    || execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").split("\n").filter(Boolean)[0]
+    || "";
+  const companyLinks = [
+    company?.id ? { label: "Company record", href: `/companies/${company.id}`, internal: true } : null,
+    domainUrl(company?.domain || companyProfile.domain) ? { label: "Website", href: domainUrl(company?.domain || companyProfile.domain)!, internal: false } : null,
+    newsItems.find((item) => item.url)?.url ? { label: "Latest news", href: newsItems.find((item) => item.url)!.url!, internal: false } : null,
+  ].filter((item): item is { label: string; href: string; internal: boolean } => Boolean(item));
+  const activityScopeLabel = attendeeActivities.length > 0 ? "Activity with invited prospects" : "Deal-wide activity";
 
   // Risks
   const risks: string[] = [];
@@ -472,11 +628,11 @@ function MeetingIntelCard({
                 <SectionHeader icon={Users} label={`Stakeholders (${stakeholders.length})`} color="#5a1fa5" />
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {stakeholders.map((s, i) => {
-                    const role = s.committee_role ?? "unknown";
+                    const role = s.role ?? "unknown";
                     const rc = roleColors[role] ?? roleColors.unknown;
                     return (
                       <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 999, background: rc.bg, color: rc.color, border: `1px solid ${rc.border}`, fontSize: 11, fontWeight: 700 }}>
-                        {s.name}{s.title ? ` · ${s.title}` : ""}
+                        {s.name}{s.title ? ` · ${s.title}` : ""}{s.status === "recommended" ? " · not on invite" : ""}
                       </span>
                     );
                   })}
@@ -502,6 +658,146 @@ function MeetingIntelCard({
       {/* ── Expanded full prep brief ──────────────────────────────────────── */}
       {expanded && hasResearch && (
         <div style={{ borderTop: `1px solid ${colors.border}`, padding: "18px 20px", display: "grid", gap: 16, background: "#fafbfd" }}>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff", border: "1px solid #e8edf5", display: "grid", gap: 10 }}>
+              <SectionHeader icon={Building2} label="Account Brief" color={colors.sub} />
+              <div style={{ fontSize: 13, color: "#3d5268", lineHeight: 1.65 }}>
+                {companySummary || "Beacon gathered account research, but the concise company narrative is still thin. Use the sources below for the fuller context."}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(companySnapshot.industry || companyProfile.industry) && <Pill label={String(companySnapshot.industry || companyProfile.industry)} color="#24567e" bg="#f3f8ff" border="#d5e5ff" />}
+                {(hunterCo.employees || companySnapshot.employee_count) && <Pill label={`${hunterCo.employees ?? companySnapshot.employee_count} employees`} color="#1f3144" bg="#f8fafc" border="#e2e8f0" />}
+                {pricingModel && <Pill label={pricingModel} color="#7c3f00" bg="#fff4df" border="#ffe3b3" />}
+              </div>
+              {companyLinks.length > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {companyLinks.map((link) =>
+                    link.internal ? (
+                      <Link
+                        key={link.label}
+                        to={link.href}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none" }}
+                      >
+                        {link.label} <ExternalLink size={11} />
+                      </Link>
+                    ) : (
+                      <a
+                        key={link.label}
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none" }}
+                      >
+                        {link.label} <ExternalLink size={11} />
+                      </a>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff", border: "1px solid #e8edf5", display: "grid", gap: 10 }}>
+              <SectionHeader icon={Users} label="Who To Hear Out" color="#5a1fa5" />
+              {likelyDecisionMaker ? (
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff8f5", border: "1px solid #ffd5be" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#b05a2a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Likely decision maker</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: colors.text }}>{likelyDecisionMaker.name}</span>
+                      {likelyDecisionMaker.title && <span style={{ fontSize: 12, color: colors.sub }}>{likelyDecisionMaker.title}</span>}
+                      <Pill
+                        label={`${likelyDecisionMaker.roleLabel}${likelyDecisionMaker.status === "recommended" ? " · not on invite" : ""}`}
+                        color="#b05a2a"
+                        bg="#fff4e8"
+                        border="#ffd5be"
+                      />
+                    </div>
+                    {likelyDecisionMaker.likelyFocus && (
+                      <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.55, marginTop: 6 }}>
+                        Hear them out on: {likelyDecisionMaker.likelyFocus}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {likelyDecisionMaker.contactId && (
+                        <Link to={`/contacts/${likelyDecisionMaker.contactId}`} style={{ fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none" }}>
+                          Prospect record
+                        </Link>
+                      )}
+                      {likelyDecisionMaker.linkedinUrl && (
+                        <a href={likelyDecisionMaker.linkedinUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          LinkedIn <ExternalLink size={11} />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {championContact && championContact.name !== likelyDecisionMaker.name && (
+                    <div style={{ padding: "10px 12px", borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Likely champion</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: colors.text }}>{championContact.name}{championContact.title ? ` · ${championContact.title}` : ""}</div>
+                      {championContact.likelyFocus && <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.55, marginTop: 6 }}>Likely angle: {championContact.likelyFocus}</div>}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: colors.faint, lineHeight: 1.55 }}>
+                  No clear buying-committee view yet. Run intel again after attendee links or contact mapping improves.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff", border: "1px solid #e8edf5", display: "grid", gap: 12 }}>
+            <SectionHeader icon={ActivityIcon} label={activityScopeLabel} color={colors.sub} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Pill label={`${activityCounts.emails} emails`} color="#2f8d5d" bg="#eefbf2" border="#cfe8d7" />
+              <Pill label={`${activityCounts.calls} calls`} color="#445fd0" bg="#eef3ff" border="#d5e5ff" />
+              <Pill label={`${activityCounts.linkedin} LinkedIn`} color="#0a66c2" bg="#eef4ff" border="#d7e2fb" />
+              <Pill label={`${activityCounts.meetings} meetings`} color="#b05a2a" bg="#fff4e8" border="#ffd5be" />
+            </div>
+            <div style={{ fontSize: 12, color: colors.sub, lineHeight: 1.6 }}>
+              {dominantChannel && dominantChannel.value > 0
+                ? `Most of the motion so far has happened through ${dominantChannel.label}. Use the timeline below to see what topics actually moved the conversation.`
+                : "Beacon does not yet have enough logged channel activity to show a conviction path for this deal."}
+            </div>
+
+            {relevantActivities.length > 0 && (
+              <div style={{ display: "grid", gap: 8 }}>
+                {relevantActivities.slice(0, 8).map((activity) => {
+                  const channel = activityChannel(activity);
+                  const actor = activity.user_name || activity.aircall_user_name || activity.email_from || "Beacon";
+                  return (
+                    <div key={activity.id} style={{ padding: "10px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <Pill label={activityChannelLabel(channel)} color="#3856c8" bg="#eef4ff" border="#d7e2fb" />
+                          <span style={{ fontSize: 11, color: colors.faint }}>{actor}</span>
+                        </div>
+                        <span style={{ fontSize: 11, color: colors.faint }}>{timeAgo(activity.created_at)}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.55 }}>
+                        {activitySnippet(activity)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {priorMeetings.length > 0 && (
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em" }}>Prior meeting takeaways</div>
+                {priorMeetings.slice(0, 2).map((prior, index) => (
+                  <div key={`${prior.title || "prior"}-${index}`} style={{ padding: "10px 12px", borderRadius: 10, background: "#fff8f5", border: "1px solid #ffd5be" }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: colors.text }}>{prior.title || "Previous meeting"}</div>
+                    {prior.ai_summary && <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.55, marginTop: 4 }}>{prior.ai_summary}</div>}
+                    {prior.next_steps && <div style={{ fontSize: 11, color: colors.sub, marginTop: 4 }}>Next step then: {prior.next_steps}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Full executive briefing */}
           {execBriefing && (
@@ -534,7 +830,7 @@ function MeetingIntelCard({
               <SectionHeader icon={Users} label={`Stakeholder Prep (${stakeholders.length})`} color="#5a1fa5" />
               <div style={{ display: "grid", gap: 10 }}>
                 {stakeholders.map((s, i) => {
-                  const role = s.committee_role ?? "unknown";
+                  const role = s.role ?? "unknown";
                   const rc = roleColors[role] ?? roleColors.unknown;
                   return (
                     <div key={i} style={{ padding: "12px 14px", borderRadius: 12, background: "#fff", border: `1px solid ${rc.border}` }}>
@@ -542,25 +838,36 @@ function MeetingIntelCard({
                         <span style={{ fontSize: 13, fontWeight: 800, color: colors.text }}>{s.name}</span>
                         {s.title && <span style={{ fontSize: 12, color: colors.sub }}>{s.title}</span>}
                         <span style={{ padding: "2px 8px", borderRadius: 999, background: rc.bg, color: rc.color, border: `1px solid ${rc.border}`, fontSize: 10, fontWeight: 700, textTransform: "capitalize" }}>
-                          {role.replace(/_/g, " ")}
+                          {s.roleLabel}{s.status === "recommended" ? " · not on invite" : ""}
                         </span>
-                        {s.linkedin_url && (
-                          <a href={s.linkedin_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: colors.primary, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        {s.contactId && (
+                          <Link to={`/contacts/${s.contactId}`} style={{ fontSize: 11, color: colors.primary, textDecoration: "none" }}>
+                            Prospect record
+                          </Link>
+                        )}
+                        {s.linkedinUrl && (
+                          <a href={s.linkedinUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: colors.primary, display: "inline-flex", alignItems: "center", gap: 3 }}>
                             LinkedIn <ExternalLink size={10} />
                           </a>
                         )}
                       </div>
-                      {s.talk_track && (
+                      {s.likelyFocus && (
                         <div style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Talk Track</div>
-                          <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5, padding: "8px 10px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e8edf5" }}>{s.talk_track}</div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Likely Focus</div>
+                          <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5, padding: "8px 10px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e8edf5" }}>{s.likelyFocus}</div>
                         </div>
                       )}
-                      {s.discovery_questions && s.discovery_questions.length > 0 && (
+                      {s.talkTrack && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Talk Track</div>
+                          <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5, padding: "8px 10px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e8edf5" }}>{s.talkTrack}</div>
+                        </div>
+                      )}
+                      {s.questions && s.questions.length > 0 && (
                         <div>
                           <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Discovery Questions</div>
                           <div style={{ display: "grid", gap: 4 }}>
-                            {s.discovery_questions.map((q, qi) => (
+                            {s.questions.map((q, qi) => (
                               <div key={qi} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, color: "#3d5268", lineHeight: 1.45 }}>
                                 <span style={{ fontWeight: 800, color: colors.primary, flexShrink: 0 }}>{qi + 1}.</span>
                                 <span>{q}</span>
@@ -1076,6 +1383,17 @@ export default function PreMeetingAssistance() {
     return map;
   }, [activities]);
 
+  const activitiesByDeal = useMemo(() => {
+    const map = new Map<string, Activity[]>();
+    for (const activity of activities) {
+      if (!activity.deal_id) continue;
+      const bucket = map.get(activity.deal_id) ?? [];
+      bucket.push(activity);
+      map.set(activity.deal_id, bucket);
+    }
+    return map;
+  }, [activities]);
+
   const dealAssigneeMap = useMemo(() => {
     const userMap = new Map(users.map((u) => [u.id, u.name]));
     const map = new Map<string, { id: string; name: string }>();
@@ -1188,8 +1506,8 @@ export default function PreMeetingAssistance() {
             </h2>
             <p className="crm-muted" style={{ maxWidth: 640, lineHeight: 1.7 }}>
               {isAdmin
-                ? "Review upcoming meetings across the team, check intel status, and trigger research before calls. Beacon auto-sends a brief to each assigned rep 12 hours before the meeting."
-                : "Your upcoming meetings in one place. Run pre-meeting intel before any call — get account context, stakeholder talk tracks, discovery questions, competitive intel, and recommended actions. Beacon sends the brief to you automatically 12 hours before."}
+                ? "Review upcoming meetings across the team, check intel status, and trigger research before calls. Beacon now surfaces account summary, stakeholder guidance, linked source pages, and channel activity so reps can see what already moved the deal."
+                : "Your upcoming meetings in one place. Run pre-meeting intel before any call — get account context, stakeholder talk tracks, source links, and the actual email / call / LinkedIn history that got the deal here. Beacon sends the brief to you automatically 12 hours before."}
             </p>
           </div>
 
@@ -1361,6 +1679,7 @@ export default function PreMeetingAssistance() {
                 company={m.company_id ? companyMap.get(m.company_id) : undefined}
                 deal={deal}
                 lastActivity={lastActivity}
+                dealActivities={m.deal_id ? activitiesByDeal.get(m.deal_id) ?? [] : []}
                 assigneeName={isAdmin && assignee ? assignee.name : undefined}
                 allCompanies={companies}
                 onRunIntel={handleRunIntel}
