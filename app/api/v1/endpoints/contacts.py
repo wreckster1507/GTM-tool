@@ -250,11 +250,25 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     # Sequence Settings (Email D0 / LinkedIn D3 / Call D7 etc). This only
     # runs for fresh prospects — the refresh helper refuses to overwrite
     # the plan once the sequence has started.
+    company_for_tz = None
     if contact.company_id:
-        company = await session.get(Company, contact.company_id)
-        if company:
+        company_for_tz = await session.get(Company, contact.company_id)
+        if company_for_tz:
             ws_schedule = await load_workspace_sequence_schedule(session)
-            refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+            refresh_contact_sequence_plan(contact, company_for_tz, workspace_schedule=ws_schedule)
+
+    # Infer timezone from phone country-code + company HQ when the rep
+    # didn't supply one. Saves the "where are they / when should I call"
+    # guess-work on every cold call.
+    if not contact.timezone:
+        from app.services.timezone_infer import infer_timezone
+
+        contact.timezone = infer_timezone(
+            phone=contact.phone,
+            company_hq=getattr(company_for_tz, "headquarters", None),
+            company_region=getattr(company_for_tz, "region", None),
+            company_name=getattr(company_for_tz, "name", None),
+        )
 
     saved = await ContactRepository(session).save(contact)
     return await to_contact_read(session, saved)
@@ -278,6 +292,24 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
         setattr(contact, key, value)
     if "title" in update_data or "seniority" in update_data:
         contact.persona = classify_persona(contact)
+
+    # If the rep updated the phone (or the contact still has no timezone),
+    # re-run inference. A rep explicitly setting `timezone` always wins.
+    if "timezone" not in update_data:
+        phone_changed = "phone" in update_data
+        if phone_changed or not contact.timezone:
+            from app.services.timezone_infer import infer_timezone
+
+            company_for_tz = await session.get(Company, contact.company_id) if contact.company_id else None
+            inferred = infer_timezone(
+                phone=contact.phone,
+                company_hq=getattr(company_for_tz, "headquarters", None),
+                company_region=getattr(company_for_tz, "region", None),
+                company_name=getattr(company_for_tz, "name", None),
+            )
+            if inferred:
+                contact.timezone = inferred
+
     contact.updated_at = datetime.utcnow()
     saved = await repo.save(contact)
 
