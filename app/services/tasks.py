@@ -37,6 +37,7 @@ STAGE_INDEX = {stage: idx for idx, stage in enumerate(DEAL_STAGES)}
 AI_TASK_REFRESH_TTL = timedelta(minutes=10)
 AI_TASK_REFRESH_DEBOUNCE = timedelta(seconds=45)
 AI_TASK_SIGNAL_WINDOW = 25
+AI_TASK_POLICY_VERSION = "2026-04-21-contextual-v2"
 STAGE_OWNER_MATRIX: dict[str, tuple[str, str, str]] = {
     "reprospect": ("SDR", "AE shadow; Marketing for trigger content", "sdr"),
     "demo_scheduled": ("AE", "SDR for rescheduling; Rakesh for strategic accounts", "ae"),
@@ -93,6 +94,7 @@ async def compute_deal_task_input_hash(session: AsyncSession, deal: Deal) -> str
     ).scalars().all()
 
     payload = {
+        "policy_version": AI_TASK_POLICY_VERSION,
         "deal": {
             "id": str(deal.id),
             "stage": deal.stage,

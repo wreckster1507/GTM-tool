@@ -338,6 +338,17 @@ def _build_why_now_signals(
 ) -> list[dict[str, Any]]:
     why_now: list[dict[str, Any]] = []
 
+    def _coerce_signal_item(value: Any) -> dict[str, Any] | None:
+        if isinstance(value, dict):
+            title = str(value.get("title") or value.get("snippet") or "").strip()
+            url = str(value.get("url") or "").strip() or None
+            if not title:
+                return None
+            return {"detail": title, "url": url}
+        if isinstance(value, str) and value.strip():
+            return {"detail": value.strip(), "url": None}
+        return None
+
     for key, label in (
         ("funding", "Funding / budget signal"),
         ("hiring", "Hiring / scaling signal"),
@@ -345,13 +356,14 @@ def _build_why_now_signals(
     ):
         items = (intent_signals or {}).get(key, [])
         if items:
-            first = items[0]
-            why_now.append({
-                "title": label,
-                "detail": first.get("title") or first.get("snippet") or "",
-                "source": "web_search",
-                "url": first.get("url"),
-            })
+            first = _coerce_signal_item(items[0])
+            if first:
+                why_now.append({
+                    "title": label,
+                    "detail": first["detail"],
+                    "source": "web_search",
+                    "url": first["url"],
+                })
 
     for article in (recent_news or [])[:2]:
         why_now.append({
