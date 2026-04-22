@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { Settings2, Plus, Trash2, X, Check, Loader2 } from "lucide-react";
 import { settingsApi } from "../../lib/api";
 
+// Keep this in lockstep with MAX_SEQUENCE_STEPS in OutreachDrawer.tsx — the
+// two components author cadences at different scopes (workspace defaults
+// here, per-prospect overrides there) but the ceiling should match so reps
+// don't see one surface allow more steps than another.
+const MAX_SEQUENCE_STEPS = 12;
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -194,7 +200,7 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
             </div>
 
             {/* Add step */}
-            {steps.length < 6 && (
+            {steps.length < MAX_SEQUENCE_STEPS && (
               <button
                 onClick={addStep}
                 style={{
