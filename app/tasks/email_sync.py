@@ -115,7 +115,8 @@ async def _async_sync() -> dict:
     from app.models.contact import Contact
     from app.models.deal import Deal, DealContact
     from app.models.settings import WorkspaceSettings
-    from app.services.personal_email_sync import _detect_latest_intent, _load_existing_thread_segments
+    from app.services.activity_signal_classifier import detect_latest_intent_from_segments
+    from app.services.personal_email_sync import _load_existing_thread_segments
     from app.services.tasks import refresh_system_tasks_for_entity
 
     # Fresh engine per task
@@ -338,7 +339,7 @@ async def _async_sync() -> dict:
                             thread_id=msg.thread_id or msg.message_id,
                         )
                     thread_segments = [*thread_context_cache[thread_cache_key], latest_message_text]
-                    thread_latest_intent = _detect_latest_intent(thread_segments)
+                    thread_latest_intent = detect_latest_intent_from_segments(thread_segments)
                     thread_context_excerpt = "\n\n".join(thread_segments[-4:])[:4000]
 
                     activity = Activity(

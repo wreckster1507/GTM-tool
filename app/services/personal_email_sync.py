@@ -33,6 +33,7 @@ from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.models.task import Task
+from app.services.activity_signal_classifier import detect_latest_intent_from_segments
 from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
 from app.services.prospect_hygiene import is_valid_prospect_candidate
@@ -47,30 +48,6 @@ FREE_EMAIL_PROVIDERS = {
     "icloud.com",
     "protonmail.com",
 }
-
-# ── AI task triggers ──────────────────────────────────────────────────────────
-# Maps intent phrases → (system_key, suggested_action_label)
-INTENT_TASK_MAP = [
-    (["agreed to poc", "agree to poc", "proceed with poc", "let's do a poc", "happy to start poc",
-      "interested in poc", "keen on poc", "move to poc"], "move_deal_stage:poc_agreed"),
-    (["signed the msa", "msa signed", "contracts signed", "signed agreement",
-      "send over the contract", "finalize the contract"], "move_deal_stage:commercial_negotiation"),
-    (["closed", "going with you", "selected beacon", "chosen beacon",
-      "moving forward with beacon"], "move_deal_stage:closed_won"),
-    (["not interested", "not a fit", "no longer pursuing", "decided against",
-      "going with another vendor", "not moving forward"], "move_deal_stage:not_a_fit"),
-    (["send pricing", "share pricing", "what does it cost", "pricing details",
-      "can you send a quote", "send a proposal"], "send_pricing_package"),
-    (["schedule a call", "book a meeting", "can we meet", "set up a call",
-      "let's connect", "find a time", "calendar invite"], "book_workshop_session"),
-    (["following up", "circling back", "checking in", "any update",
-      "just wanted to follow", "haven't heard"], "follow_up_buyer_thread"),
-    (["poc update", "poc progress", "poc status", "how is the poc",
-      "update on the poc"], "move_deal_stage:poc_wip"),
-    (["poc completed", "poc complete", "completed the poc", "pilot completed",
-      "pilot complete", "wrapped up the poc", "finished the poc"], "move_deal_stage:poc_done"),
-]
-
 
 def _normalize_domain(value: str | None) -> str:
     domain = (value or "").strip().lower()
@@ -118,16 +95,6 @@ def _match_company_from_text(
             return company_id, company_name
     return None
 
-
-def _detect_intent(text: str) -> str | None:
-    """Return a system_key if the email text signals a CRM action."""
-    lower = text.lower()
-    for phrases, system_key in INTENT_TASK_MAP:
-        if any(phrase in lower for phrase in phrases):
-            return system_key
-    return None
-
-
 def _parse_message_datetime(value: str | None) -> datetime:
     if not value:
         return datetime.utcnow()
@@ -140,16 +107,6 @@ def _parse_message_datetime(value: str | None) -> datetime:
         return parsed
     except Exception:
         return datetime.utcnow()
-
-
-def _detect_latest_intent(segments: list[str]) -> str | None:
-    for segment in reversed(segments):
-        intent = _detect_intent(segment)
-        if intent:
-            return intent
-    combined = "\n\n".join(segments[-4:])
-    return _detect_intent(combined)
-
 
 def _is_active_deal_stage(stage: str | None) -> bool:
     normalized = (stage or "").strip().lower()
@@ -840,7 +797,7 @@ async def process_personal_emails(
                     thread_id=msg.thread_id or msg.message_id,
                 )
             thread_segments = [*thread_context_cache[thread_cache_key], latest_message_text]
-            thread_latest_intent = _detect_latest_intent(thread_segments)
+            thread_latest_intent = detect_latest_intent_from_segments(thread_segments)
             thread_context_excerpt = "\n\n".join(thread_segments[-4:])[:4000]
 
             activity = Activity(

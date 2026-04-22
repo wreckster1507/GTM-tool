@@ -11,7 +11,7 @@ must handle None and skip cleanly rather than crashing.
 """
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from app.config import settings
 
@@ -82,6 +82,51 @@ class ClaudeClient:
             return content or None
         except Exception as e:
             logger.error(f"Claude call failed: {e}")
+            return None
+
+    async def complete_structured(
+        self,
+        *,
+        system: str,
+        user: str,
+        tool_name: str,
+        tool_description: str,
+        input_schema: dict[str, Any],
+        max_tokens: int = 800,
+    ) -> Optional[dict[str, Any]]:
+        """Single-turn structured extraction via Claude tool use."""
+        if self.mock:
+            return None
+
+        try:
+            model = self._pick_model(system=system, user=user, max_tokens=max_tokens)
+            client = self._get_client()
+            response = await asyncio.wait_for(
+                client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                    tools=[
+                        {
+                            "name": tool_name,
+                            "description": tool_description,
+                            "input_schema": input_schema,
+                        }
+                    ],
+                    tool_choice={"type": "tool", "name": tool_name},
+                ),
+                timeout=40,
+            )
+            for block in response.content:
+                if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool_name:
+                    payload = getattr(block, "input", None)
+                    if isinstance(payload, dict):
+                        return payload
+            return None
+        except Exception as e:
+            logger.error(f"Claude structured call failed: {e}")
             return None
 
     async def classify_persona(self, title: str, company_context: str = "") -> Optional[str]:

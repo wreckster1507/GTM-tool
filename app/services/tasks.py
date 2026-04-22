@@ -20,9 +20,11 @@ from app.models.task import Task
 from app.models.user import User
 from app.repositories.deal import DealRepository
 from app.services.account_sourcing import append_company_activity_log
+from app.services.activity_signal_classifier import ActivitySignal, classify_activity_text
 from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
+from app.services.deal_activity_interpreter import DealActivityInterpretation, interpret_deal_activity
 from app.services.deal_stage_playbook import stage_allows_stage_move, stage_allows_system_key
 from app.services.deal_health import compute_health
 from app.services.meddpicc_updates import field_has_capture, get_meddpicc_details
@@ -62,6 +64,10 @@ def _normalize(text: str | None) -> str:
 
 def _contains_any(text: str, terms: Iterable[str]) -> bool:
     return any(term in text for term in terms)
+
+
+def _has_blocker_signal(texts: list[str]) -> bool:
+    return any(classify_activity_text(text).blocker == "present" for text in texts if text)
 
 
 def _stable_json_hash(payload: dict) -> str:
@@ -1122,93 +1128,46 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
         await _resolve_system_task(session, entity_type="contact", entity_id=contact.id, system_key="contact_handle_not_interested")
 
 
-def _deal_signal_task(text: str, current_stage: str) -> tuple[str, str, str] | None:
-    if not _stage_reached(current_stage, "poc_done") and (
-        ("poc" in text or "proof of concept" in text or "pilot" in text)
-        and _contains_any(text, ["complete", "completed", "finished", "done", "wrapped up", "successful"])
-    ):
-        return (
-            "poc_done",
-            "Move deal to POC Done",
-            "The latest conversation suggests the POC or pilot is complete. Move the deal forward so the stage matches reality.",
-        )
-    if not _stage_reached(current_stage, "poc_agreed") and (
-        ("poc" in text or "proof of concept" in text or "pilot" in text)
-        and _contains_any(text, ["agree", "agreed", "approved", "move forward", "green light", "aligned"])
-    ):
-        return (
-            "poc_agreed",
-            "Move deal to POC Agreed",
-            "Buyer language indicates alignment on a POC or pilot. Move the deal forward to keep the board accurate.",
-        )
-    if _stage_reached(current_stage, "commercial_negotiation") and not _stage_reached(current_stage, "msa_review") and _contains_any(
-        text,
-        ["msa", "master services agreement", "legal review", "redline", "procurement", "security review"],
-    ):
-        return (
-            "msa_review",
-            "Move deal to MSA Review",
-            "Recent communication suggests legal, procurement, or paper-process work has started. Update the stage to MSA Review.",
-        )
-    if _stage_reached(current_stage, "poc_done") and not _stage_reached(current_stage, "commercial_negotiation") and _contains_any(
-        text,
-        ["pricing", "proposal", "commercial terms", "quote", "budget review", "negotiat"],
-    ):
-        return (
-            "commercial_negotiation",
-            "Move deal to Commercial Negotiation",
-            "The latest buyer signal looks commercial. Move the deal into negotiation so the pipeline reflects what the team is discussing.",
-        )
-    if _stage_reached(current_stage, "commercial_negotiation") and not _stage_reached(current_stage, "workshop") and _contains_any(
-        text,
-        ["workshop", "discovery workshop", "working session"],
-    ) and _contains_any(text, ["schedule", "agreed", "book", "set up"]):
-        return (
-            "workshop",
-            "Move deal to Workshop",
-            "The buyer is aligning on a workshop or working session. Move the deal so the next motion is visible.",
-        )
-    return None
-
-
-def _deal_signal_task_from_intent(intent_key: str | None, current_stage: str) -> tuple[str, str, str] | None:
-    if not intent_key:
+def _deal_signal_task_from_signal(signal: ActivitySignal, current_stage: str) -> tuple[str, str, str] | None:
+    target_stage = signal.stage_cue
+    if not target_stage:
         return None
-    if not intent_key.startswith("move_deal_stage:"):
+    if target_stage == "commercial_negotiation" and not _stage_reached(current_stage, "poc_done"):
         return None
-    target_stage = intent_key.split(":", 1)[1]
+    if target_stage in {"msa_review", "workshop"} and not _stage_reached(current_stage, "commercial_negotiation"):
+        return None
     stage_copy = {
         "poc_agreed": (
             "Move deal to POC Agreed",
-            "The latest buyer thread indicates alignment on a POC or pilot. Move the deal forward so the board stays accurate.",
+            "The latest buyer language clearly aligns on a POC or pilot. Move the deal forward so the board stays accurate.",
         ),
         "poc_wip": (
             "Move deal to POC WIP",
-            "The latest buyer thread sounds like the POC is underway. Update the deal stage so execution is visible.",
+            "The latest buyer language indicates the POC is actively underway. Update the deal stage so execution is visible.",
         ),
         "poc_done": (
             "Move deal to POC Done",
-            "The latest buyer thread indicates the POC is complete. Reflect that progress in the pipeline before the next commercial step.",
+            "The latest buyer language indicates the POC is complete. Reflect that progress in the pipeline before the next commercial step.",
         ),
         "commercial_negotiation": (
             "Move deal to Commercial Negotiation",
-            "The latest buyer thread is now commercial in nature. Move the deal so pricing and terms are tracked in the right stage.",
+            "The latest buyer language is now commercial in nature. Move the deal so pricing and terms are tracked in the right stage.",
         ),
         "msa_review": (
             "Move deal to MSA Review",
-            "The latest buyer thread indicates legal, security, or procurement review is underway. Update the stage to match the current motion.",
+            "The latest buyer language indicates legal, security, or procurement review is underway. Update the stage to match the current motion.",
         ),
         "workshop": (
             "Move deal to Workshop",
-            "The latest buyer thread is coordinating a workshop or working session. Move the deal so the next motion is visible.",
+            "The latest buyer language is coordinating a workshop or working session. Move the deal so the next motion is visible.",
         ),
         "closed_won": (
             "Move deal to Closed Won",
-            "The latest buyer thread signals the deal is moving forward with Beacon. Mark it correctly so the board and forecast stay trustworthy.",
+            "The latest buyer language signals the deal is moving forward with Beacon. Mark it correctly so the board and forecast stay trustworthy.",
         ),
         "not_a_fit": (
             "Move deal to Not a Fit",
-            "The latest buyer thread indicates this is no longer moving forward. Update the deal so the pipeline reflects reality.",
+            "The latest buyer language indicates this is no longer moving forward. Update the deal so the pipeline reflects reality.",
         ),
     }
     if target_stage not in stage_copy or _stage_reached(current_stage, target_stage):
@@ -1217,12 +1176,17 @@ def _deal_signal_task_from_intent(intent_key: str | None, current_stage: str) ->
     return target_stage, title, description
 
 
+def _deal_signal_task(text: str, current_stage: str) -> tuple[str, str, str] | None:
+    return _deal_signal_task_from_signal(classify_activity_text(text), current_stage)
+
+
 async def _apply_stage_playbook_tasks(
     session: AsyncSession,
     deal: Deal,
     activity_rows: list[Activity],
     linked_contacts: list[Contact],
     *,
+    ai_interpretation: DealActivityInterpretation | None,
     created_keys: set[str],
 ) -> None:
     now = datetime.utcnow()
@@ -1298,7 +1262,10 @@ async def _apply_stage_playbook_tasks(
         return
 
     if deal.stage == "qualified_lead":
-        pricing_or_budget_signal = _text_contains_any(
+        pricing_or_budget_signal = (
+            ai_interpretation is not None
+            and ai_interpretation.commercial_state in {"directional", "pricing_request", "pushback"}
+        ) or _text_contains_any(
             recent_texts,
             [
                 "pricing",
@@ -1456,7 +1423,9 @@ async def _apply_stage_playbook_tasks(
                 assigned_role="ae",
             )
 
-        if _text_contains_any(
+        if (
+            ai_interpretation is not None and ai_interpretation.legal_state != "none"
+        ) or _text_contains_any(
             recent_texts,
             [
                 "procurement",
@@ -1664,7 +1633,10 @@ async def _apply_stage_playbook_tasks(
                 assigned_role="ae",
             )
 
-        if _text_contains_any(
+        if (
+            ai_interpretation is not None
+            and ai_interpretation.commercial_state in {"directional", "pricing_request", "pushback"}
+        ) or _text_contains_any(
             recent_texts,
             [
                 "pricing",
@@ -1748,19 +1720,9 @@ async def _apply_stage_playbook_tasks(
                 assigned_role="ae",
             )
 
-        if _text_contains_any(
-            recent_texts,
-            [
-                "blocker",
-                "blocked",
-                "bug",
-                "issue",
-                "error",
-                "not working",
-                "isn't working",
-                "isnt working",
-            ],
-        ):
+        if (
+            ai_interpretation is not None and ai_interpretation.blocker_state == "active"
+        ) or _has_blocker_signal(recent_texts):
             created_keys.add("deal_poc_wip_blocker")
             await _upsert_system_task(
                 session,
@@ -1835,7 +1797,10 @@ async def _apply_stage_playbook_tasks(
                     assigned_role="ae",
                 )
 
-        if _text_contains_any(
+        if (
+            ai_interpretation is not None
+            and ai_interpretation.commercial_state in {"directional", "pricing_request", "pushback"}
+        ) or _text_contains_any(
             recent_texts,
             [
                 "pricing",
@@ -2030,7 +1995,9 @@ async def _apply_stage_playbook_tasks(
                 assigned_role="ae",
             )
 
-        if _text_contains_any(
+        if (
+            ai_interpretation is not None and ai_interpretation.commercial_state == "pushback"
+        ) or _text_contains_any(
             recent_texts,
             ["too expensive", "budget is tight", "budget constraint", "price is high", "discount", "cost concern", "expensive"],
         ):
@@ -2068,10 +2035,14 @@ async def _apply_stage_playbook_tasks(
                 assigned_role="ae",
             )
 
-        if _text_contains_any(
-            recent_texts,
-            ["procurement", "vendor onboarding", "vendor form", "security questionnaire", "company info", "w-9", "w9", "insurance certificate"],
-        ) and not await _recent_system_task_exists(
+        procurement_signal = (
+            (ai_interpretation is not None and ai_interpretation.legal_state == "active_review")
+            or _text_contains_any(
+                recent_texts,
+                ["procurement", "vendor onboarding", "vendor form", "security questionnaire", "company info", "w-9", "w9", "insurance certificate"],
+            )
+        )
+        if procurement_signal and not await _recent_system_task_exists(
             session,
             entity_type="deal",
             entity_id=deal.id,
@@ -3004,19 +2975,20 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
     ).scalars().all()
     deal.stakeholder_count = len({contact.id for contact in linked_contacts if contact.id})
     deal.last_activity_at = max((activity.created_at for activity in activity_rows), default=deal.last_activity_at)
+    ai_interpretation = await interpret_deal_activity(deal, activity_rows, linked_contacts)
 
     created_keys: set[str] = set()
-    legal_signal = False
-    pricing_pushback = False
-    legal_signal_source = "system"
-    pricing_pushback_source = "system"
+    legal_signal = ai_interpretation.legal_state == "active_review"
+    pricing_pushback = ai_interpretation.commercial_state == "pushback"
+    legal_signal_source = "ai_interpreter" if legal_signal else "system"
+    pricing_pushback_source = "ai_interpreter" if pricing_pushback else "system"
     competitor_name: str | None = None
     competitor_source = "system"
-    reschedule_mentions = 0
-    pricing_request = False
-    pricing_request_source = "system"
-    workshop_signal = False
-    workshop_signal_source = "system"
+    reschedule_mentions = 2 if ai_interpretation.reschedule_state == "repeated" else 1 if ai_interpretation.reschedule_state == "single" else 0
+    pricing_request = ai_interpretation.commercial_state in {"directional", "pricing_request", "agreed"}
+    pricing_request_source = "ai_interpreter" if pricing_request else "system"
+    workshop_signal = ai_interpretation.workshop_state == "scheduling"
+    workshop_signal_source = "ai_interpreter" if workshop_signal else "system"
     latest_answered_call = next((activity for activity in activity_rows if activity.source == "aircall" and activity.call_outcome == "answered"), None)
     latest_missed_call = next((activity for activity in activity_rows if activity.source == "aircall" and activity.call_outcome == "missed"), None)
     latest_voicemail = next((activity for activity in activity_rows if activity.source == "aircall" and activity.call_outcome == "voicemail"), None)
@@ -3031,7 +3003,33 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
             for activity in activity_rows
         )
     )
-    move_recommendation_created = False
+    if ai_interpretation.stage_cue:
+        suggestion = _deal_signal_task_from_signal(
+            ActivitySignal(normalized_text="", stage_cue=ai_interpretation.stage_cue),
+            deal.stage,
+        )
+        if suggestion and stage_allows_stage_move(deal.stage, suggestion[0]):
+            target_stage, title, description = suggestion
+            system_key = f"deal_move_{target_stage}"
+            created_keys.add(system_key)
+            await _upsert_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key=system_key,
+                title=title,
+                description=description,
+                priority="high" if target_stage in {"poc_agreed", "msa_review"} else "medium",
+                source="ai_interpreter",
+                recommended_action="move_deal_stage",
+                action_payload={
+                    "deal_id": str(deal.id),
+                    "stage": target_stage,
+                    "activity_id": ai_interpretation.evidence_activity_id,
+                    "confidence": ai_interpretation.stage_confidence,
+                },
+                assigned_role="ae",
+            )
     latest_email_activity_ids_by_thread: set[UUID] = set()
     seen_email_threads: set[str] = set()
     for activity in activity_rows:
@@ -3053,51 +3051,10 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
         text = _activity_signal_text(activity)
         if not text:
             continue
-        latest_thread_intent = str(metadata.get("thread_latest_intent") or "").strip() or None
-        suggestion = _deal_signal_task_from_intent(latest_thread_intent, deal.stage) or _deal_signal_task(text, deal.stage)
-        if suggestion and not stage_allows_stage_move(deal.stage, suggestion[0]):
-            suggestion = None
-        if suggestion and not move_recommendation_created:
-            target_stage, title, description = suggestion
-            system_key = f"deal_move_{target_stage}"
-            created_keys.add(system_key)
-            await _upsert_system_task(
-                session,
-                entity_type="deal",
-                entity_id=deal.id,
-                system_key=system_key,
-                title=title,
-                description=description,
-                priority="high" if target_stage in {"poc_agreed", "msa_review"} else "medium",
-                source=activity.source or "system",
-                recommended_action="move_deal_stage",
-                action_payload={
-                    "deal_id": str(deal.id),
-                    "stage": target_stage,
-                    "activity_id": str(activity.id),
-                },
-                assigned_role="ae",
-            )
-            move_recommendation_created = True
-
-        if latest_thread_intent == "move_deal_stage:msa_review" or _contains_any(text, ["security review", "security questionnaire", "procurement", "legal review", "msa", "redline"]):
-            legal_signal = True
-            legal_signal_source = activity.source or legal_signal_source
-        if _contains_any(text, ["too expensive", "budget is tight", "budget constraint", "price is high", "discount", "cost concern"]):
-            pricing_pushback = True
-            pricing_pushback_source = activity.source or pricing_pushback_source
         detected_competitor = _detect_competitor_signal(text)
         if not competitor_name and detected_competitor:
             competitor_name = detected_competitor
             competitor_source = activity.source or competitor_source
-        if "reschedul" in text:
-            reschedule_mentions += 1
-        if latest_thread_intent == "send_pricing_package" or (_contains_any(text, ["pricing", "proposal", "quote"]) and _contains_any(text, ["send", "share", "review", "please"])):
-            pricing_request = True
-            pricing_request_source = activity.source or pricing_request_source
-        if latest_thread_intent == "book_workshop_session" or _contains_any(text, ["workshop", "working session", "technical deep dive", "implementation session"]):
-            workshop_signal = True
-            workshop_signal_source = activity.source or workshop_signal_source
 
         for item in metadata.get("suggested_existing_contacts") or []:
             contact_id = str(item.get("contact_id") or "").strip()
@@ -3370,6 +3327,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
         deal,
         activity_rows,
         linked_contacts,
+        ai_interpretation=ai_interpretation,
         created_keys=created_keys,
     )
 
