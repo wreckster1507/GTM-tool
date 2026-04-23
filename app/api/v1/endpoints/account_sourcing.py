@@ -865,6 +865,9 @@ async def upload_csv(
                 session.add(company)
                 await session.commit()
                 await session.refresh(company)
+                from app.services.company_auto_mapping import backfill_orphans_for_company
+                await backfill_orphans_for_company(session, company)
+                await session.commit()
                 created += 1
 
             # Preserve investor metadata on the company even when the spreadsheet
@@ -1041,6 +1044,7 @@ async def list_sourced_companies(
     disposition: str | None = Query(default=None),
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
+    owner_id: UUID | None = Query(default=None),
 ):
     """List sourced companies plus lightweight ClickUp-imported accounts."""
     stmt = select(Company).where(_account_sourcing_visibility_filter())
@@ -1063,6 +1067,8 @@ async def list_sourced_companies(
     stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, recommended_outreach_lane)
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
+    if owner_id:
+        stmt = stmt.where(or_(Company.assigned_to_id == owner_id, Company.sdr_id == owner_id))
 
     total = (
         await session.execute(
@@ -1083,10 +1089,13 @@ async def list_sourced_companies(
 async def get_sourced_company_summary(
     session: DBSession = None,
     assigned_rep_email: str | None = Query(default=None),
+    owner_id: UUID | None = Query(default=None),
 ):
     stmt = select(Company).where(_account_sourcing_visibility_filter())
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
+    if owner_id:
+        stmt = stmt.where(or_(Company.assigned_to_id == owner_id, Company.sdr_id == owner_id))
 
     companies = (await session.execute(stmt)).scalars().all()
 
@@ -1228,6 +1237,10 @@ async def create_manual_company(
     session.add(company)
     await session.commit()
     await session.refresh(company)
+
+    from app.services.company_auto_mapping import backfill_orphans_for_company
+    await backfill_orphans_for_company(session, company)
+    await session.commit()
 
     batch.created_companies = 1
     meta = dict(batch.meta or {})

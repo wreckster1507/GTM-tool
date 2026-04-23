@@ -82,6 +82,8 @@ async def list_companies(
 
 @router.post("/", response_model=CompanyRead, status_code=201)
 async def create_company(payload: CompanyCreate, session: DBSession, _user: CurrentUser):
+    from app.services.company_auto_mapping import backfill_orphans_for_company
+
     repo = CompanyRepository(session)
     if await repo.get_by_domain(payload.domain):
         raise ConflictError(f"Company with domain '{payload.domain}' already exists")
@@ -89,7 +91,10 @@ async def create_company(payload: CompanyCreate, session: DBSession, _user: Curr
     data = payload.model_dump()
     company = Company(**data)
     company.icp_score, company.icp_tier = score_company(company)
-    return await repo.save(company)
+    saved = await repo.save(company)
+    await backfill_orphans_for_company(session, saved)
+    await session.commit()
+    return saved
 
 
 @router.get("/{company_id}", response_model=CompanyRead)

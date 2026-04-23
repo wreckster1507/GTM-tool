@@ -79,36 +79,11 @@ async def _get_or_create_uploaded_placeholder_company(
     row: dict[str, str],
     current_user: CurrentUser,
 ) -> tuple[Company | None, bool]:
+    # Accounts are only created via Account Sourcing (manual add or workbook upload).
+    # Prospect imports match to existing accounts only; unmatched rows import with
+    # company_id=NULL and get linked later when the matching account is added.
     company = await _resolve_uploaded_company(session, row)
-    if company:
-        return company, False
-
-    company_fields = row_to_company_fields(row)
-    company_name = (company_fields.get("name") or "").strip()
-    if not company_name:
-        return None, False
-
-    company_domain = (company_fields.get("domain") or "").strip().lower() or _placeholder_company_domain(company_name)
-    company = Company(
-        name=company_name,
-        domain=company_domain,
-        industry=(company_fields.get("industry") or "").strip() or None,
-        region=(company_fields.get("region") or "").strip() or None,
-        headquarters=(company_fields.get("headquarters") or "").strip() or None,
-        description=(company_fields.get("description") or "").strip() or None,
-        assigned_rep_email=(company_fields.get("assigned_rep_email") or "").strip() or None,
-        recommended_outreach_lane=(company_fields.get("recommended_outreach_lane") or "").strip() or None,
-        enrichment_sources={
-            "prospect_import_placeholder": {
-                "source": "prospect_import",
-                "uploaded_by": current_user.email,
-                "needs_enrichment": True,
-            }
-        },
-    )
-    session.add(company)
-    await session.flush()
-    return company, True
+    return company, False
 
 
 @router.get("/", response_model=PaginatedResponse[ContactRead])
@@ -124,6 +99,8 @@ async def list_contacts(
     email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified"),
     ae_id: Optional[str] = Query(default=None, description="Filter by one or more assigned AE user IDs"),
     sdr_id: Optional[str] = Query(default=None, description="Filter by one or more assigned SDR user IDs"),
+    owner_id: Optional[str] = Query(default=None, description="Filter by one or more user IDs across AE or SDR ownership"),
+    scope_any_match: bool = Query(default=False, description="When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter"),
     prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches"),
 ):
     """
@@ -146,7 +123,8 @@ async def list_contacts(
         email_state=email_state,
         ae_id=ae_id,
         sdr_id=sdr_id,
-        scope_any_match=False,
+        owner_id=owner_id,
+        scope_any_match=scope_any_match,
         prospect_only=prospect_only,
         skip=pagination.skip,
         limit=pagination.limit,

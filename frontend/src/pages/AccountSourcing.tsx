@@ -114,7 +114,6 @@ function UploadPanel({
   onUploaded: (batch: SourcingBatch) => void;
   onDownloadTemplate: () => void;
 }) {
-  const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
@@ -137,136 +136,76 @@ function UploadPanel({
   };
 
   return (
-    <div
-      style={{
-        ...cardStyle,
-        borderStyle: "dashed",
-        borderWidth: 2,
-        borderColor: dragging ? "#8ab4ff" : colors.border,
-        padding: "34px 28px",
-        textAlign: "center",
-        background: dragging ? "#f2f7ff" : colors.card,
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
-        const f = e.dataTransfer.files?.[0];
-        if (f) onFile(f);
-      }}
-    >
-      {uploading ? (
-        <div style={{ display: "grid", gap: 10, placeItems: "center" }}>
-          <Loader2 size={30} color={colors.primary} className="animate-spin" />
-          <div style={{ color: colors.sub, fontSize: 14 }}>Uploading and parsing CSV...</div>
-        </div>
-      ) : (
-        <>
-          <div
-            style={{
-              width: 72,
-              height: 72,
-              margin: "0 auto 16px",
-              borderRadius: 22,
-              background: "linear-gradient(135deg, #4f46e5 0%, #2563eb 100%)",
-              boxShadow: "0 16px 34px rgba(79, 70, 229, 0.26)",
-              display: "grid",
-              placeItems: "center",
-            }}
-          >
-            <Upload size={32} color="#ffffff" />
-          </div>
-          <div style={{ fontWeight: 800, color: colors.text, fontSize: 32 }}>Migrate Accounts Workbook</div>
-          <div style={{ color: colors.sub, marginTop: 10, lineHeight: 1.6, fontSize: 15, maxWidth: 760, marginInline: "auto" }}>
-            Use this for account-led spreadsheets like your master ICP or target-account workbook. Beacon will import the companies first without forcing enrichment, then reps can enrich only the accounts they want to work.
-          </div>
-          <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              onClick={onDownloadTemplate}
-              style={{
-                border: `1px solid ${colors.border}`,
-                background: "#fff",
-                color: colors.text,
-                borderRadius: 10,
-                padding: "9px 14px",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Download Example Template
-            </button>
-            <span style={{ color: colors.faint, fontSize: 12, alignSelf: "center" }}>
-              Best for account-led files with columns like `Accounts`, `Region`, `AE`, `SDR`, `Headquarters`, `Classification`, and `Remarks`
-            </span>
-          </div>
-          <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
-            {["CSV/XLSX upload", "TAL verdicts", "Why now signals", "Outreach guidance"].map((item) => (
-              <span
-                key={item}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  borderRadius: 999,
-                  border: `1px solid ${colors.border}`,
-                  background: "#ffffff",
-                  color: colors.sub,
-                  padding: "7px 12px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                }}
-              >
-                <Sparkles size={12} color="#4f46e5" />
-                {item}
-              </span>
-            ))}
-          </div>
-          <label
-            style={{
-              marginTop: 20,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              background: "#4f46e5",
-              color: "#fff",
-              padding: "10px 16px",
-              borderRadius: 10,
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            <Upload size={14} /> Choose File
-            <input
-              type="file"
-              accept=".csv,.xlsx"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onFile(f);
-              }}
-            />
-          </label>
-        </>
-      )}
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <label
+        title="Upload a CSV/XLSX workbook to import accounts in bulk"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          background: uploading ? "#eef2ff" : "#4f46e5",
+          color: uploading ? colors.sub : "#fff",
+          padding: "8px 14px",
+          borderRadius: 10,
+          fontWeight: 700,
+          fontSize: 13,
+          cursor: uploading ? "wait" : "pointer",
+          border: "1px solid transparent",
+        }}
+      >
+        {uploading ? (
+          <>
+            <Loader2 size={14} className="animate-spin" /> Uploading…
+          </>
+        ) : (
+          <>
+            <Upload size={14} /> Import workbook
+          </>
+        )}
+        <input
+          type="file"
+          accept=".csv,.xlsx"
+          disabled={uploading}
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onFile(f);
+            e.currentTarget.value = "";
+          }}
+        />
+      </label>
+      <button
+        type="button"
+        onClick={onDownloadTemplate}
+        style={{
+          border: `1px solid ${colors.border}`,
+          background: "#fff",
+          color: colors.sub,
+          borderRadius: 10,
+          padding: "8px 12px",
+          fontSize: 12,
+          fontWeight: 700,
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <Download size={12} /> Template
+      </button>
       {error ? (
-        <div
+        <span
           style={{
-            marginTop: 12,
             color: colors.red,
+            fontSize: 12,
             fontWeight: 600,
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
           }}
         >
-          <AlertCircle size={14} /> {error}
-        </div>
+          <AlertCircle size={12} /> {error}
+        </span>
       ) : null}
     </div>
   );
@@ -360,6 +299,7 @@ export default function AccountSourcing() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
+  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
   const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
   const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
   const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
@@ -389,7 +329,7 @@ export default function AccountSourcing() {
   const [bulkEnrichResult, setBulkEnrichResult] = useState<string | null>(null);
   const [bulkIcpRunning, setBulkIcpRunning] = useState(false);
   const [bulkIcpResult, setBulkIcpResult] = useState<string | null>(null);
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
 
   useEffect(() => {
     try {
@@ -407,11 +347,14 @@ export default function AccountSourcing() {
           skip: (page - 1) * pageSize,
           limit: pageSize,
           q: debouncedSearch || undefined,
+          ownerId: ownerScope === "mine" ? user?.id : undefined,
           icpTier: tierFilter.length ? tierFilter : undefined,
           disposition: dispositionFilter.length ? dispositionFilter : undefined,
           recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
         }),
-        accountSourcingApi.summary(),
+        accountSourcingApi.summary({
+          ownerId: ownerScope === "mine" ? user?.id : undefined,
+        }),
         accountSourcingApi.listBatches(),
       ]);
       setCompanies(companyPage.items);
@@ -422,7 +365,7 @@ export default function AccountSourcing() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, dispositionFilter, laneFilter, page, tierFilter]);
+  }, [debouncedSearch, dispositionFilter, laneFilter, ownerScope, page, tierFilter, user?.id]);
 
   useEffect(() => {
     load();
@@ -443,13 +386,14 @@ export default function AccountSourcing() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
+      ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       tierFilter.length ? next.set("tier", tierFilter.join(",")) : next.delete("tier");
       dispositionFilter.length ? next.set("disp", dispositionFilter.join(",")) : next.delete("disp");
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [search, tierFilter, dispositionFilter, laneFilter, page]);
+  }, [laneFilter, dispositionFilter, ownerScope, page, search, setSearchParams, tierFilter]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -460,7 +404,7 @@ export default function AccountSourcing() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, tierFilter, dispositionFilter, laneFilter]);
+  }, [debouncedSearch, dispositionFilter, laneFilter, ownerScope, tierFilter]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -481,7 +425,7 @@ export default function AccountSourcing() {
     }
   }, [load]);
 
-  const hasFilters = !!(search || tierFilter.length || dispositionFilter.length || laneFilter.length);
+  const hasFilters = !!(search || ownerScope === "mine" || tierFilter.length || dispositionFilter.length || laneFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -1233,6 +1177,28 @@ export default function AccountSourcing() {
                 allLabel="All ICP tiers"
                 minWidth={130}
               />
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 10, fontWeight: 700, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.5 }}>View</label>
+                <select
+                  value={ownerScope}
+                  onChange={(event) => setOwnerScope(event.target.value === "mine" ? "mine" : "all")}
+                  style={{
+                    height: 42,
+                    borderRadius: 12,
+                    border: ownerScope === "mine" ? "1.5px solid #ffc9b4" : "1px solid #d9e1ec",
+                    background: ownerScope === "mine" ? "#fff3ec" : "#fff",
+                    padding: "0 32px 0 12px",
+                    fontSize: 13,
+                    color: "#1d2b3c",
+                    outline: "none",
+                    minWidth: 150,
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="all">All accounts</option>
+                  <option value="mine">My accounts</option>
+                </select>
+              </div>
               <MultiSelectFilter
                 values={dispositionFilter}
                 onChange={setDispositionFilter}
@@ -1260,6 +1226,7 @@ export default function AccountSourcing() {
                   type="button"
                   onClick={() => {
                     setSearch("");
+                    setOwnerScope("all");
                     setTierFilter([]);
                     setDispositionFilter([]);
                     setLaneFilter([]);

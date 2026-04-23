@@ -85,6 +85,7 @@ class ClickUpImportStats:
     subtasks_seen: int = 0
     companies_created: int = 0
     companies_reused: int = 0
+    tasks_skipped_no_company: int = 0
     contacts_created: int = 0
     contacts_updated: int = 0
     deals_created: int = 0
@@ -365,7 +366,10 @@ async def _get_or_create_company(
     task: dict[str, Any],
     stats: ClickUpImportStats,
     company_cache: dict[str, Company],
-) -> Company:
+) -> Company | None:
+    # Accounts are only created via Account Sourcing. ClickUp sync matches tasks
+    # to existing accounts; tasks without a matching account are skipped and can
+    # be picked up automatically once the account is added.
     raw_name = task.get("name") or "Unknown Company"
     company_name, _ = _extract_company_name(raw_name)
     associated_url = next((field.get("value") for field in task.get("custom_fields", []) if field.get("name") == "Associated Company"), None)
@@ -388,25 +392,7 @@ async def _get_or_create_company(
         stats.companies_reused += 1
         return company
 
-    company = Company(
-        name=company_name,
-        domain=domain,
-        description=_clean_text(task.get("text_content")) or _clean_text(task.get("description")),
-        enrichment_sources={
-            "clickup_import": {
-                "source": "clickup",
-                "task_name_example": raw_name,
-                "associated_company_url": associated_url,
-            }
-        },
-        created_at=_parse_epoch_ms(task.get("date_created")) or datetime.utcnow(),
-        updated_at=_parse_epoch_ms(task.get("date_updated")) or datetime.utcnow(),
-    )
-    session.add(company)
-    await session.flush()
-    company_cache[cache_key] = company
-    stats.companies_created += 1
-    return company
+    return None
 
 
 async def _upsert_deal(
@@ -894,6 +880,9 @@ async def import_sales_crm_clickup(
 
     for index, task in enumerate(top_level_tasks, start=1):
         company = await _get_or_create_company(session, task, stats, company_cache)
+        if company is None:
+            stats.tasks_skipped_no_company += 1
+            continue
         deal = await _upsert_deal(session, repo, task, company, users_by_email, users_by_name, stats)
         await _upsert_placeholder_contact(session, task, company, deal, users_by_email, users_by_name, stats)
         imported_deals_by_clickup_id[str(task["id"])] = deal

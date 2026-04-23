@@ -259,29 +259,15 @@ async def _get_or_create_company_by_domain(
     domain: str,
     suggested_name: str | None = None,
 ) -> Company | None:
-    """Find a company by domain. Create a stub if not found."""
+    """Look up a company by domain. Accounts are only created via Account Sourcing,
+    so unmatched domains return None and the calling sync skips the record."""
     if not domain or domain in FREE_EMAIL_PROVIDERS:
-        return None  # Never auto-create free email providers as companies
+        return None
 
     result = await session.execute(
         select(Company).where(Company.domain == domain)
     )
-    company = result.scalar_one_or_none()
-    if company:
-        return company
-
-    # Create a stub company — lean, no enrichment yet
-    name = suggested_name or domain.split(".")[0].title()
-    company = Company(
-        name=name,
-        domain=domain,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-    )
-    session.add(company)
-    await session.flush()  # get the id without committing
-    logger.info("personal_email_sync: auto-created company '%s' (domain=%s)", name, domain)
-    return company
+    return result.scalar_one_or_none()
 
 
 async def _get_or_create_contact_by_email(
@@ -735,7 +721,8 @@ async def process_personal_emails(
             if not company_id and domain in company_domain_map:
                 company_id = company_domain_map[domain][0]
             elif not company_id:
-                # Try to auto-create company from the domain
+                # Match the sender domain to an existing account; if no match,
+                # the message syncs with company_id=NULL.
                 company = await _get_or_create_company_by_domain(
                     session, domain,
                     suggested_name=None,

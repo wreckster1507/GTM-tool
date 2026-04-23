@@ -418,6 +418,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   const patchDeal = async (data: Partial<Deal>) => {
     const updated = await dealsApi.patch(deal.id, data);
     onDealUpdated(updated);
+    dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
   };
 
   const handleMoveStage = async (newStage: string) => {
@@ -703,6 +704,11 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                     <path d="M2 4l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
+                {!deal.company_id && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: "#b7791f", display: "flex", alignItems: "center", gap: 4 }}>
+                    <AlertTriangle size={11} /> No account linked — add this account in Account Sourcing and it will map automatically.
+                  </div>
+                )}
                 {companyDropdownOpen && (
                   <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: "1px solid #e2eaf2", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.10)", zIndex: 200, overflow: "hidden" }}>
                     <div style={{ padding: "8px 8px 4px", borderBottom: "1px solid #f1f5f9" }}>
