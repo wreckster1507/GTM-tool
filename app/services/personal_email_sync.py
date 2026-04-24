@@ -273,52 +273,22 @@ async def _get_or_create_company_by_domain(
 async def _get_or_create_contact_by_email(
     session: AsyncSession,
     email_addr: str,
-    display_name: str | None,
-    company_id: UUID | None,
-    sync_user_id: UUID,
+    display_name: str | None,  # kept for signature compatibility; unused
+    company_id: UUID | None,   # kept for signature compatibility; unused
+    sync_user_id: UUID,        # kept for signature compatibility; unused
 ) -> Contact | None:
-    """Find or create a contact by email address."""
+    """Lookup-only: return the existing contact or None.
+
+    We deliberately do NOT create new Contact rows here. Inbound email sync
+    was minting junk contacts from every unknown sender (internal staff,
+    newsletters, one-off replies) and polluting the CRM. Contacts are only
+    created through explicit flows: CSV import, account sourcing, or the
+    admin UI.
+    """
     result = await session.execute(
         select(Contact).where(Contact.email == email_addr)
     )
-    contact = result.scalar_one_or_none()
-    if contact:
-        return contact
-
-    first_name, last_name = _infer_name_from_email(email_addr)
-    if display_name and display_name.strip():
-        parts = display_name.strip().split(" ", 1)
-        first_name = parts[0]
-        last_name = parts[1] if len(parts) > 1 else "Contact"
-
-    if not is_valid_prospect_candidate(
-        first_name=first_name,
-        last_name=last_name,
-        email=email_addr,
-    ):
-        logger.info("personal_email_sync: skipped non-prospect mailbox <%s>", email_addr)
-        return None
-
-    contact = Contact(
-        first_name=first_name,
-        last_name=last_name,
-        email=email_addr,
-        company_id=company_id,
-        enrichment_data={
-            "source": "personal_email_sync",
-            "sync_user_id": str(sync_user_id),
-            "auto_created": True,
-        },
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-    )
-    session.add(contact)
-    await session.flush()
-    logger.info(
-        "personal_email_sync: auto-created contact '%s %s' <%s>",
-        first_name, last_name, email_addr,
-    )
-    return contact
+    return result.scalar_one_or_none()
 
 
 async def _ensure_deal_contact(

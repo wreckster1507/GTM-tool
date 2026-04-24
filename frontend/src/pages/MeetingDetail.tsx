@@ -9,6 +9,7 @@ import {
   Link2, Link2Off, Plus, X, Save,
 } from "lucide-react";
 import { companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
+import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 
@@ -650,13 +651,14 @@ export default function MeetingDetail() {
                 </>
               ) : <span className="text-[#f59e0b] font-semibold">No company linked</span>}
               {meeting.scheduled_at && <span>· {formatDate(meeting.scheduled_at)}</span>}
-              {meeting.recording_url && (
+              {meeting.external_source?.toLowerCase() === "tldv" && (
                 <>
                   ·
-                  <a href={meeting.recording_url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 hover:text-[#7c3aed]">
-                    tl;dv recording <ExternalLink size={12} />
-                  </a>
+                  <TldvRecordingLink
+                    meetingId={meeting.id}
+                    externalSource={meeting.external_source}
+                    hasRecording={true}
+                  />
                 </>
               )}
             </p>

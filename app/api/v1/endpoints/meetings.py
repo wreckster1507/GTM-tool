@@ -177,6 +177,37 @@ async def get_meeting(meeting_id: UUID, session: DBSession):
     return await MeetingRepository(session).get_or_raise(meeting_id)
 
 
+@router.get("/{meeting_id}/recording-url", response_model=dict)
+async def get_meeting_recording_url(
+    meeting_id: UUID, session: DBSession, current_user: CurrentUser
+):
+    """
+    Return a freshly-signed recording URL for tldv meetings.
+
+    tldv signs download URLs with a short-lived JWT (minutes), so any URL we
+    store in the DB is dead by the time the user clicks. This endpoint calls
+    tldv at click-time and returns the fresh URL. The frontend opens the URL
+    in a new tab/window; the signed token never round-trips through the UI.
+    """
+    meeting = await MeetingRepository(session).get_or_raise(meeting_id)
+    if (meeting.external_source or "").lower() != "tldv" or not meeting.external_source_id:
+        raise HTTPException(status_code=404, detail="Meeting has no tldv recording")
+
+    from app.clients.tldv import TldvClient, TldvError
+
+    client = TldvClient()
+    try:
+        fresh_url = await client.get_recording_download_url(meeting.external_source_id)
+    except TldvError as exc:
+        raise HTTPException(
+            status_code=502 if (exc.status_code or 0) >= 500 else 404,
+            detail=f"tldv: {exc}",
+        )
+    if not fresh_url:
+        raise HTTPException(status_code=404, detail="No recording available for this meeting")
+    return {"url": fresh_url}
+
+
 @router.put("/{meeting_id}", response_model=MeetingRead)
 async def update_meeting(meeting_id: UUID, payload: MeetingUpdate, session: DBSession):
     repo = MeetingRepository(session)

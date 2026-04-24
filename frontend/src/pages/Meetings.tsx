@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Link } from "react-router-dom";
 import { CalendarDays, Check, ChevronDown, Filter, Plus, Search, X } from "lucide-react";
 import { authApi, companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
+import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import { useAuth } from "../lib/AuthContext";
 import type { Company, Contact, Deal, Meeting, User } from "../types";
 import { formatDate } from "../lib/utils";
@@ -290,7 +291,9 @@ export default function Meetings() {
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
   const [statusFilter, setStatusFilter] = useState<string[]>(["scheduled"]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
-  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
+  // Default to "my upcoming" — current user's scheduled meetings. Users can
+  // still clear the filter to see everything.
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>(user?.id ? [user.id] : []);
   const [linkFilter, setLinkFilter] = useState<string[]>([]);
   // Text search across title, linked company name, and attendee list.
   // Debounced via a separate committed value so we don't hit the API on
@@ -635,11 +638,11 @@ export default function Meetings() {
                     <td style={styles.td}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         <span>{formatDate(m.scheduled_at)}</span>
-                        {m.recording_url && (
-                          <a href={m.recording_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "#7c3aed", fontWeight: 700, textDecoration: "none" }}>
-                            tl;dv recording
-                          </a>
-                        )}
+                        <TldvRecordingLink
+                          meetingId={m.id}
+                          externalSource={m.external_source}
+                          hasRecording={true}
+                        />
                       </div>
                     </td>
                     <td style={styles.td}>

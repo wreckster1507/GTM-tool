@@ -19,6 +19,7 @@ from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.models.settings import WorkspaceSettings
+from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.tasks import refresh_system_tasks_for_entity
 
 
@@ -78,24 +79,18 @@ def _is_placeholder_summary(value: str | None) -> bool:
     return normalized in {"", "no summary", "summary unavailable", "unavailable"}
 
 
-def _internal_domains() -> set[str]:
-    domains = {_normalize_domain(settings.GMAIL_SHARED_INBOX.split("@", 1)[1] if "@" in (settings.GMAIL_SHARED_INBOX or "") else "")}
-    domains.add("beacon.li")
-    return {domain for domain in domains if domain}
+# Internal-domain detection now lives in app.services.internal_domains and
+# reads from workspace_settings.  The helpers below remain as thin aliases for
+# call sites elsewhere in this module that already use them.
+async def _internal_domains_async(session: AsyncSession) -> set[str]:
+    return await get_internal_domains(session)
 
 
-def _is_internal_only_attendee_set(attendees: list[dict[str, Any]]) -> bool:
-    internal = _internal_domains()
-    external_found = False
-    for attendee in attendees:
-        email = _normalize_email(attendee.get("email"))
-        if not email or "@" not in email:
-            continue
-        domain = _normalize_domain(email.split("@", 1)[1])
-        if domain and domain not in internal:
-            external_found = True
-            break
-    return not external_found
+async def _is_internal_only_attendee_set_async(
+    session: AsyncSession, attendees: list[dict[str, Any]]
+) -> bool:
+    internal = await get_internal_domains(session)
+    return is_internal_only(attendees, internal)
 
 
 def _infer_meeting_type(title: str, summary: str, transcript: str) -> str:
@@ -698,19 +693,20 @@ async def sync_tldv_meeting(
         highlights_payload = {} if exc.status_code in {403, 404} else None
         if highlights_payload is None:
             raise
-    try:
-        recording_url = await client.get_recording_download_url(meeting_id)
-    except Exception:
-        recording_url = None
+    # Recording URL is NOT fetched here. tldv signs it with a short-lived JWT
+    # that expires in minutes — persisting it leads to dead links in the UI.
+    # The frontend requests a fresh URL through the proxy endpoint on click.
+    recording_url = None
 
+    internal_domains = await get_internal_domains(session)
     attendees = _extract_attendees(meeting_payload)
-    if _is_internal_only_attendee_set(attendees):
+    if is_internal_only(attendees, internal_domains):
         stats.unmapped += 1
         return {"skipped": True, "meeting_id": meeting_id, "reason": "internal_only"}
     attendee_emails = [
         email
         for email in (_normalize_email(attendee.get("email")) for attendee in attendees)
-        if email and _normalize_domain(email.split("@", 1)[1]) not in _internal_domains()
+        if email and "@" in email and _normalize_domain(email.split("@", 1)[1]) not in internal_domains
     ]
     attendee_domains = list(
         dict.fromkeys(
@@ -720,27 +716,23 @@ async def sync_tldv_meeting(
 
     matched_contacts = await _match_contacts(session, attendee_emails)
     matched_contact_ids = [contact.id for contact in matched_contacts if contact.id]
-    deal = await _match_deal_from_contacts(session, matched_contact_ids)
-    company = await session.get(Company, deal.company_id) if deal and deal.company_id else None
-    domain_company = await _match_company_from_domains(session, attendee_domains)
-    if domain_company:
-        company = domain_company
-        if deal and deal.company_id != domain_company.id:
-            deal = None
-    mapped_via_gmail = False
 
-    if not company:
-        company = await _match_company_from_title(session, str(meeting_payload.get("name") or ""))
-    if not deal:
-        deal = await _match_deal_from_title(session, str(meeting_payload.get("name") or ""), company)
-        if deal and not company and deal.company_id:
-            company = await session.get(Company, deal.company_id)
-    if not deal:
-        gmail_deal = await _match_recent_gmail_deal(session, attendee_emails)
-        if gmail_deal:
-            mapped_via_gmail = True
-            deal = gmail_deal
-            company = await session.get(Company, deal.company_id) if deal.company_id else company
+    # Company linking is domain-first, matched only against already-sourced
+    # companies. Title-matching and gmail-recent-deal fallbacks were removed
+    # because they produced wrong links.  An unmatched meeting stays with
+    # company_id = NULL and surfaces a "Link company" action in the UI.
+    company = await _match_company_from_domains(session, attendee_domains)
+
+    # Deal linking: only via contacts we already know, and only if the deal's
+    # company matches the domain-linked company (or we have no company yet).
+    deal = await _match_deal_from_contacts(session, matched_contact_ids)
+    if deal and company and deal.company_id and deal.company_id != company.id:
+        # The deal we found belongs to a different company than what the
+        # attendee domains say — trust the domain, drop the deal link.
+        deal = None
+    if deal and not company and deal.company_id:
+        company = await session.get(Company, deal.company_id)
+    mapped_via_gmail = False
 
     transcript_text = _transcript_text(transcript_payload)
     highlights_text = _meeting_highlights_text(highlights_payload)
@@ -761,7 +753,7 @@ async def sync_tldv_meeting(
             if isinstance(attendee.get("email"), str)
             and attendee["email"]
             and "@" in attendee["email"]
-            and _normalize_domain(attendee["email"].split("@", 1)[1]) not in _internal_domains()
+            and _normalize_domain(attendee["email"].split("@", 1)[1]) not in internal_domains
         ),
         None,
     )

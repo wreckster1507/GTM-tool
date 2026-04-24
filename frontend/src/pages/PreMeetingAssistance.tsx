@@ -1265,7 +1265,9 @@ export default function PreMeetingAssistance() {
   const [unlinking, setUnlinking] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<MultiSelectValue>(["scheduled"]);
   const [intelFilter, setIntelFilter] = useState<MultiSelectValue>([]);
-  const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>([]);
+  // Default to "my upcoming" — current user's scheduled meetings.  Can be
+  // cleared from the filter bar to see all reps.
+  const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>(user?.id ? [user.id] : []);
   const [typeFilter, setTypeFilter] = useState<MultiSelectValue>([]);
   const [linkFilter, setLinkFilter] = useState<MultiSelectValue>([]);
   // Text search across title, company name, attendee JSON. Debounced.
