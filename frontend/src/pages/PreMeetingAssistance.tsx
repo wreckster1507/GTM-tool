@@ -410,11 +410,22 @@ function MeetingIntelCard({
     unknown: { bg: "#f8fafc", color: "#64748b", border: "#e2e8f0" },
   };
 
+  // Left-border accent by urgency so cards visually prioritize themselves
+  // in a long list. Imminent = coral; in-progress/overdue = amber; soon = blue;
+  // otherwise neutral.
+  const accent =
+    urgency === "imminent" ? "#ff6b35"
+    : urgency === "in_progress" ? "#b56d00"
+    : urgency === "overdue" ? "#c0392b"
+    : urgency === "soon" ? "#4261d6"
+    : "transparent";
+
   return (
-    <div
+    <div id={meeting.id}
       style={{
         background: "#fff",
         border: `1px solid ${urgency === "imminent" ? "#ffd3be" : colors.border}`,
+        borderLeft: accent === "transparent" ? `1px solid ${colors.border}` : `4px solid ${accent}`,
         borderRadius: 16,
         overflow: "hidden",
       }}
@@ -1270,6 +1281,9 @@ export default function PreMeetingAssistance() {
   const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>(user?.id ? [user.id] : []);
   // Internal-only meetings (attendees all @beacon.li) are hidden by default.
   const [showInternal, setShowInternal] = useState<boolean>(false);
+  // Advanced filter disclosure — primary bar shows search / status / assignee /
+  // show-internal; intel / type / link hide behind "More filters".
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
   const [typeFilter, setTypeFilter] = useState<MultiSelectValue>([]);
   const [linkFilter, setLinkFilter] = useState<MultiSelectValue>([]);
   // Text search across title, company name, attendee JSON. Debounced.
@@ -1508,48 +1522,101 @@ export default function PreMeetingAssistance() {
   return (
     <div className="crm-page" style={{ display: "grid", gap: 18 }}>
       {/* Header */}
-      <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 16 }}>
+      <section className="crm-panel" style={{ padding: 22, display: "grid", gap: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-          <div>
-            <h2 style={{ fontSize: 26, fontWeight: 800, color: colors.text, marginBottom: 6 }}>
+          <div style={{ minWidth: 0 }}>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: colors.text, marginBottom: 4, letterSpacing: "-0.01em" }}>
               Pre-Meeting Assistance
             </h2>
-            <p className="crm-muted" style={{ maxWidth: 640, lineHeight: 1.7 }}>
-              {isAdmin
-                ? "Review upcoming meetings across the team, check intel status, and trigger research before calls. Beacon now surfaces account summary, stakeholder guidance, linked source pages, and channel activity so reps can see what already moved the deal."
-                : "Your upcoming meetings in one place. Run pre-meeting intel before any call — get account context, stakeholder talk tracks, source links, and the actual email / call / LinkedIn history that got the deal here. Beacon sends the brief to you automatically 12 hours before."}
+            <p className="crm-muted" style={{ maxWidth: 620, lineHeight: 1.6, margin: 0, fontSize: 13 }}>
+              Prep for upcoming calls with account intel, stakeholder talk tracks, and recent activity. Beacon auto-generates the brief 12 hours before each meeting.
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "#f4f7ff", color: "#4b60cf", border: "1px solid #d7dffb", fontSize: 12, fontWeight: 700 }}>
-              <CalendarDays size={13} />
-              {summary.upcoming} upcoming
-            </span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: colors.greenSoft, color: colors.green, border: "1px solid #cfe8d7", fontSize: 12, fontWeight: 700 }}>
-              <CheckCircle2 size={13} />
-              {summary.hasIntel} intel ready
-            </span>
-            {summary.noIntel > 0 && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: colors.amberSoft, color: colors.amber, border: "1px solid #ffe3b3", fontSize: 12, fontWeight: 700 }}>
-                <BrainCircuit size={13} />
-                {summary.noIntel} need intel
-              </span>
-            )}
-          </div>
+          {/* Next-meeting spotlight (replaces generic counter when there's a clear
+              next up). Clickable to jump straight to prep. */}
+          {(() => {
+            const now = Date.now();
+            const next = sorted.find(
+              (m) => m.scheduled_at && new Date(m.scheduled_at).getTime() >= now && m.status !== "cancelled",
+            );
+            if (!next) {
+              return (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "#f4f7ff", color: "#4b60cf", border: "1px solid #d7dffb", fontSize: 12, fontWeight: 700 }}>
+                    <CalendarDays size={13} />
+                    {summary.upcoming} upcoming
+                  </span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: colors.greenSoft, color: colors.green, border: "1px solid #cfe8d7", fontSize: 12, fontWeight: 700 }}>
+                    <CheckCircle2 size={13} />
+                    {summary.hasIntel} intel ready
+                  </span>
+                  {summary.noIntel > 0 && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: colors.amberSoft, color: colors.amber, border: "1px solid #ffe3b3", fontSize: 12, fontWeight: 700 }}>
+                      <BrainCircuit size={13} />
+                      {summary.noIntel} need intel
+                    </span>
+                  )}
+                </div>
+              );
+            }
+            const hrs = hoursUntil(next.scheduled_at);
+            const imminent = hrs != null && hrs <= 2;
+            const today = hrs != null && hrs <= 24;
+            const countdown = hrs == null
+              ? ""
+              : hrs < 1
+              ? "starts within the hour"
+              : hrs < 24
+              ? `in ${Math.round(hrs)}h`
+              : `in ${Math.round(hrs / 24)}d`;
+            const hasIntel = !!(next.research_data);
+            return (
+              <a
+                href={`/pre-meeting-assistance#${next.id}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: "12px 16px",
+                  borderRadius: 14,
+                  border: `1px solid ${imminent ? "#ffcdb8" : today ? "#c5d6ff" : "#d7dffb"}`,
+                  background: imminent ? "#fff3ec" : today ? "#eef4ff" : "#f6f8ff",
+                  color: colors.text,
+                  textDecoration: "none",
+                  minWidth: 280,
+                  maxWidth: 480,
+                }}
+                title="Jump to the next upcoming meeting"
+              >
+                <div style={{ width: 38, height: 38, borderRadius: 10, background: "#fff", border: "1px solid #e3ebf4", display: "grid", placeItems: "center", color: imminent ? "#b85024" : "#3555c4" }}>
+                  <CalendarDays size={18} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: imminent ? "#b85024" : "#3555c4" }}>
+                    Next up · {countdown}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: colors.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {next.title}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: colors.sub, marginTop: 2, display: "flex", gap: 8, alignItems: "center" }}>
+                    {next.scheduled_at && <span>{new Date(next.scheduled_at).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>}
+                    <span style={{ width: 3, height: 3, borderRadius: 999, background: colors.faint }} />
+                    {hasIntel
+                      ? <span style={{ color: colors.green, fontWeight: 700 }}>Brief ready</span>
+                      : <span style={{ color: colors.amber, fontWeight: 700 }}>Brief needed</span>}
+                  </div>
+                </div>
+              </a>
+            );
+          })()}
         </div>
       </section>
 
-      {/* Filters */}
-      <section className="crm-panel" style={{ padding: 18, display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.text, fontSize: 13, fontWeight: 700 }}>
-          <Filter size={14} />
-          Filters
-        </div>
+      {/* Filter bar — primary controls visible, advanced filters behind disclosure */}
+      <section className="crm-panel" style={{ padding: 16, display: "grid", gap: 10 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {/* Free-text search: matches meeting title, linked company name,
-              and anything inside the attendees JSON (names + emails). */}
-          <div style={{ position: "relative", minWidth: 280, flex: "0 0 280px" }}>
+          <div style={{ position: "relative", minWidth: 280, flex: "1 1 280px", maxWidth: 380 }}>
             <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: colors.faint }} />
             <input
               type="text"
@@ -1559,7 +1626,7 @@ export default function PreMeetingAssistance() {
               style={{
                 width: "100%",
                 boxSizing: "border-box",
-                height: 34,
+                height: 36,
                 padding: "0 32px 0 30px",
                 borderRadius: 10,
                 border: `1px solid ${colors.border}`,
@@ -1574,18 +1641,7 @@ export default function PreMeetingAssistance() {
                 type="button"
                 onClick={() => setSearchInput("")}
                 aria-label="Clear search"
-                style={{
-                  position: "absolute",
-                  right: 6,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  border: "none",
-                  background: "transparent",
-                  color: colors.faint,
-                  cursor: "pointer",
-                  padding: 2,
-                  display: "inline-flex",
-                }}
+                style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", border: "none", background: "transparent", color: colors.faint, cursor: "pointer", padding: 2, display: "inline-flex" }}
               >
                 <X size={14} />
               </button>
@@ -1594,8 +1650,8 @@ export default function PreMeetingAssistance() {
           <MultiSelectDropdown
             label="Status"
             options={[
-              { value: "scheduled", label: "Upcoming (scheduled)" },
-              { value: "overdue", label: "Overdue — needs review" },
+              { value: "scheduled", label: "Upcoming" },
+              { value: "overdue", label: "Overdue" },
               { value: "completed", label: "Completed" },
               { value: "cancelled", label: "Cancelled" },
             ]}
@@ -1603,37 +1659,6 @@ export default function PreMeetingAssistance() {
             onChange={setStatusFilter}
             placeholder="All statuses"
           />
-
-          <MultiSelectDropdown
-            label="Intel"
-            options={[
-              { value: "has_intel", label: "Intel ready" },
-              { value: "no_intel", label: "No intel yet" },
-            ]}
-            selected={intelFilter}
-            onChange={setIntelFilter}
-            placeholder="All intel status"
-          />
-
-          <MultiSelectDropdown
-            label="Type"
-            options={["discovery", "demo", "poc", "qbr", "other"].map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
-            selected={typeFilter}
-            onChange={setTypeFilter}
-            placeholder="All types"
-          />
-
-          <MultiSelectDropdown
-            label="Link"
-            options={[
-              { value: "linked", label: "Linked" },
-              { value: "needs_review", label: "Needs review" },
-            ]}
-            selected={linkFilter}
-            onChange={setLinkFilter}
-            placeholder="All links"
-          />
-
           {isAdmin && visibleUsers.length > 0 && (
             <MultiSelectDropdown
               label="Rep"
@@ -1667,6 +1692,30 @@ export default function PreMeetingAssistance() {
             {showInternal ? "Internal on" : "Show internal"}
           </button>
 
+          <div style={{ flex: 1 }} />
+
+          <button
+            type="button"
+            onClick={() => setShowAdvancedFilters((v) => !v)}
+            style={{
+              height: 38,
+              padding: "0 12px",
+              borderRadius: 10,
+              border: (intelFilter.length || typeFilter.length || linkFilter.length) ? "1px solid #c5d6ff" : "1px solid #d5e3ef",
+              background: (intelFilter.length || typeFilter.length || linkFilter.length) ? "#eef4ff" : "#fff",
+              color: (intelFilter.length || typeFilter.length || linkFilter.length) ? "#3555c4" : "#55657a",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Filter size={12} />
+            {showAdvancedFilters ? "Hide filters" : (intelFilter.length || typeFilter.length || linkFilter.length) ? `Filters (${(intelFilter.length ? 1 : 0) + (typeFilter.length ? 1 : 0) + (linkFilter.length ? 1 : 0)})` : "More filters"}
+          </button>
+
           {(statusFilter.length !== 1 || statusFilter[0] !== "scheduled" || intelFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0 || showInternal) && (
             <button
               type="button"
@@ -1678,6 +1727,39 @@ export default function PreMeetingAssistance() {
             </button>
           )}
         </div>
+
+        {showAdvancedFilters && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", paddingTop: 10, borderTop: `1px dashed ${colors.border}` }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em" }}>Advanced</span>
+            <MultiSelectDropdown
+              label="Intel"
+              options={[
+                { value: "has_intel", label: "Intel ready" },
+                { value: "no_intel", label: "No intel yet" },
+              ]}
+              selected={intelFilter}
+              onChange={setIntelFilter}
+              placeholder="All intel status"
+            />
+            <MultiSelectDropdown
+              label="Type"
+              options={["discovery", "demo", "poc", "qbr", "other"].map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
+              selected={typeFilter}
+              onChange={setTypeFilter}
+              placeholder="All types"
+            />
+            <MultiSelectDropdown
+              label="Link"
+              options={[
+                { value: "linked", label: "Linked" },
+                { value: "needs_review", label: "Needs review" },
+              ]}
+              selected={linkFilter}
+              onChange={setLinkFilter}
+              placeholder="All links"
+            />
+          </div>
+        )}
       </section>
 
       {/* Meeting cards */}

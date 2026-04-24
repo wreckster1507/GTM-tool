@@ -297,6 +297,9 @@ export default function Meetings() {
   // Internal-only meetings (every attendee from an internal domain, e.g. beacon.li)
   // are hidden by default.  Toggle in the filter bar to include them.
   const [showInternal, setShowInternal] = useState<boolean>(false);
+  // Advanced filter disclosure: most reps only need search/status/assignee/internal.
+  // Type, link-state, and sync-age are hidden behind a "More filters" button.
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
   const [linkFilter, setLinkFilter] = useState<string[]>([]);
   // Text search across title, linked company name, and attendee list.
   // Debounced via a separate committed value so we don't hit the API on
@@ -404,7 +407,8 @@ export default function Meetings() {
     [hideDeveloper, users],
   );
 
-  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0 || debouncedSearch.length > 0 || !!recentSyncHours;
+  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0 || debouncedSearch.length > 0 || !!recentSyncHours || showInternal;
+  const hasAdvancedFilters = typeFilter.length > 0 || linkFilter.length > 0 || !!recentSyncHours;
 
   const handleCreate = async () => {
     if (!form.title.trim()) {
@@ -464,144 +468,174 @@ export default function Meetings() {
         </button>
       </div>
 
-      {/* Filters */}
-      <div style={{ ...styles.panel, padding: "14px 18px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: "#55657a" }}>
-          <Filter size={13} />
-          Filter
-        </span>
-        {/* Free-text search: matches meeting title, linked company name,
-            and any text inside the attendees JSON (names + emails). */}
-        <div style={{ position: "relative", minWidth: 260, flex: "0 0 260px" }}>
-          <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#7a8ea4" }} />
-          <input
-            type="text"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search title, company, attendee…"
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              height: 34,
-              padding: "0 32px 0 30px",
-              borderRadius: 10,
-              border: "1px solid #d5e3ef",
-              fontSize: 13,
-              color: "#0f2744",
-              background: "#fff",
-              outline: "none",
-            }}
+      {/* Filter bar — primary controls always visible, advanced filters hidden behind
+          a "More filters" disclosure.  Most reps only need search / status / assignee
+          / show-internal; keeping the bar dense was visual noise we lived with too
+          long. */}
+      <div style={{ ...styles.panel, padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {/* Free-text search: matches meeting title, linked company name,
+              and any text inside the attendees JSON (names + emails). */}
+          <div style={{ position: "relative", minWidth: 280, flex: "1 1 280px", maxWidth: 380 }}>
+            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#7a8ea4" }} />
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search title, company, attendee…"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                height: 36,
+                padding: "0 32px 0 30px",
+                borderRadius: 10,
+                border: "1px solid #d5e3ef",
+                fontSize: 13,
+                color: "#0f2744",
+                background: "#fff",
+                outline: "none",
+              }}
+            />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => setSearchInput("")}
+                aria-label="Clear search"
+                style={{
+                  position: "absolute",
+                  right: 6,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  border: "none",
+                  background: "transparent",
+                  color: "#7a8ea4",
+                  cursor: "pointer",
+                  padding: 2,
+                  display: "inline-flex",
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <MultiSelectDropdown
+            options={[
+              { value: "scheduled", label: "Scheduled" },
+              { value: "completed", label: "Completed" },
+              { value: "cancelled", label: "Cancelled" },
+            ]}
+            selected={statusFilter}
+            onChange={setStatusFilter}
+            placeholder="All statuses"
           />
-          {searchInput && (
+          {isAdmin && visibleUsers.length > 0 && (
+            <MultiSelectDropdown
+              options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
+              selected={assigneeFilter}
+              onChange={setAssigneeFilter}
+              placeholder="All reps"
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => setShowInternal((v) => !v)}
+            title={showInternal ? "Currently showing internal meetings; click to hide" : "Click to also show internal (all-beacon.li) meetings"}
+            style={{
+              height: 36,
+              padding: "0 12px",
+              borderRadius: 8,
+              border: showInternal ? "1px solid #c5b1ff" : "1px solid #d5e3ef",
+              background: showInternal ? "#efebff" : "#fff",
+              color: showInternal ? "#5b3bd4" : "#55657a",
+              fontSize: 12.5,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: showInternal ? "#7c3aed" : "#b8c4d4" }} />
+            {showInternal ? "Internal on" : "Show internal"}
+          </button>
+
+          <div style={{ flex: 1 }} />
+
+          <button
+            type="button"
+            onClick={() => setShowAdvancedFilters((v) => !v)}
+            style={{
+              height: 36,
+              padding: "0 12px",
+              borderRadius: 8,
+              border: hasAdvancedFilters ? "1px solid #c5d6ff" : "1px solid #d5e3ef",
+              background: hasAdvancedFilters ? "#eef4ff" : "#fff",
+              color: hasAdvancedFilters ? "#3555c4" : "#55657a",
+              fontSize: 12.5,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Filter size={13} />
+            {showAdvancedFilters ? "Hide filters" : hasAdvancedFilters ? `Filters (${(typeFilter.length ? 1 : 0) + (linkFilter.length ? 1 : 0) + (recentSyncHours ? 1 : 0)})` : "More filters"}
+          </button>
+          {hasFilters && (
             <button
               type="button"
-              onClick={() => setSearchInput("")}
-              aria-label="Clear search"
-              style={{
-                position: "absolute",
-                right: 6,
-                top: "50%",
-                transform: "translateY(-50%)",
-                border: "none",
-                background: "transparent",
-                color: "#7a8ea4",
-                cursor: "pointer",
-                padding: 2,
-                display: "inline-flex",
-              }}
+              onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); setRecentSyncHours(""); setSearchInput(""); setShowInternal(false); }}
+              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
             >
-              <X size={14} />
+              Reset
             </button>
           )}
         </div>
-        <MultiSelectDropdown
-          options={[
-            { value: "scheduled", label: "Scheduled" },
-            { value: "completed", label: "Completed" },
-            { value: "cancelled", label: "Cancelled" },
-          ]}
-          selected={statusFilter}
-          onChange={setStatusFilter}
-          placeholder="All statuses"
-        />
-        <MultiSelectDropdown
-          options={MEETING_TYPES.map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
-          selected={typeFilter}
-          onChange={setTypeFilter}
-          placeholder="All types"
-        />
-        <MultiSelectDropdown
-          options={[
-            { value: "linked", label: "Linked" },
-            { value: "needs_review", label: "Needs review" },
-          ]}
-          selected={linkFilter}
-          onChange={setLinkFilter}
-          placeholder="All links"
-        />
-        {/* Recently-synced shortcut — this is about when Beacon imported or
-            refreshed the meeting record, not about when the meeting itself is
-            scheduled to happen. Upcoming meetings synced earlier will be
-            excluded by this filter. */}
-        <select
-          value={recentSyncHours}
-          onChange={(e) => setRecentSyncHours(e.target.value as "" | "1" | "24" | "168")}
-          style={{
-            height: 36,
-            padding: "0 28px 0 10px",
-            borderRadius: 8,
-            border: "1px solid #d5e3ef",
-            fontSize: 12.5,
-            fontWeight: 600,
-            color: recentSyncHours ? "#175089" : "#55657a",
-            background: recentSyncHours ? "#eef5ff" : "#fff",
-            cursor: "pointer",
-            outline: "none",
-          }}
-        >
-          <option value="">All import times</option>
-          <option value="1">Added to Beacon in last hour</option>
-          <option value="24">Added to Beacon in last 24h</option>
-          <option value="168">Added to Beacon in last 7d</option>
-        </select>
-        {isAdmin && visibleUsers.length > 0 && (
-          <MultiSelectDropdown
-            options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
-            selected={assigneeFilter}
-            onChange={setAssigneeFilter}
-            placeholder="All reps"
-          />
-        )}
-        <button
-          type="button"
-          onClick={() => setShowInternal((v) => !v)}
-          title={showInternal ? "Currently showing internal meetings; click to hide" : "Click to also show internal (all-beacon.li) meetings"}
-          style={{
-            height: 36,
-            padding: "0 12px",
-            borderRadius: 8,
-            border: showInternal ? "1px solid #c5b1ff" : "1px solid #d5e3ef",
-            background: showInternal ? "#efebff" : "#fff",
-            color: showInternal ? "#5b3bd4" : "#55657a",
-            fontSize: 12.5,
-            fontWeight: 700,
-            cursor: "pointer",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <span style={{ width: 8, height: 8, borderRadius: 999, background: showInternal ? "#7c3aed" : "#b8c4d4" }} />
-          {showInternal ? "Internal on" : "Show internal"}
-        </button>
-        {hasFilters && (
-          <button
-            type="button"
-            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); setRecentSyncHours(""); setSearchInput(""); setShowInternal(false); }}
-            style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-          >
-            Reset
-          </button>
+
+        {/* Advanced filter row — hidden by default; kept in DOM so state is
+            preserved across toggles.  Displayed as a subtle second tier so it
+            reads as a disclosure, not a primary control. */}
+        {showAdvancedFilters && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", paddingTop: 10, borderTop: "1px dashed #e2eaf3" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#7a8ea4", textTransform: "uppercase", letterSpacing: "0.06em" }}>Advanced</span>
+            <MultiSelectDropdown
+              options={MEETING_TYPES.map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
+              selected={typeFilter}
+              onChange={setTypeFilter}
+              placeholder="All types"
+            />
+            <MultiSelectDropdown
+              options={[
+                { value: "linked", label: "Linked" },
+                { value: "needs_review", label: "Needs review" },
+              ]}
+              selected={linkFilter}
+              onChange={setLinkFilter}
+              placeholder="All links"
+            />
+            <select
+              value={recentSyncHours}
+              onChange={(e) => setRecentSyncHours(e.target.value as "" | "1" | "24" | "168")}
+              style={{
+                height: 36,
+                padding: "0 28px 0 10px",
+                borderRadius: 8,
+                border: "1px solid #d5e3ef",
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: recentSyncHours ? "#175089" : "#55657a",
+                background: recentSyncHours ? "#eef5ff" : "#fff",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              <option value="">Any import time</option>
+              <option value="1">Imported in last hour</option>
+              <option value="24">Imported in last 24h</option>
+              <option value="168">Imported in last 7d</option>
+            </select>
+          </div>
         )}
       </div>
 
@@ -679,7 +713,31 @@ export default function Meetings() {
                       </div>
                     </td>
                     <td style={styles.td}>
-                      {m.company_id ? (companyName[m.company_id] ?? "-") : <span style={{ color: "#b25a1d", fontWeight: 700 }}>Unlinked</span>}
+                      {m.company_id ? (
+                        <span style={{ fontWeight: 600, color: "#1f3144" }}>{companyName[m.company_id] ?? "—"}</span>
+                      ) : m.is_internal ? (
+                        <span style={{ color: "#8a95a6", fontSize: 12.5 }}>—</span>
+                      ) : (
+                        <Link
+                          to={`/meetings/${m.id}`}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            padding: "4px 9px",
+                            borderRadius: 8,
+                            border: "1px solid #ffd8b4",
+                            background: "#fff6ec",
+                            color: "#b25a1d",
+                            fontSize: 11.5,
+                            fontWeight: 700,
+                            textDecoration: "none",
+                          }}
+                          title="Open meeting to link it to a company"
+                        >
+                          + Link company
+                        </Link>
+                      )}
                     </td>
                     <td style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
                     <td style={styles.td}>
