@@ -790,9 +790,14 @@ async def process_personal_emails(
             touched_deal_ids.add(deal_id)
             thread_context_cache[thread_cache_key] = thread_segments
 
-            if thread_latest_intent == "book_workshop_session" and meeting_candidate_deal_id == deal_id:
-                all_contact_ids = list({cid for cid in matched_contact_ids if cid})
-                await _ensure_meeting_for_deal(session, deal, msg, all_contact_ids)
+            # Intentionally NOT creating a Meeting row from email threads anymore.
+            # The old _ensure_meeting_for_deal() path was minting empty Meeting
+            # rows (no transcript, no recording, no notes — just the email
+            # subject as title) and polluting the Meetings page with entries
+            # that aren't actually meetings.  Emails already land as Activities
+            # on the deal, which is the correct place for them.  A real meeting
+            # row should come from a real meeting source (tldv, Google Calendar),
+            # never from inbox parsing.
 
     await session.commit()
     for deal_id in touched_deal_ids:

@@ -206,9 +206,18 @@ async def get_meeting_recording_url(
     try:
         fresh_url = await client.get_recording_download_url(meeting.external_source_id)
     except TldvError as exc:
+        message = str(exc)
+        # tldv returns this message when a Free-tier user recorded the meeting —
+        # their API tier doesn't allow programmatic download. Surface a cleaner
+        # message so the UI can explain it rather than showing a raw "403".
+        if "free user" in message.lower() or "free tier" in message.lower():
+            raise HTTPException(
+                status_code=409,
+                detail="This meeting was recorded by a tl;dv Free user. The recording is only viewable inside the tl;dv app and cannot be downloaded via API.",
+            )
         raise HTTPException(
             status_code=502 if (exc.status_code or 0) >= 500 else 404,
-            detail=f"tldv: {exc}",
+            detail=f"tldv: {message}",
         )
     if not fresh_url:
         raise HTTPException(status_code=404, detail="No recording available for this meeting")
