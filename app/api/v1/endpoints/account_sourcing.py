@@ -595,6 +595,7 @@ async def _process_uploaded_rows(
     rows: list[dict[str, str]],
     admin_payload: dict[str, str],
 ) -> None:
+    batch_id = batch.id
     repo = CompanyRepository(session)
     created, attached_existing, skipped, failed = 0, 0, 0, 0
     errors: list[dict[str, str]] = []
@@ -628,19 +629,22 @@ async def _process_uploaded_rows(
         }
 
     async def _update_batch_progress(current_stage: str, progress_message: str) -> None:
-        batch.processed_rows = created + attached_existing + skipped + failed
-        batch.created_companies = created + attached_existing
-        batch.skipped_rows = skipped
-        batch.failed_rows = failed
-        batch.error_log = errors if errors else None
-        meta = dict(batch.meta or {})
+        progress_batch = await session.get(SourcingBatch, batch_id)
+        if not progress_batch:
+            return
+        progress_batch.processed_rows = created + attached_existing + skipped + failed
+        progress_batch.created_companies = created + attached_existing
+        progress_batch.skipped_rows = skipped
+        progress_batch.failed_rows = failed
+        progress_batch.error_log = errors if errors else None
+        meta = dict(progress_batch.meta or {})
         meta["current_stage"] = current_stage
         meta["progress_message"] = progress_message
-        batch.meta = meta
-        batch.updated_at = datetime.utcnow()
-        session.add(batch)
+        progress_batch.meta = meta
+        progress_batch.updated_at = datetime.utcnow()
+        session.add(progress_batch)
         await session.commit()
-        await session.refresh(batch)
+        await session.refresh(progress_batch)
 
     await _update_batch_progress("import_running", f"Importing 0 of {len(rows)} rows")
 
@@ -669,16 +673,16 @@ async def _process_uploaded_rows(
                 company = await repo.get_by_name(name)
 
             if company:
-                already_in_batch = company.sourcing_batch_id == batch.id
+                already_in_batch = company.sourcing_batch_id == batch_id
                 company = merge_company_from_upload(company, fields)
-                company.sourcing_batch_id = batch.id
+                company.sourcing_batch_id = batch_id
                 append_company_activity_log(
                     company,
                     action="company_import_updated",
                     actor_name=admin_payload["name"],
                     actor_email=admin_payload["email"],
                     message=f"Updated from upload {batch.filename}",
-                    metadata={"source": "upload", "batch_id": str(batch.id)},
+                    metadata={"source": "upload", "batch_id": str(batch_id)},
                 )
                 company.updated_at = datetime.utcnow()
                 company = refresh_company_prospecting_fields(company)
@@ -694,14 +698,14 @@ async def _process_uploaded_rows(
                 else:
                     attached_existing += 1
             else:
-                company = Company(**fields, sourcing_batch_id=batch.id)
+                company = Company(**fields, sourcing_batch_id=batch_id)
                 append_company_activity_log(
                     company,
                     action="company_created",
                     actor_name=admin_payload["name"],
                     actor_email=admin_payload["email"],
                     message=f"Created from upload {batch.filename}",
-                    metadata={"source": "upload", "batch_id": str(batch.id)},
+                    metadata={"source": "upload", "batch_id": str(batch_id)},
                 )
                 company = refresh_company_prospecting_fields(company)
                 company.icp_score, company.icp_tier = score_company(company)
@@ -793,7 +797,12 @@ async def _process_uploaded_rows(
 
         await _update_batch_progress("import_running", f"Imported {idx} of {len(rows)} rows")
 
-    batch.status = "awaiting_confirmation" if bool((batch.meta or {}).get("requires_confirmation")) else "pending"
+    final_batch = await session.get(SourcingBatch, batch_id)
+    if not final_batch:
+        return
+    final_batch.status = "awaiting_confirmation" if bool((final_batch.meta or {}).get("requires_confirmation")) else "pending"
+    session.add(final_batch)
+    await session.commit()
     await _update_batch_progress("import_completed", "Import complete, preparing enrichment")
 
 
