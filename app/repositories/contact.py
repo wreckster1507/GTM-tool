@@ -146,6 +146,7 @@ class ContactRepository(BaseRepository[Contact]):
                 ~role_mailbox_filter,
                 ~placeholder_name_filter,
                 ~Contact.enrichment_data.contains({"source": "clickup_import_placeholder"}),
+                ~Contact.enrichment_data.contains({"source": "personal_email_sync"}),
                 ~business_domain_mismatch,
             )
             combined_filter = or_(manual_override, junk_filter_combined)

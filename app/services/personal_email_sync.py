@@ -304,6 +304,11 @@ async def _get_or_create_contact_by_email(
         last_name=last_name,
         email=email_addr,
         company_id=company_id,
+        enrichment_data={
+            "source": "personal_email_sync",
+            "sync_user_id": str(sync_user_id),
+            "auto_created": True,
+        },
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )

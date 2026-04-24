@@ -27,6 +27,8 @@ ROLE_LOCAL_PART_PATTERNS = (
     "billing",
     "admin",
     "info",
+    "notetaker",
+    "personalizedinsights",
 )
 
 GENERIC_NAME_TOKENS = {
@@ -41,6 +43,9 @@ GENERIC_NAME_TOKENS = {
     "do-not-reply",
     "admin",
     "info",
+    "notetaker",
+    "sign",
+    "insights",
 }
 
 # Bulk-email provider, tracking, and unsubscribe-wrapper domains.
@@ -101,6 +106,11 @@ BLOCKED_EMAIL_DOMAINS = (
     # behind them; scrapers grab the author bio as a person record. Individual
     # prospects won't have @substack.com emails.
     "substack.com",
+    # Meeting assistants / e-signature / insight-notification senders that
+    # appear in Gmail threads but are not human buyer prospects.
+    "fyxer.com",
+    "conga-sign.com",
+    "clients.gartner.com",
 )
 
 # Hostname LABELS (not free-text substrings) that indicate infrastructure.
