@@ -13,20 +13,14 @@ import CompanyDetail from "./pages/CompanyDetail";
 import Contacts from "./pages/Contacts";
 import ContactDetail from "./pages/ContactDetail";
 import DealDetail from "./pages/DealDetail";
-import Dashboard from "./pages/Dashboard";
 import Meetings from "./pages/Meetings";
 import MeetingDetail from "./pages/MeetingDetail";
-import Battlecards from "./pages/Battlecards";
-import SalesWorkspace from "./pages/SalesWorkspace";
 import SalesAnalytics from "./pages/SalesAnalytics";
 import PreMeetingAssistance from "./pages/PreMeetingAssistance";
-import CustomDemoAssistance from "./pages/CustomDemoAssistance";
 import AccountSourcing from "./pages/AccountSourcing";
 import AccountSourcingCompanyDetail from "./pages/AccountSourcingCompanyDetail";
 import AccountSourcingContactDetail from "./pages/AccountSourcingContactDetail";
-import KnowledgeBase from "./pages/KnowledgeBase";
 import TeamManagement from "./pages/TeamManagement";
-import ExecutionTracker from "./pages/ExecutionTracker";
 import SettingsPage from "./pages/Settings";
 import TasksPage from "./pages/Tasks";
 import { ToastProvider } from "./lib/ToastContext";
@@ -84,7 +78,6 @@ export default function App() {
               }
             >
               <Route index element={<Navigate to="/pipeline" replace />} />
-              <Route path="sales-workspace" element={<SalesWorkspace />} />
               <Route path="pipeline" element={<Pipeline />} />
               <Route path="import" element={<ImportPage />} />
               <Route path="companies" element={<Companies />} />
@@ -99,19 +92,10 @@ export default function App() {
               <Route path="contacts/:id" element={<ContactDetail />} />
               <Route path="meetings" element={<Meetings />} />
               <Route path="pre-meeting-assistance" element={<PreMeetingAssistance />} />
-              <Route path="custom-demo-assistance" element={<CustomDemoAssistance />} />
               <Route path="meetings/:id" element={<MeetingDetail />} />
-              <Route path="battlecards" element={<Battlecards />} />
-              <Route path="live-meeting-assistance" element={<Battlecards />} />
               <Route path="deals/:id" element={<DealDetail />} />
               <Route path="sales-analytics" element={<SalesAnalytics />} />
               <Route path="sales-analytics/:tab" element={<SalesAnalytics />} />
-              <Route path="dashboard" element={<SalesAnalytics />} />
-              <Route path="crm-insights-alerts" element={<SalesAnalytics />} />
-              <Route path="workspace-insights" element={<Dashboard />} />
-              <Route path="knowledge-base" element={<KnowledgeBase />} />
-              <Route path="angel-mapping" element={<Contacts />} />
-              <Route path="execution-tracker" element={<ExecutionTracker />} />
               <Route path="tasks" element={<TasksPage />} />
               <Route path="team" element={<TeamManagement />} />
               <Route path="settings" element={<SettingsPage />} />

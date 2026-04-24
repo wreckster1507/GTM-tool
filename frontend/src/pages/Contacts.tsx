@@ -200,6 +200,51 @@ const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: bool
 type ContactTableColumnKey = typeof CONTACT_TABLE_COLUMNS[number]["key"];
 const DEFAULT_CONTACT_TABLE_COLUMNS: ContactTableColumnKey[] = CONTACT_TABLE_COLUMNS.map((column) => column.key);
 
+const TIMEZONE_OPTIONS = [
+  "IST",
+  "PST",
+  "MST",
+  "CST",
+  "EST",
+  "GMT",
+  "CET",
+  "EET",
+  "GST",
+  "SGT",
+  "JST",
+  "AEST",
+] as const;
+
+const TIMEZONE_LABELS: Record<string, string> = {
+  "Asia/Kolkata": "IST",
+  "Asia/Calcutta": "IST",
+  "America/Los_Angeles": "PST",
+  "America/Vancouver": "PST",
+  "America/Denver": "MST",
+  "America/Phoenix": "MST",
+  "America/Chicago": "CST",
+  "America/New_York": "EST",
+  "America/Toronto": "EST",
+  "Europe/London": "GMT",
+  "Europe/Dublin": "GMT",
+  "Europe/Berlin": "CET",
+  "Europe/Paris": "CET",
+  "Europe/Amsterdam": "CET",
+  "Europe/Madrid": "CET",
+  "Europe/Rome": "CET",
+  "Europe/Athens": "EET",
+  "Asia/Dubai": "GST",
+  "Asia/Singapore": "SGT",
+  "Asia/Manila": "SGT",
+  "Asia/Tokyo": "JST",
+  "Australia/Sydney": "AEST",
+};
+
+function formatTimezoneLabel(value?: string | null): string {
+  if (!value) return "";
+  return TIMEZONE_LABELS[value] ?? value.replace(/^.*\//, "").replace(/_/g, " ").toUpperCase();
+}
+
 function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey[] {
   if (!raw) return DEFAULT_CONTACT_TABLE_COLUMNS;
   try {
@@ -274,6 +319,10 @@ export default function Contacts() {
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [tableColumns, setTableColumns] = useState<ContactTableColumnKey[]>(() => normalizeContactTableColumns(localStorage.getItem("crm.contacts.tableColumns")));
+  const [draggedColumn, setDraggedColumn] = useState<ContactTableColumnKey | null>(null);
+  const [editingTimezoneId, setEditingTimezoneId] = useState<string | null>(null);
+  const [timezoneDraft, setTimezoneDraft] = useState("");
+  const [savingTimezoneId, setSavingTimezoneId] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
   const [creatingMissingCompanies, setCreatingMissingCompanies] = useState(false);
   const [enrichingMissingKey, setEnrichingMissingKey] = useState<string | null>(null);
@@ -289,6 +338,14 @@ export default function Contacts() {
     [tableColumns],
   );
 
+  const columnMenuItems = useMemo(() => {
+    const ordered = tableColumns
+      .map((key) => CONTACT_TABLE_COLUMNS.find((column) => column.key === key))
+      .filter((column): column is typeof CONTACT_TABLE_COLUMNS[number] => Boolean(column));
+    const hidden = CONTACT_TABLE_COLUMNS.filter((column) => !tableColumns.includes(column.key as ContactTableColumnKey));
+    return [...ordered, ...hidden];
+  }, [tableColumns]);
+
   const moveTableColumn = (key: ContactTableColumnKey, direction: -1 | 1) => {
     setTableColumns((current) => {
       const index = current.indexOf(key);
@@ -302,6 +359,19 @@ export default function Contacts() {
     });
   };
 
+  const moveTableColumnTo = (sourceKey: ContactTableColumnKey, targetKey: ContactTableColumnKey) => {
+    if (sourceKey === targetKey) return;
+    setTableColumns((current) => {
+      const sourceIndex = current.indexOf(sourceKey);
+      const targetIndex = current.indexOf(targetKey);
+      if (sourceIndex < 0 || targetIndex < 0) return current;
+      const next = [...current];
+      const [column] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, column);
+      return next;
+    });
+  };
+
   const toggleTableColumn = (key: ContactTableColumnKey) => {
     const column = CONTACT_TABLE_COLUMNS.find((item) => item.key === key);
     if (column?.required) return;
@@ -310,6 +380,22 @@ export default function Contacts() {
         ? current.filter((item) => item !== key)
         : [...current, key]
     ));
+  };
+
+  const saveTimezone = async (contact: Contact, nextTimezone: string) => {
+    const normalized = nextTimezone.trim();
+    setSavingTimezoneId(contact.id);
+    try {
+      const updated = await contactsApi.update(contact.id, { timezone: normalized || undefined });
+      setContacts((current) => current.map((item) => item.id === contact.id ? { ...item, timezone: updated.timezone } : item));
+      toast.success("Timezone updated.", "Prospect saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update timezone.", "Save failed");
+    } finally {
+      setSavingTimezoneId(null);
+      setEditingTimezoneId(null);
+      setTimezoneDraft("");
+    }
   };
 
   // ── Angel mapping state ──────────────────────────────────────────────
@@ -1280,11 +1366,41 @@ export default function Contacts() {
                         <div style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em", padding: "2px 4px" }}>
                           Rearrange columns
                         </div>
-                        {CONTACT_TABLE_COLUMNS.map((column) => {
+                        {columnMenuItems.map((column) => {
                           const active = tableColumns.includes(column.key);
                           return (
-                            <div key={column.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", borderRadius: 10, background: active ? "#f8fbff" : "transparent" }}>
-                              <button type="button" onClick={() => moveTableColumn(column.key, -1)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#7a8ea4", display: "inline-flex" }}>
+                            <div
+                              key={column.key}
+                              draggable={active}
+                              onDragStart={(event) => {
+                                if (!active) return;
+                                setDraggedColumn(column.key);
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", column.key);
+                              }}
+                              onDragOver={(event) => {
+                                if (!active || !draggedColumn || draggedColumn === column.key) return;
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                const source = (event.dataTransfer.getData("text/plain") || draggedColumn) as ContactTableColumnKey | null;
+                                if (source && active) moveTableColumnTo(source, column.key);
+                                setDraggedColumn(null);
+                              }}
+                              onDragEnd={() => setDraggedColumn(null)}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                padding: "6px 4px",
+                                borderRadius: 10,
+                                background: draggedColumn === column.key ? "#eaf2ff" : active ? "#f8fbff" : "transparent",
+                                opacity: active ? 1 : 0.72,
+                              }}
+                            >
+                              <button type="button" onClick={() => moveTableColumn(column.key, -1)} disabled={!active} title="Move left" style={{ border: "none", background: "transparent", cursor: active ? "grab" : "default", color: active ? "#7a8ea4" : "#c5d1de", display: "inline-flex" }}>
                                 <GripVertical size={13} />
                               </button>
                               <span style={{ flex: 1, fontSize: 12.5, color: "#24364b", fontWeight: 600 }}>{column.label}</span>
@@ -1294,7 +1410,7 @@ export default function Contacts() {
                                   {active ? "Hide" : "Show"}
                                 </button>
                               )}
-                              <button type="button" onClick={() => moveTableColumn(column.key, 1)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#7a8ea4", display: "inline-flex" }}>
+                              <button type="button" onClick={() => moveTableColumn(column.key, 1)} disabled={!active} title="Move right" style={{ border: "none", background: "transparent", cursor: active ? "pointer" : "default", color: active ? "#7a8ea4" : "#c5d1de", display: "inline-flex" }}>
                                 <ArrowLeftRight size={13} />
                               </button>
                             </div>
@@ -1360,277 +1476,213 @@ export default function Contacts() {
                       </tr>
                     </thead>
                     <tbody>
-                      {contacts.map((c) => {
-                        return (
+                      {contacts.map((c) => (
                         <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
-                          {visibleColumns.some((column) => column.key === "name") && <td>
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[13px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
-                                {getInitials(`${c.first_name} ${c.last_name}`)}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="font-bold text-[#25384d] truncate">{c.first_name} {c.last_name}</p>
-                                <p className="text-[13px] text-[#7a8ea4] mt-0.5">
-                                  {c.seniority ?? "-"}
-                                </p>
-                              </div>
-                            </div>
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "company") && <td>
-                            {c.company_name ? (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); navigate(`/account-sourcing/${c.company_id}`); }}
-                                className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
-                              >
-                                {c.company_name}
-                              </button>
-                            ) : (
-                              <span className="text-[#96a7ba]">-</span>
-                            )}
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "title") && <td>{c.title ?? <span className="text-[#96a7ba]">-</span>}</td>}
-                          {visibleColumns.some((column) => column.key === "email") && <td>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                              {c.email
-                                ? <span style={{ fontSize: 13, color: "#1e3a52", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
-                                : <span className="text-[#96a7ba]">-</span>
+                          {visibleColumns.map((column) => {
+                            switch (column.key) {
+                              case "name":
+                                return (
+                                  <td key={column.key}>
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[13px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
+                                        {getInitials(`${c.first_name} ${c.last_name}`)}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="font-bold text-[#25384d] truncate">{c.first_name} {c.last_name}</p>
+                                        <p className="text-[13px] text-[#7a8ea4] mt-0.5">{c.seniority ?? "-"}</p>
+                                      </div>
+                                    </div>
+                                  </td>
+                                );
+                              case "company":
+                                return (
+                                  <td key={column.key}>
+                                    {c.company_name ? (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (c.company_id) navigate(`/account-sourcing/${c.company_id}`);
+                                        }}
+                                        className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
+                                      >
+                                        {c.company_name}
+                                      </button>
+                                    ) : (
+                                      <span className="text-[#96a7ba]">-</span>
+                                    )}
+                                  </td>
+                                );
+                              case "title":
+                                return <td key={column.key}>{c.title ?? <span className="text-[#96a7ba]">-</span>}</td>;
+                              case "email":
+                                return (
+                                  <td key={column.key}>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                                      {c.email
+                                        ? <span style={{ fontSize: 13, color: "#1e3a52", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
+                                        : <span className="text-[#96a7ba]">-</span>
+                                      }
+                                      <div style={{ color: "#7a8ea4", fontSize: 11.5 }}>
+                                        {c.phone && c.linkedin_url
+                                          ? "Phone and LinkedIn ready"
+                                          : c.phone
+                                            ? "Phone ready"
+                                            : c.linkedin_url
+                                              ? "LinkedIn ready"
+                                              : "No direct channel saved"}
+                                      </div>
+                                    </div>
+                                  </td>
+                                );
+                              case "progress":
+                                return (
+                                  <td
+                                    key={column.key}
+                                    onClick={(e) => { e.stopPropagation(); setLifecycleContactId(c.id); }}
+                                    style={{ cursor: "pointer" }}
+                                  >
+                                    <ProgressCell contact={c} lifecycle={lifecycleSummaries[c.id]} />
+                                  </td>
+                                );
+                              case "timezone": {
+                                const isEditing = editingTimezoneId === c.id;
+                                const currentLabel = formatTimezoneLabel(c.timezone);
+                                return (
+                                  <td key={column.key} onClick={(e) => e.stopPropagation()}>
+                                    {isEditing ? (
+                                      <select
+                                        autoFocus
+                                        value={timezoneDraft}
+                                        disabled={savingTimezoneId === c.id}
+                                        onChange={(e) => {
+                                          setTimezoneDraft(e.target.value);
+                                          void saveTimezone(c, e.target.value);
+                                        }}
+                                        onBlur={() => {
+                                          if (editingTimezoneId === c.id && timezoneDraft === (c.timezone ?? "")) {
+                                            setEditingTimezoneId(null);
+                                            setTimezoneDraft("");
+                                          }
+                                        }}
+                                        style={{
+                                          height: 30,
+                                          borderRadius: 9,
+                                          border: "1px solid #bfd6f3",
+                                          background: "#fff",
+                                          color: "#0f2744",
+                                          padding: "0 8px",
+                                          fontSize: 12,
+                                          fontWeight: 700,
+                                          outline: "none",
+                                        }}
+                                      >
+                                        <option value="">Unassigned</option>
+                                        {c.timezone && !TIMEZONE_OPTIONS.includes(c.timezone as typeof TIMEZONE_OPTIONS[number]) && !Object.values(TIMEZONE_LABELS).includes(c.timezone) && (
+                                          <option value={c.timezone}>{currentLabel}</option>
+                                        )}
+                                        {TIMEZONE_OPTIONS.map((tz) => (
+                                          <option key={tz} value={tz}>{tz}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingTimezoneId(c.id);
+                                          setTimezoneDraft(currentLabel || "");
+                                        }}
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          gap: 5,
+                                          border: "1px solid #dce8f4",
+                                          borderRadius: 999,
+                                          background: "#fff",
+                                          color: currentLabel ? "#4a6580" : "#9aaabd",
+                                          padding: "4px 9px",
+                                          fontSize: 12,
+                                          fontWeight: 700,
+                                          cursor: "pointer",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                        title="Click to edit timezone"
+                                      >
+                                        <Globe size={11} />
+                                        {currentLabel || "Add TZ"}
+                                      </button>
+                                    )}
+                                  </td>
+                                );
                               }
-                              <div style={{ color: "#7a8ea4", fontSize: 11.5 }}>
-                                {c.phone && c.linkedin_url
-                                  ? "Phone and LinkedIn ready"
-                                  : c.phone
-                                    ? "Phone ready"
-                                    : c.linkedin_url
-                                      ? "LinkedIn ready"
-                                      : "No direct channel saved"}
-                              </div>
-                            </div>
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "progress") && <td
-                            onClick={(e) => { e.stopPropagation(); setLifecycleContactId(c.id); }}
-                            style={{ cursor: "pointer" }}
-                          >
-                            <ProgressCell
-                              contact={c}
-                              lifecycle={lifecycleSummaries[c.id]}
-                            />
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "timezone") && <td>
-                            {c.timezone ? (
-                              <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#4a6580" }}>
-                                <Globe size={11} />
-                                <span style={{ whiteSpace: "nowrap" }}>{c.timezone}</span>
-                              </div>
-                            ) : (
-                              <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>
-                            )}
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "next_action") && <td>
-                            {(() => {
-                              const action = getNextAction(c);
-                              if (action.channel === "none" && action.priority === "low") {
-                                return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
+                              case "next_action": {
+                                const action = getNextAction(c);
+                                if (action.channel === "none" && action.priority === "low") {
+                                  return <td key={column.key}><span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span></td>;
+                                }
+                                const toneMap = {
+                                  high: { bg: "#fff4ed", border: "#fed7aa", color: "#c2410c" },
+                                  medium: { bg: "#f0f9ff", border: "#bae6fd", color: "#0369a1" },
+                                  low: { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b" },
+                                };
+                                const tone = toneMap[action.priority];
+                                return (
+                                  <td key={column.key}>
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: tone.color, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 8, padding: "3px 8px", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                      {action.label}
+                                    </span>
+                                  </td>
+                                );
                               }
-                              const toneMap = {
-                                high: { bg: "#fff4ed", border: "#fed7aa", color: "#c2410c" },
-                                medium: { bg: "#f0f9ff", border: "#bae6fd", color: "#0369a1" },
-                                low: { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b" },
-                              };
-                              const tone = toneMap[action.priority];
-                              return (
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: tone.color, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 8, padding: "3px 8px", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
-                                  {action.label}
-                                </span>
-                              );
-                            })()}
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "ae") && <td onClick={(e) => e.stopPropagation()}>
-                            <AssignDropdown
-                              entityType="contact"
-                              entityId={c.id}
-                              currentAssignedId={c.assigned_to_id}
-                              currentAssignedName={c.assigned_to_name || c.assigned_rep_email}
-                              onAssigned={() => loadContacts()}
-                              role="ae"
-                              label="AE"
-                              compact
-                            />
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "sdr") && <td onClick={(e) => e.stopPropagation()}>
-                            <AssignDropdown
-                              entityType="contact"
-                              entityId={c.id}
-                              currentAssignedId={c.sdr_id}
-                              currentAssignedName={c.sdr_name}
-                              onAssigned={() => loadContacts()}
-                              role="sdr"
-                              label="SDR"
-                              compact
-                            />
-                          </td>}
-                          {visibleColumns.some((column) => column.key === "action") && <td onClick={(e) => e.stopPropagation()}>
-                            <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                              <button
-                                type="button"
-                                disabled={!c.phone}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!c.phone) return;
-                                  openCallSidebar(c);
-                                }}
-                                style={{
-                                  height: 38,
-                                  borderRadius: 10,
-                                  border: "1px solid #c8daf0",
-                                  background: c.phone ? "#eaf2ff" : "#f6f8fb",
-                                  color: c.phone ? "#175089" : "#9aa8b7",
-                                  padding: "0 10px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  cursor: c.phone ? "pointer" : "default",
-                                  fontSize: 12.5,
-                                  fontWeight: 700,
-                                }}
-                                title={c.phone ? c.phone : "No phone number"}
-                              >
-                                <Phone size={13} />
-                                Call
-                              </button>
-                              <a
-                                href={c.linkedin_url || undefined}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!c.linkedin_url) e.preventDefault();
-                                }}
-                                style={{
-                                  height: 38,
-                                  borderRadius: 10,
-                                  border: "1px solid #b8d4f0",
-                                  background: c.linkedin_url ? "#e8f2ff" : "#f6f8fb",
-                                  color: c.linkedin_url ? "#0a66c2" : "#9aa8b7",
-                                  padding: "0 10px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  cursor: c.linkedin_url ? "pointer" : "default",
-                                  fontSize: 12.5,
-                                  fontWeight: 700,
-                                  textDecoration: "none",
-                                }}
-                                title={c.linkedin_url ? "Open LinkedIn profile" : "No LinkedIn profile"}
-                              >
-                                <Link2 size={13} />
-                                LinkedIn
-                              </a>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setLinkedinContact(c);
-                                  setLinkedinStatus(c.linkedin_status && c.linkedin_status !== "none" ? c.linkedin_status : "sent");
-                                  setLinkedinNotes("");
-                                }}
-                                style={{
-                                  height: 38,
-                                  borderRadius: 10,
-                                  border: "1px solid #ddd6fe",
-                                  background: "#f5f3ff",
-                                  color: "#6d28d9",
-                                  padding: "0 10px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  cursor: "pointer",
-                                  fontSize: 12.5,
-                                  fontWeight: 700,
-                                }}
-                                title="Log LinkedIn touch"
-                              >
-                                <Link2 size={13} />
-                                Log
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setOpenActionsId((current) => (current === c.id ? null : c.id));
-                                }}
-                                style={{
-                                  width: 38,
-                                  height: 38,
-                                  borderRadius: 12,
-                                  border: "1px solid #dce8f4",
-                                  background: "#fff",
-                                  color: "#4a6580",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  cursor: "pointer",
-                                }}
-                                title="Prospect actions"
-                              >
-                                <MoreHorizontal size={16} />
-                              </button>
-                              {openActionsId === c.id ? (
-                                <div
-                                  style={{
-                                    position: "absolute",
-                                    top: 44,
-                                    right: 0,
-                                    zIndex: 20,
-                                    minWidth: 180,
-                                    borderRadius: 14,
-                                    border: "1px solid #dce8f4",
-                                    background: "#fff",
-                                    boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)",
-                                    padding: 8,
-                                    display: "grid",
-                                    gap: 4,
-                                  }}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedContact(c);
-                                      setOpenActionsId(null);
-                                    }}
-                                    className="crm-button soft"
-                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}
-                                  >
-                                    <Sparkles className="h-3.5 w-3.5" />Outreach
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setTaskContact(c);
-                                      setOpenActionsId(null);
-                                    }}
-                                    className="crm-button soft"
-                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}
-                                  >
-                                    <Plus className="h-3.5 w-3.5" />Manual task
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={!c.company_id}
-                                    onClick={() => {
-                                      setOpenActionsId(null);
-                                      void handleConvertContactToDeal(c);
-                                    }}
-                                    className="crm-button soft"
-                                    style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, opacity: c.company_id ? 1 : 0.55 }}
-                                  >
-                                    <Target className="h-3.5 w-3.5" />Convert to deal
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
-                          </td>}
+                              case "ae":
+                                return (
+                                  <td key={column.key} onClick={(e) => e.stopPropagation()}>
+                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.assigned_to_id} currentAssignedName={c.assigned_to_name || c.assigned_rep_email} onAssigned={() => loadContacts()} role="ae" label="AE" compact />
+                                  </td>
+                                );
+                              case "sdr":
+                                return (
+                                  <td key={column.key} onClick={(e) => e.stopPropagation()}>
+                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.sdr_id} currentAssignedName={c.sdr_name} onAssigned={() => loadContacts()} role="sdr" label="SDR" compact />
+                                  </td>
+                                );
+                              case "action":
+                                return (
+                                  <td key={column.key} onClick={(e) => e.stopPropagation()}>
+                                    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                      <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 38, borderRadius: 10, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? c.phone : "No phone number"}>
+                                        <Phone size={13} /> Call
+                                      </button>
+                                      <a href={c.linkedin_url || undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); if (!c.linkedin_url) e.preventDefault(); }} style={{ height: 38, borderRadius: 10, border: "1px solid #b8d4f0", background: c.linkedin_url ? "#e8f2ff" : "#f6f8fb", color: c.linkedin_url ? "#0a66c2" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.linkedin_url ? "pointer" : "default", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }} title={c.linkedin_url ? "Open LinkedIn profile" : "No LinkedIn profile"}>
+                                        <Link2 size={13} /> LinkedIn
+                                      </a>
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); setLinkedinContact(c); setLinkedinStatus(c.linkedin_status && c.linkedin_status !== "none" ? c.linkedin_status : "sent"); setLinkedinNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #ddd6fe", background: "#f5f3ff", color: "#6d28d9", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log LinkedIn touch">
+                                        <Link2 size={13} /> Log
+                                      </button>
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); setOpenActionsId((current) => (current === c.id ? null : c.id)); }} style={{ width: 38, height: 38, borderRadius: 12, border: "1px solid #dce8f4", background: "#fff", color: "#4a6580", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} title="Prospect actions">
+                                        <MoreHorizontal size={16} />
+                                      </button>
+                                      {openActionsId === c.id ? (
+                                        <div style={{ position: "absolute", top: 44, right: 0, zIndex: 20, minWidth: 180, borderRadius: 14, border: "1px solid #dce8f4", background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)", padding: 8, display: "grid", gap: 4 }}>
+                                          <button type="button" onClick={() => { setSelectedContact(c); setOpenActionsId(null); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}>
+                                            <Sparkles className="h-3.5 w-3.5" />Outreach
+                                          </button>
+                                          <button type="button" onClick={() => { setTaskContact(c); setOpenActionsId(null); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}>
+                                            <Plus className="h-3.5 w-3.5" />Manual task
+                                          </button>
+                                          <button type="button" disabled={!c.company_id} onClick={() => { setOpenActionsId(null); void handleConvertContactToDeal(c); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, opacity: c.company_id ? 1 : 0.55 }}>
+                                            <Target className="h-3.5 w-3.5" />Convert to deal
+                                          </button>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                );
+                              default:
+                                return null;
+                            }
+                          })}
                         </tr>
-                      )})}
+                      ))}
                     </tbody>
                   </table>
                 </div>

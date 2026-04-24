@@ -84,15 +84,6 @@ const QUICK_ACTIONS: QuickAction[] = [
     icon: "tasks",
   },
   {
-    id: "knowledge",
-    title: "Open Knowledge Base",
-    subtitle: "Browse reusable sales resources and playbooks.",
-    meta: "Quick Actions",
-    link: "/knowledge-base",
-    keywords: "knowledge docs resources playbooks",
-    icon: "knowledge",
-  },
-  {
     id: "settings",
     title: "Open Settings",
     subtitle: "Configure stages, syncs, and shared workspace rules.",

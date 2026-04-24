@@ -38,7 +38,6 @@ from app.api.v1.endpoints import (
     tasks,
     tldv,
     webhooks,
-    workspace,
 )
 
 router = APIRouter()
@@ -64,7 +63,6 @@ router.include_router(tldv.router)
 router.include_router(meetings.router)
 router.include_router(battlecards.router)
 router.include_router(webhooks.router)
-router.include_router(workspace.router)
 router.include_router(custom_demo.router)
 router.include_router(sales_resources.router)
 router.include_router(account_sourcing.router)
