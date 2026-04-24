@@ -34,7 +34,7 @@ class CompanyRepository(BaseRepository[Company]):
         result = await self.session.execute(
             select(Company).where(func.lower(func.trim(Company.name)) == name.strip().lower())
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def delete_with_cascade(self, company_id: UUID) -> None:
         """

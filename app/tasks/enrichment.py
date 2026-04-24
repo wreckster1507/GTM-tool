@@ -129,13 +129,15 @@ async def _async_process_sourcing_upload(batch_id: UUID, rows: list[dict], admin
     engine, SessionLocal = _make_session()
     try:
         async with SessionLocal() as session:
-            batch = await session.get(SourcingBatch, batch_id)
-            if not batch:
+            upload_batch = await session.get(SourcingBatch, batch_id)
+            if not upload_batch:
                 return
-            await _process_uploaded_rows(session, batch, rows, admin_payload)
-            await session.refresh(batch)
-            if not bool((batch.meta or {}).get("requires_confirmation")):
-                await _queue_batch_enrichment(session, batch)
+            await _process_uploaded_rows(session, upload_batch, rows, admin_payload)
+            final_batch = await session.get(SourcingBatch, batch_id)
+            if not final_batch:
+                return
+            if not bool((final_batch.meta or {}).get("requires_confirmation")):
+                await _queue_batch_enrichment(session, final_batch)
     finally:
         await engine.dispose()
 
