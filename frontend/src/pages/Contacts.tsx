@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary, LifecycleStep, LifecycleStepState } from "../lib/api";
-import type { Activity, Contact, AngelInvestor, AngelMapping, RolePermissionsSettings, User } from "../types";
+import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import {
@@ -30,6 +30,7 @@ import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import AddProspectModal from "./contacts/AddProspectModal";
+import SearchableCompanySelect from "../components/SearchableCompanySelect";
 import { ANGEL_SURFACE, ANGEL_TEXT, PERSONA_LABEL, PERSONA_STYLE, STRENGTH_LABEL, STRENGTH_STYLE } from "./contacts/constants";
 import { filterAngelMappings, getMissingCompanyKey, groupAngelMappingsByCompany } from "./contacts/utils";
 import type { ProspectImportSummary, ProspectingTab } from "./contacts/types";
@@ -238,7 +239,7 @@ export default function Contacts() {
   // Backend's contacts list already accepts `company_id`; this just wires a
   // dropdown to it. Value is a single company UUID (or "" for all).
   const [companyFilter, setCompanyFilter] = useState<string>(() => searchParams.get("co") ?? "");
-  const [companyOptions, setCompanyOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [companyOptions, setCompanyOptions] = useState<Company[]>([]);
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
   const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
@@ -282,7 +283,9 @@ export default function Contacts() {
   }, [tableColumns]);
 
   const visibleColumns = useMemo(
-    () => CONTACT_TABLE_COLUMNS.filter((column) => tableColumns.includes(column.key)),
+    () => tableColumns
+      .map((key) => CONTACT_TABLE_COLUMNS.find((column) => column.key === key))
+      .filter((column): column is typeof CONTACT_TABLE_COLUMNS[number] => Boolean(column)),
     [tableColumns],
   );
 
@@ -468,17 +471,14 @@ export default function Contacts() {
     authApi.listUsers().then(setTeamUsers).catch(() => setTeamUsers([]));
   }, []);
 
-  // Load a lightweight company list once so the Prospecting tab's company
-  // filter has options. We intentionally pull the first 500 — plenty for a
-  // dropdown; if it grows past that we'll swap to a typeahead, but for now
-  // a static select is simpler than a search endpoint + server-side filter.
+  // Seed the company filter with common CRM companies; the searchable selector
+  // also loads the larger CRM + Account Sourcing catalog when opened.
   useEffect(() => {
     companiesApi
       .list(0, 500)
       .then((rows) => {
         const opts = rows
-          .map((c) => ({ id: c.id, name: (c.name || c.domain || "").trim() }))
-          .filter((o) => o.id && o.name)
+          .filter((company) => company.id && (company.name || company.domain))
           .sort((a, b) => a.name.localeCompare(b.name));
         setCompanyOptions(opts);
       })
@@ -1205,30 +1205,16 @@ export default function Contacts() {
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>Company</span>
-                    <select
+                    <div style={{ width: 240 }}>
+                      <SearchableCompanySelect
                       value={companyFilter}
-                      onChange={(e) => setCompanyFilter(e.target.value)}
-                      style={{
-                        height: 34,
-                        padding: "0 28px 0 10px",
-                        borderRadius: 9,
-                        border: "1px solid #c8d9e8",
-                        fontSize: 13,
-                        color: "#0f2744",
-                        background: "#fff",
-                        outline: "none",
-                        minWidth: 200,
-                        maxWidth: 260,
-                        cursor: "pointer",
-                      }}
-                    >
-                      <option value="">All companies</option>
-                      {companyOptions.map((co) => (
-                        <option key={co.id} value={co.id}>
-                          {co.name.length > 40 ? co.name.slice(0, 38) + "…" : co.name}
-                        </option>
-                      ))}
-                    </select>
+                        companies={companyOptions}
+                        onChange={(companyId) => setCompanyFilter(companyId ?? "")}
+                        placeholder="Search company..."
+                        noneLabel="All companies"
+                        allowNone
+                      />
+                    </div>
                   </div>
                   <MultiSelectFilter
                     label="Sequence"
