@@ -106,6 +106,40 @@ def enrich_batch_task(self, batch_id: str) -> dict:
         raise self.retry(exc=exc)
 
 
+@celery_app.task(
+    name="app.tasks.enrichment.process_sourcing_upload_task",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+)
+def process_sourcing_upload_task(self, batch_id: str, rows: list[dict], admin_payload: dict) -> dict:
+    """Import uploaded workbook rows into account sourcing in the worker."""
+    try:
+        _run_async(_async_process_sourcing_upload(UUID(batch_id), rows, admin_payload))
+        return {"status": "completed", "batch_id": batch_id}
+    except Exception as exc:
+        logger.error(f"Sourcing upload task failed for {batch_id}: {exc}")
+        raise self.retry(exc=exc)
+
+
+async def _async_process_sourcing_upload(batch_id: UUID, rows: list[dict], admin_payload: dict) -> None:
+    from app.models.sourcing_batch import SourcingBatch
+    from app.api.v1.endpoints.account_sourcing import _process_uploaded_rows, _queue_batch_enrichment
+
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            batch = await session.get(SourcingBatch, batch_id)
+            if not batch:
+                return
+            await _process_uploaded_rows(session, batch, rows, admin_payload)
+            await session.refresh(batch)
+            if not bool((batch.meta or {}).get("requires_confirmation")):
+                await _queue_batch_enrichment(session, batch)
+    finally:
+        await engine.dispose()
+
+
 async def _async_enrich_batch(batch_id: UUID) -> None:
     from sqlmodel import select
 

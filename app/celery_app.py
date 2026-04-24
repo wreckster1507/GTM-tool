@@ -27,6 +27,7 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     # Route user-triggered tasks to priority queue so they're never blocked by long-running syncs
     task_routes={
+        "app.tasks.enrichment.process_sourcing_upload_task": {"queue": "priority"},
         "app.tasks.enrichment.icp_research_single_task": {"queue": "priority"},
         "app.tasks.enrichment.icp_research_free_task": {"queue": "priority"},
         "app.tasks.enrichment.icp_research_batch_task": {"queue": "priority"},

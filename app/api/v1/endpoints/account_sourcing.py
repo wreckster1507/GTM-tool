@@ -562,6 +562,241 @@ async def _queue_batch_enrichment(session, batch: SourcingBatch) -> None:
         raise HTTPException(status_code=500, detail="Failed to queue batch enrichment") from exc
 
 
+async def _queue_batch_import(
+    session,
+    batch: SourcingBatch,
+    rows: list[dict[str, str]],
+    admin_payload: dict[str, str],
+) -> None:
+    batch.status = "processing"
+    meta = dict(batch.meta or {})
+    meta["current_stage"] = "queued"
+    meta["progress_message"] = "Queued for import"
+    batch.meta = meta
+    batch.updated_at = datetime.utcnow()
+    session.add(batch)
+    await session.commit()
+    try:
+        from app.tasks.enrichment import process_sourcing_upload_task
+
+        process_sourcing_upload_task.delay(str(batch.id), rows, admin_payload)
+    except Exception as exc:
+        batch.status = "failed"
+        batch.error_log = [*(batch.error_log or []), {"batch": str(batch.id), "error": str(exc)}]
+        batch.updated_at = datetime.utcnow()
+        session.add(batch)
+        await session.commit()
+        raise HTTPException(status_code=500, detail="Failed to queue batch import") from exc
+
+
+async def _process_uploaded_rows(
+    session,
+    batch: SourcingBatch,
+    rows: list[dict[str, str]],
+    admin_payload: dict[str, str],
+) -> None:
+    repo = CompanyRepository(session)
+    created, attached_existing, skipped, failed = 0, 0, 0, 0
+    errors: list[dict[str, str]] = []
+
+    all_users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()  # noqa: E712
+    _user_by_email: dict[str, User] = {u.email.lower(): u for u in all_users}
+    _user_by_name: dict[str, User] = {u.name.strip().lower(): u for u in all_users}
+    _user_by_first_name: dict[str, list[User]] = {}
+    for user in all_users:
+        first = (user.name or "").strip().split(" ", 1)[0].lower()
+        if first:
+            _user_by_first_name.setdefault(first, []).append(user)
+
+    def _resolve_user(rep_email: str | None, rep_name: str | None) -> dict[str, str] | None:
+        found: User | None = None
+        if rep_email:
+            found = _user_by_email.get(rep_email.strip().lower())
+        if not found and rep_name:
+            normalized_name = rep_name.strip().lower()
+            found = _user_by_name.get(normalized_name)
+            if not found:
+                first_matches = _user_by_first_name.get(normalized_name) or []
+                if len(first_matches) == 1:
+                    found = first_matches[0]
+        if not found:
+            return None
+        return {
+            "id": str(found.id),
+            "email": found.email,
+            "name": found.name,
+        }
+
+    async def _update_batch_progress(current_stage: str, progress_message: str) -> None:
+        batch.processed_rows = created + attached_existing + skipped + failed
+        batch.created_companies = created + attached_existing
+        batch.skipped_rows = skipped
+        batch.failed_rows = failed
+        batch.error_log = errors if errors else None
+        meta = dict(batch.meta or {})
+        meta["current_stage"] = current_stage
+        meta["progress_message"] = progress_message
+        batch.meta = meta
+        batch.updated_at = datetime.utcnow()
+        session.add(batch)
+        await session.commit()
+        await session.refresh(batch)
+
+    await _update_batch_progress("import_running", f"Importing 0 of {len(rows)} rows")
+
+    for idx, row in enumerate(rows, start=1):
+        fields = row_to_company_fields(row)
+        domain = fields["domain"]
+        name = fields["name"]
+
+        ae_user = _resolve_user(fields.get("assigned_rep_email"), fields.get("assigned_rep_name") or fields.get("assigned_rep"))
+        sdr_user = _resolve_user(fields.get("sdr_email"), fields.get("sdr_name"))
+        if ae_user:
+            fields["assigned_to_id"] = ae_user["id"]
+            fields["assigned_rep_email"] = ae_user["email"]
+            fields["assigned_rep_name"] = ae_user["name"]
+            fields["assigned_rep"] = ae_user["name"]
+        if sdr_user:
+            fields["sdr_id"] = sdr_user["id"]
+            fields["sdr_email"] = sdr_user["email"]
+            fields["sdr_name"] = sdr_user["name"]
+
+        try:
+            company = None
+            if not domain.endswith(".unknown"):
+                company = await repo.get_by_domain(domain)
+            if not company:
+                company = await repo.get_by_name(name)
+
+            if company:
+                already_in_batch = company.sourcing_batch_id == batch.id
+                company = merge_company_from_upload(company, fields)
+                company.sourcing_batch_id = batch.id
+                append_company_activity_log(
+                    company,
+                    action="company_import_updated",
+                    actor_name=admin_payload["name"],
+                    actor_email=admin_payload["email"],
+                    message=f"Updated from upload {batch.filename}",
+                    metadata={"source": "upload", "batch_id": str(batch.id)},
+                )
+                company.updated_at = datetime.utcnow()
+                company = refresh_company_prospecting_fields(company)
+                company.icp_score, company.icp_tier = score_company(company)
+                session.add(company)
+                await session.commit()
+                await session.refresh(company)
+                from app.services.company_auto_mapping import backfill_orphans_for_company
+                await backfill_orphans_for_company(session, company)
+                await session.commit()
+                if already_in_batch:
+                    skipped += 1
+                else:
+                    attached_existing += 1
+            else:
+                company = Company(**fields, sourcing_batch_id=batch.id)
+                append_company_activity_log(
+                    company,
+                    action="company_created",
+                    actor_name=admin_payload["name"],
+                    actor_email=admin_payload["email"],
+                    message=f"Created from upload {batch.filename}",
+                    metadata={"source": "upload", "batch_id": str(batch.id)},
+                )
+                company = refresh_company_prospecting_fields(company)
+                company.icp_score, company.icp_tier = score_company(company)
+                session.add(company)
+                await session.commit()
+                await session.refresh(company)
+                from app.services.company_auto_mapping import backfill_orphans_for_company
+                await backfill_orphans_for_company(session, company)
+                await session.commit()
+                created += 1
+
+            profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
+            inv = profile.get("investors") if isinstance(profile.get("investors"), dict) else {}
+            ownership = profile.get("ownership_stage")
+            if ownership and not company.ownership_stage:
+                company.ownership_stage = str(ownership)[:500]
+            pe = inv.get("pe") if isinstance(inv.get("pe"), list) else []
+            if pe and not company.pe_investors:
+                company.pe_investors = "; ".join(str(i).strip() for i in pe if str(i).strip())
+            vc = inv.get("vc_growth") if isinstance(inv.get("vc_growth"), list) else []
+            if vc and not company.vc_investors:
+                company.vc_investors = "; ".join(str(i).strip() for i in vc if str(i).strip())
+            strat = inv.get("strategic") if isinstance(inv.get("strategic"), list) else []
+            if strat and not company.strategic_investors:
+                company.strategic_investors = "; ".join(str(i).strip() for i in strat if str(i).strip())
+            if any([pe, vc, strat, ownership]):
+                session.add(company)
+                await session.commit()
+
+            contact_fields = row_to_contact_fields(row, fields)
+            if contact_fields:
+                if ae_user:
+                    contact_fields["assigned_to_id"] = ae_user["id"]
+                    contact_fields["assigned_rep_email"] = ae_user["email"]
+                if sdr_user:
+                    contact_fields["sdr_id"] = sdr_user["id"]
+                    contact_fields["sdr_name"] = sdr_user["name"]
+                existing_contact = None
+                if contact_fields.get("email"):
+                    existing_contact = (
+                        await session.execute(
+                            select(Contact).where(Contact.email == contact_fields["email"]).limit(1)
+                        )
+                    ).scalars().first()
+                if not existing_contact:
+                    existing_contact = (
+                        await session.execute(
+                            select(Contact).where(
+                                Contact.company_id == company.id,
+                                Contact.first_name == contact_fields.get("first_name"),
+                                Contact.last_name == contact_fields.get("last_name"),
+                            ).limit(1)
+                        )
+                    ).scalars().first()
+
+                if existing_contact:
+                    for key, value in contact_fields.items():
+                        if value and not getattr(existing_contact, key, None):
+                            setattr(existing_contact, key, value)
+                    refresh_contact_sequence_plan(existing_contact, company)
+                    session.add(existing_contact)
+                    resolved_contact = existing_contact
+                else:
+                    contact = Contact(**contact_fields, company_id=company.id)
+                    refresh_contact_sequence_plan(contact, company)
+                    session.add(contact)
+                    resolved_contact = contact
+                await session.commit()
+                await session.refresh(resolved_contact)
+
+                try:
+                    await _auto_create_angel_records(session, company, resolved_contact)
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+
+                company_contacts = (
+                    await session.execute(select(Contact).where(Contact.company_id == company.id))
+                ).scalars().all()
+                refresh_company_prospecting_fields(company, company_contacts)
+                company.icp_score, company.icp_tier = score_company(company)
+                session.add(company)
+                await session.commit()
+
+        except Exception as e:
+            await session.rollback()
+            failed += 1
+            errors.append({"name": name, "error": str(e)})
+
+        await _update_batch_progress("import_running", f"Imported {idx} of {len(rows)} rows")
+
+    batch.status = "awaiting_confirmation" if bool((batch.meta or {}).get("requires_confirmation")) else "pending"
+    await _update_batch_progress("import_completed", "Import complete, preparing enrichment")
+
+
 async def _build_competitive_landscape(session, company: Company) -> list[dict[str, str]]:
     cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
 
@@ -787,208 +1022,17 @@ async def upload_csv(
     await session.commit()
     await session.refresh(batch)
 
-    repo = CompanyRepository(session)
-    created, attached_existing, skipped, failed = 0, 0, 0, 0
-    errors = []
-
-    # Pre-load all users for owner resolution: email → User, lowercase name → User
-    all_users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()  # noqa: E712
-    _user_by_email: dict[str, User] = {u.email.lower(): u for u in all_users}
-    _user_by_name: dict[str, User] = {u.name.strip().lower(): u for u in all_users}
-    _user_by_first_name: dict[str, list[User]] = {}
-    for user in all_users:
-        first = (user.name or "").strip().split(" ", 1)[0].lower()
-        if first:
-            _user_by_first_name.setdefault(first, []).append(user)
-
-    def _resolve_user(rep_email: str | None, rep_name: str | None) -> dict[str, str] | None:
-        """Resolve an owner string from CSV to plain user values safe across commits."""
-        found: User | None = None
-        if rep_email:
-            found = _user_by_email.get(rep_email.strip().lower())
-        if not found and rep_name:
-            normalized_name = rep_name.strip().lower()
-            found = _user_by_name.get(normalized_name)
-            if not found:
-                first_matches = _user_by_first_name.get(normalized_name) or []
-                if len(first_matches) == 1:
-                    found = first_matches[0]
-        if not found:
-            return None
-        return {
-            "id": str(found.id),
-            "email": found.email,
-            "name": found.name,
-        }
-
-    for row in rows:
-        fields = row_to_company_fields(row)
-        domain = fields["domain"]
-        name = fields["name"]
-
-        # Resolve owner from CSV sdr/ae to actual User records
-        ae_user = _resolve_user(fields.get("assigned_rep_email"), fields.get("assigned_rep_name") or fields.get("assigned_rep"))
-        sdr_user = _resolve_user(fields.get("sdr_email"), fields.get("sdr_name"))
-        if ae_user:
-            fields["assigned_to_id"] = ae_user["id"]
-            fields["assigned_rep_email"] = ae_user["email"]
-            fields["assigned_rep_name"] = ae_user["name"]
-            fields["assigned_rep"] = ae_user["name"]
-        if sdr_user:
-            fields["sdr_id"] = sdr_user["id"]
-            fields["sdr_email"] = sdr_user["email"]
-            fields["sdr_name"] = sdr_user["name"]
-
-        try:
-            company = None
-            if not domain.endswith(".unknown"):
-                company = await repo.get_by_domain(domain)
-            if not company:
-                company = await repo.get_by_name(name)
-
-            if company:
-                already_in_batch = company.sourcing_batch_id == batch.id
-                company = merge_company_from_upload(company, fields)
-                company.sourcing_batch_id = batch.id
-                append_company_activity_log(
-                    company,
-                    action="company_import_updated",
-                    actor_name=admin.name,
-                    actor_email=admin.email,
-                    message=f"Updated from upload {batch.filename}",
-                    metadata={"source": "upload", "batch_id": str(batch.id)},
-                )
-                company.updated_at = datetime.utcnow()
-                company = refresh_company_prospecting_fields(company)
-                company.icp_score, company.icp_tier = score_company(company)
-                session.add(company)
-                await session.commit()
-                await session.refresh(company)
-                from app.services.company_auto_mapping import backfill_orphans_for_company
-                await backfill_orphans_for_company(session, company)
-                await session.commit()
-                if already_in_batch:
-                    skipped += 1
-                else:
-                    attached_existing += 1
-            else:
-                company = Company(**fields, sourcing_batch_id=batch.id)
-                append_company_activity_log(
-                    company,
-                    action="company_created",
-                    actor_name=admin.name,
-                    actor_email=admin.email,
-                    message=f"Created from upload {batch.filename}",
-                    metadata={"source": "upload", "batch_id": str(batch.id)},
-                )
-                company = refresh_company_prospecting_fields(company)
-                company.icp_score, company.icp_tier = score_company(company)
-                session.add(company)
-                await session.commit()
-                await session.refresh(company)
-                from app.services.company_auto_mapping import backfill_orphans_for_company
-                await backfill_orphans_for_company(session, company)
-                await session.commit()
-                created += 1
-
-            # Preserve investor metadata on the company even when the spreadsheet
-            # did not include a corresponding contact row.
-            profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
-            inv = profile.get("investors") if isinstance(profile.get("investors"), dict) else {}
-            ownership = profile.get("ownership_stage")
-            if ownership and not company.ownership_stage:
-                company.ownership_stage = str(ownership)[:500]
-            pe = inv.get("pe") if isinstance(inv.get("pe"), list) else []
-            if pe and not company.pe_investors:
-                company.pe_investors = "; ".join(str(i).strip() for i in pe if str(i).strip())
-            vc = inv.get("vc_growth") if isinstance(inv.get("vc_growth"), list) else []
-            if vc and not company.vc_investors:
-                company.vc_investors = "; ".join(str(i).strip() for i in vc if str(i).strip())
-            strat = inv.get("strategic") if isinstance(inv.get("strategic"), list) else []
-            if strat and not company.strategic_investors:
-                company.strategic_investors = "; ".join(str(i).strip() for i in strat if str(i).strip())
-            if any([pe, vc, strat, ownership]):
-                session.add(company)
-                await session.commit()
-
-            contact_fields = row_to_contact_fields(row, fields)
-            if contact_fields:
-                # Propagate resolved owner to contacts
-                if ae_user:
-                    contact_fields["assigned_to_id"] = ae_user["id"]
-                    contact_fields["assigned_rep_email"] = ae_user["email"]
-                if sdr_user:
-                    contact_fields["sdr_id"] = sdr_user["id"]
-                    contact_fields["sdr_name"] = sdr_user["name"]
-                # Contact rows are optional. When present, we merge them now so the
-                # background enrichment can build on the imported humans instead of
-                # discovering everything from scratch.
-                existing_contact = None
-                if contact_fields.get("email"):
-                    existing_contact = (
-                        await session.execute(
-                            select(Contact).where(Contact.email == contact_fields["email"]).limit(1)
-                        )
-                    ).scalars().first()
-                if not existing_contact:
-                    existing_contact = (
-                        await session.execute(
-                            select(Contact).where(
-                                Contact.company_id == company.id,
-                                Contact.first_name == contact_fields.get("first_name"),
-                                Contact.last_name == contact_fields.get("last_name"),
-                            ).limit(1)
-                        )
-                    ).scalars().first()
-
-                if existing_contact:
-                    for key, value in contact_fields.items():
-                        if value and not getattr(existing_contact, key, None):
-                            setattr(existing_contact, key, value)
-                    refresh_contact_sequence_plan(existing_contact, company)
-                    session.add(existing_contact)
-                    resolved_contact = existing_contact
-                else:
-                    contact = Contact(**contact_fields, company_id=company.id)
-                    refresh_contact_sequence_plan(contact, company)
-                    session.add(contact)
-                    resolved_contact = contact
-                await session.commit()
-                await session.refresh(resolved_contact)
-
-                # Auto-create angel investor + mapping records from warm_paths
-                try:
-                    await _auto_create_angel_records(session, company, resolved_contact)
-                    await session.commit()
-                except Exception:
-                    await session.rollback()
-
-                company_contacts = (
-                    await session.execute(select(Contact).where(Contact.company_id == company.id))
-                ).scalars().all()
-                refresh_company_prospecting_fields(company, company_contacts)
-                company.icp_score, company.icp_tier = score_company(company)
-                session.add(company)
-                await session.commit()
-
-        except Exception as e:
-            await session.rollback()
-            failed += 1
-            errors.append({"name": name, "error": str(e)})
-
-    # Update batch
-    batch.created_companies = created + attached_existing
-    batch.skipped_rows = skipped
-    batch.failed_rows = failed
-    batch.error_log = errors if errors else None
-    batch.status = "awaiting_confirmation" if verdict_summary["requires_confirmation"] else "pending"
-    batch.updated_at = datetime.utcnow()
-    session.add(batch)
-    await session.commit()
+    await _queue_batch_import(
+        session,
+        batch,
+        rows,
+        {
+            "id": str(admin.id),
+            "name": admin.name,
+            "email": admin.email,
+        },
+    )
     await session.refresh(batch)
-    if not verdict_summary["requires_confirmation"]:
-        await _queue_batch_enrichment(session, batch)
-        await session.refresh(batch)
     return await _build_batch_read(session, batch)
 
 
