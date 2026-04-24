@@ -626,6 +626,43 @@ def _build_attendee_payloads(attendees: list[dict[str, Any]], contacts: list[Con
     return payloads
 
 
+async def _resolve_internal_owner(
+    session: AsyncSession,
+    attendees: list[dict[str, Any]],
+    internal_domains: set[str],
+) -> UUID | None:
+    """
+    Pick the workspace user who 'owned' this meeting on Beacon's side, so we
+    can attribute the activity to a specific rep.  Strategy:
+      1. Prefer the organizer if they're an internal user.
+      2. Otherwise, the first internal-domain attendee with a matching User row.
+    Returns the user id or None.  None means leave activity unattributed.
+    """
+    from app.models.user import User as _User
+    candidate_emails: list[str] = []
+    organizer_email = None
+    for a in attendees:
+        email = _normalize_email(a.get("email"))
+        if not email or "@" not in email:
+            continue
+        domain = _normalize_domain(email.split("@", 1)[1])
+        if domain not in internal_domains:
+            continue
+        if (a.get("role") or "").lower() == "organizer" and not organizer_email:
+            organizer_email = email
+        candidate_emails.append(email)
+    if not candidate_emails:
+        return None
+    # Organizer first, then anyone else internal.
+    ordered = ([organizer_email] if organizer_email else []) + [e for e in candidate_emails if e != organizer_email]
+    for email in ordered:
+        result = await session.execute(select(_User).where(_User.email == email))
+        user = result.scalar_one_or_none()
+        if user and user.id:
+            return user.id
+    return None
+
+
 async def _upsert_activity(
     session: AsyncSession,
     *,
@@ -636,6 +673,7 @@ async def _upsert_activity(
     deal_id: UUID | None,
     contact_id: UUID | None,
     event_metadata: dict[str, Any],
+    created_by_id: UUID | None = None,
 ) -> tuple[Activity, bool]:
     activity = await _find_activity(session, external_source_id)
     created = activity is None
@@ -649,6 +687,8 @@ async def _upsert_activity(
     activity.deal_id = deal_id
     activity.contact_id = contact_id
     activity.event_metadata = event_metadata
+    if created_by_id is not None:
+        activity.created_by_id = created_by_id
     session.add(activity)
     await session.flush()
     return activity, created
@@ -705,6 +745,9 @@ async def sync_tldv_meeting(
     # are both skipped for internal meetings because the attendee domains
     # can't produce a customer match.
     meeting_is_internal = is_internal_only(attendees, internal_domains)
+    # Resolve the rep who 'owns' this meeting on the Beacon side so activities
+    # can be attributed to a specific user (and so the scorecard counts them).
+    rep_owner_id = await _resolve_internal_owner(session, attendees, internal_domains)
     attendee_emails = [
         email
         for email in (_normalize_email(attendee.get("email")) for attendee in attendees)
@@ -804,6 +847,10 @@ async def sync_tldv_meeting(
     meeting.meeting_url = str(meeting_payload.get("url") or "").strip() or None
     meeting.recording_url = recording_url
     meeting.is_internal = meeting_is_internal
+    # Attribute meeting ownership to the resolved internal rep when not
+    # already manually set; lets the meeting show up on that rep's scorecard.
+    if rep_owner_id and not meeting.owner_user_id:
+        meeting.owner_user_id = rep_owner_id
     meeting.attendees = attendee_payloads
     meeting.raw_notes = highlights_text or None
     meeting.ai_summary = ai_bundle.get("summary") or None
@@ -881,6 +928,7 @@ async def sync_tldv_meeting(
         deal_id=deal.id if deal and deal.id else None,
         contact_id=primary_contact.id if primary_contact and primary_contact.id else None,
         event_metadata=base_metadata,
+        created_by_id=rep_owner_id,
     )
     transcript_activity, transcript_activity_created = await _upsert_activity(
         session,
@@ -891,6 +939,7 @@ async def sync_tldv_meeting(
         deal_id=deal.id if deal and deal.id else None,
         contact_id=primary_contact.id if primary_contact and primary_contact.id else None,
         event_metadata=base_metadata,
+        created_by_id=rep_owner_id,
     )
     stats.activities_created += int(meeting_activity_created) + int(transcript_activity_created)
     stats.activities_updated += int(not meeting_activity_created) + int(not transcript_activity_created)
