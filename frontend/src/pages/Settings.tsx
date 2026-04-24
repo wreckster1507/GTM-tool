@@ -19,6 +19,7 @@ import {
   Users,
   Clock,
   Wand2,
+  Bot,
 } from "lucide-react";
 import { settingsApi, personalEmailSyncApi, driveApi } from "../lib/api";
 import type { PersonalEmailStatus, SelectedDriveFolder, DriveFolder } from "../lib/api";
@@ -38,7 +39,7 @@ import type {
   SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "sync-schedule";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "sync-schedule" | "zippy-prompt";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -87,6 +88,11 @@ export default function SettingsPage() {
   const [preMeetingSettings, setPreMeetingSettings] = useState<PreMeetingAutomationSettings | null>(null);
   const [syncSchedule, setSyncSchedule] = useState<SyncScheduleSettings | null>(null);
   const [savingSyncSchedule, setSavingSyncSchedule] = useState(false);
+  // Zippy global system prompt (admin only)
+  const [zippyPrompt, setZippyPrompt] = useState<string>("");
+  const [zippyPromptIsDefault, setZippyPromptIsDefault] = useState<boolean>(true);
+  const [zippyPromptLoading, setZippyPromptLoading] = useState(false);
+  const [savingZippyPrompt, setSavingZippyPrompt] = useState(false);
   const [triggeringTldv, setTriggeringTldv] = useState(false);
   const [stoppingTldv, setStoppingTldv] = useState(false);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
@@ -827,6 +833,64 @@ export default function SettingsPage() {
     }
   };
 
+  const loadZippyPrompt = async () => {
+    if (!isAdmin) return;
+    setZippyPromptLoading(true);
+    setError(null);
+    try {
+      const res = await settingsApi.getZippySystemPrompt();
+      setZippyPrompt(res.prompt);
+      setZippyPromptIsDefault(res.is_default);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load Zippy prompt");
+    } finally {
+      setZippyPromptLoading(false);
+    }
+  };
+
+  const handleSaveZippyPrompt = async () => {
+    if (!isAdmin) return;
+    setSavingZippyPrompt(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await settingsApi.updateZippySystemPrompt(zippyPrompt);
+      setZippyPrompt(res.prompt);
+      setZippyPromptIsDefault(res.is_default);
+      setMessage(res.is_default ? "Reset to default prompt" : "Zippy prompt saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save Zippy prompt");
+    } finally {
+      setSavingZippyPrompt(false);
+    }
+  };
+
+  const handleResetZippyPrompt = async () => {
+    if (!isAdmin) return;
+    if (!confirm("Reset Zippy's prompt to the built-in default? Your edits will be lost.")) return;
+    setSavingZippyPrompt(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await settingsApi.updateZippySystemPrompt("");
+      setZippyPrompt(res.prompt);
+      setZippyPromptIsDefault(res.is_default);
+      setMessage("Reset to default prompt");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset Zippy prompt");
+    } finally {
+      setSavingZippyPrompt(false);
+    }
+  };
+
+  // Lazy-load the prompt only when the tab is opened (admin only).
+  useEffect(() => {
+    if (activeTab === "zippy-prompt" && isAdmin && !zippyPrompt && !zippyPromptLoading) {
+      loadZippyPrompt();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAdmin]);
+
   const handleTriggerTldvSync = async () => {
     setTriggeringTldv(true);
     setError(null);
@@ -873,6 +937,7 @@ export default function SettingsPage() {
               {tabButton("permissions", "Permissions", <Users size={15} />)}
               {tabButton("pre-meeting", "Pre-Meeting", <Shield size={15} />)}
               {tabButton("sync-schedule", "Sync Schedule", <Clock size={15} />)}
+              {isAdmin && tabButton("zippy-prompt", "Zippy Prompt", <Bot size={15} />)}
             </div>
           </aside>
 
@@ -1611,6 +1676,94 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        ) : activeTab === "zippy-prompt" ? (
+          isAdmin ? (
+            <div style={{ display: "grid", gap: 18 }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f3eaff", color: "#5b2ea3", borderColor: "#e0d0fb" }}>
+                  <Bot size={14} />
+                  Zippy Prompt
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Global system prompt</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  This is the exact system prompt Zippy runs under for every conversation. Edits take effect on the next user turn — no redeploy needed.
+                  Leave it blank and save to reset to the built-in default. <strong>Admin-only.</strong>
+                </p>
+              </div>
+
+              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 13, color: "#5b6685" }}>
+                    Status:{" "}
+                    <strong style={{ color: zippyPromptIsDefault ? "#a26a00" : "#1f7a47" }}>
+                      {zippyPromptIsDefault ? "Using built-in default" : "Custom override active"}
+                    </strong>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#7f8fa5" }}>
+                    {zippyPrompt.length.toLocaleString()} chars
+                  </div>
+                </div>
+
+                <textarea
+                  value={zippyPrompt}
+                  onChange={(e) => setZippyPrompt(e.target.value)}
+                  disabled={zippyPromptLoading || savingZippyPrompt}
+                  spellCheck={false}
+                  style={{
+                    width: "100%",
+                    minHeight: 460,
+                    padding: 14,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    border: "1px solid #e7eaf5",
+                    borderRadius: 12,
+                    background: "#fafbfe",
+                    color: "#182042",
+                    resize: "vertical",
+                  }}
+                />
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="crm-button primary"
+                    onClick={handleSaveZippyPrompt}
+                    disabled={savingZippyPrompt || zippyPromptLoading}
+                  >
+                    <CheckCircle2 size={15} />
+                    {savingZippyPrompt ? "Saving…" : "Save prompt"}
+                  </button>
+                  <button
+                    type="button"
+                    className="crm-button soft"
+                    onClick={handleResetZippyPrompt}
+                    disabled={savingZippyPrompt || zippyPromptLoading || zippyPromptIsDefault}
+                    title={zippyPromptIsDefault ? "Already on the default" : "Reset to built-in default"}
+                  >
+                    <RefreshCw size={15} />
+                    Reset to default
+                  </button>
+                  <button
+                    type="button"
+                    className="crm-button soft"
+                    onClick={loadZippyPrompt}
+                    disabled={zippyPromptLoading || savingZippyPrompt}
+                  >
+                    Reload
+                  </button>
+                </div>
+
+                <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  Tip: Zippy loads this prompt once per user turn, so a change is live as soon as you click Save. The built-in default is the fallback when this field is empty — saving an empty prompt reverts to it.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="crm-muted" style={{ fontSize: 13 }}>
+              Admin access required to view or edit Zippy's system prompt.
+            </p>
+          )
         ) : activeTab === "pre-meeting" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>

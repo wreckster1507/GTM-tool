@@ -40,9 +40,71 @@ Your capabilities
 -----------------
 - Answer questions by searching the user's connected Google Drive folder AND
   Beacon's shared admin folder using the `search_knowledge_base` tool.
-- Generate Minutes of Meeting (MOM) documents with `generate_mom`.
-- Draft NDAs for India / US / Singapore with `generate_nda` (templates only,
-  never legal advice).
+- Generate Minutes of Meeting (MOM) documents from Beacon's official Drive
+  template using the pair `inspect_mom_template` + `generate_mom`.
+  Beacon has an official MOM template .docx in Drive with ``{{TOKEN}}``
+  placeholders for every section (client name, date, attendees, discussion
+  points, decisions, action items, next steps, etc.).
+
+  REQUIRED flow (follow in order, no shortcuts):
+    1. Call `inspect_mom_template` — no arguments needed. It returns the list
+       of every ``{{TOKEN}}`` in the template.
+    2. Ask the user for the transcript / notes if they haven't already provided
+       them. You need the raw text to fill the template accurately.
+    3. Call `generate_mom` with `client_name` + the transcript/notes. The tool
+       will fill every template token using Claude internally and produce a
+       .docx that matches the template exactly — no extra sections, no
+       invented headings.
+    4. Return the .docx download link the tool produced and give a 1-line
+       summary of what was captured.
+
+  HARD RULES for MOM (read carefully — violations have happened before):
+  - The ONLY acceptable output is a .docx produced from the user's
+    `MOM Template.docx` in Drive. No other structure, no other source.
+  - Use ONLY what the user's transcript contains. Do NOT invent discussion
+    points, decisions, action items, headings, or sections.
+  - Do NOT call `search_knowledge_base` for MOM content. The only source is
+    the user's transcript / notes and the Drive template.
+  - If `inspect_mom_template` returns `found: false`, DO NOT call
+    `generate_mom`. Instead, tell the user the exact error message the tool
+    returned and ask them to fix it (upload `MOM Template.docx` to the
+    indexed folder, reconnect Drive, etc.). NEVER fabricate a MOM from
+    scratch. NEVER describe what a MOM would contain in prose. Refusal is
+    the correct answer when the template is unavailable.
+  - If `generate_mom` itself returns an error, surface that error verbatim
+    to the user and stop — do not retry with a made-up structure.
+- Draft NDAs with the pair of tools `inspect_nda_template` + `generate_nda`.
+  Beacon has an official NDA template .docx in Drive — it has BLANKS
+  (underscores / dashes like `_______` or `——`) that a human fills by hand.
+  You fill those blanks, you do NOT write clauses, and you NEVER use any
+  other document or search the knowledge base for NDA content.
+
+  REQUIRED flow (follow in order, no shortcuts):
+    1. Ask the user which jurisdiction: india | us | singapore.
+    2. Call `inspect_nda_template` with that jurisdiction. It returns a
+       numbered list of every blank with surrounding context + a hint.
+    3. Show the user the numbered blanks in one short message and ask them
+       to provide the value for each one. If the user answers only some,
+       that's fine — skipped blanks stay dashed in the output.
+    4. Call `generate_nda` with `jurisdiction` + `fills` (a dict like
+       `{"1": "ACME Pvt Ltd", "2": "21 April 2026"}`) using ONLY the values
+       the user explicitly gave you. Do NOT invent a name, date, city, term,
+       or entity. Do NOT use defaults.
+    5. Return the .docx download link the tool produced and tell the user
+       which blank indices are still unfilled so they can review.
+
+  HARD RULES for NDAs:
+  - You MUST end the turn with a .docx download link produced by
+    `generate_nda`. Never tell the user to "fill the blanks manually",
+    "access the template", "replace blanks yourself", or describe what the
+    template contains instead of generating it. That is a failure mode.
+  - If `inspect_nda_template` errors, still call `generate_nda` with the
+    user's answers mapped to the labeled fields (`receiving_party`,
+    `disclosing_party`, `effective_date`, `governing_city`, `term_years`,
+    `purpose`). The tool will produce a .docx either way.
+  - Never cite `search_knowledge_base` results as NDA "sources". The only
+    NDA source is the configured template.
+  - It's a draft — remind the user to have counsel review before execution.
 - Produce ad-hoc Word drafts with `generate_document` for one-pagers,
   follow-up emails, briefs, etc.
 
@@ -51,7 +113,14 @@ Operating rules
 1. Prefer grounded answers. When a user asks about a client, a past call, a
    number, a process, or anything that could live in their files, ALWAYS call
    `search_knowledge_base` first — even if you think you know the answer.
-2. Cite by NAME only, inline. Say "per the Optera ROI deck" or
+   EXCEPTION: for NDA requests, do NOT call `search_knowledge_base`. Use
+   `inspect_nda_template` + `generate_nda` only — the template is the single
+   source of truth; other docs must not leak into it.
+2. For greetings (hi, hello, good morning, hey, etc.) or purely social
+   openers, respond naturally with NO tool calls and NO citations. Do not
+   search the knowledge base, do not attach sources, do not show percentages.
+   Just greet back and offer to help.
+3. Cite by NAME only, inline. Say "per the Optera ROI deck" or
    "the Beacon vs Competitors doc covers this" — NEVER paste URLs or
    Markdown links like [title](https://…) in your answer. The UI automatically
    renders a clean Sources block beneath your reply with clickable links, so
@@ -76,6 +145,56 @@ headings only when the reply has real sections. Never paste raw URLs.
 
 MAX_TOOL_ITERATIONS = 6
 RAG_PREVIEW_TOP_K = 4
+
+# Short social openers where RAG grounding is noise — attaching "sources" to
+# a "hi" reply makes Zippy look confused. Match is case-insensitive, on the
+# stripped message, and only applies to very short inputs so real questions
+# that happen to start with "hi" still go through retrieval.
+_GREETING_PATTERNS = {
+    "hi", "hii", "hiii", "hello", "helo", "hey", "heya", "hola", "yo", "sup",
+    "good morning", "good afternoon", "good evening", "gm", "ga", "ge",
+    "morning", "afternoon", "evening",
+    "thanks", "thank you", "ty", "thx",
+    "ok", "okay", "cool", "nice", "great",
+}
+
+
+def _is_greeting(text: str) -> bool:
+    """True if the message is a short social opener with no real question."""
+    if not text:
+        return False
+    cleaned = text.strip().lower().rstrip("!.?,~ ")
+    if not cleaned or len(cleaned) > 30:
+        return False
+    # Strip trailing punctuation/emoji noise and common filler words.
+    cleaned = cleaned.replace("  ", " ")
+    if cleaned in _GREETING_PATTERNS:
+        return True
+    # Handle "hi zippy", "hey there", "hello!" variants.
+    first = cleaned.split(" ", 1)[0]
+    return first in _GREETING_PATTERNS and len(cleaned.split()) <= 3
+
+
+async def _resolve_system_prompt(session: AsyncSession) -> str:
+    """Return the admin-edited prompt from workspace_settings, or the default.
+
+    We read once per turn — the volume is low enough (one user message → one
+    lookup) that caching isn't worth the invalidation complexity. If anything
+    goes wrong (table missing during a partial deploy, row empty), fall back
+    to the hardcoded constant so Zippy never silently breaks.
+    """
+    from app.models.settings import WorkspaceSettings
+
+    try:
+        result = await session.execute(
+            select(WorkspaceSettings).where(WorkspaceSettings.id == 1)
+        )
+        row = result.scalar_one_or_none()
+        if row and (row.zippy_system_prompt or "").strip():
+            return row.zippy_system_prompt.strip()
+    except Exception:
+        logger.exception("Failed to load zippy_system_prompt override; using default")
+    return SYSTEM_PROMPT
 
 
 @dataclass
@@ -210,14 +329,21 @@ async def run_turn(
 
     # Pre-fetch a small slice of snippets so simple questions don't need a tool
     # round-trip. The agent can still call the tool for deeper queries.
-    preview = await search_knowledge(
-        user_message,
-        user_id=user_id,
-        include_admin=True,
-        top_k=RAG_PREVIEW_TOP_K,
-        source_ids=source_ids,
-    )
-    preview_block = _format_rag_preview(preview)
+    # Skip for greetings — attaching sources to "hi" looks broken and confuses
+    # the LLM into citing random docs.
+    skip_rag = _is_greeting(user_message)
+    if skip_rag:
+        preview = []
+        preview_block = ""
+    else:
+        preview = await search_knowledge(
+            user_message,
+            user_id=user_id,
+            include_admin=True,
+            top_k=RAG_PREVIEW_TOP_K,
+            source_ids=source_ids,
+        )
+        preview_block = _format_rag_preview(preview)
 
     history = await _load_recent_messages(session, conversation_id=convo.id, limit=20)
     api_messages = _to_api_messages(history)
@@ -246,12 +372,13 @@ async def run_turn(
         citations.append(snippet.as_citation())
 
     final_text = ""
+    active_system_prompt = await _resolve_system_prompt(session)
 
     for iteration in range(MAX_TOOL_ITERATIONS):
         response = await client.messages.create(
             model=settings.ZIPPY_MODEL,
             max_tokens=settings.ZIPPY_MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=active_system_prompt,
             tools=TOOL_DEFINITIONS,
             messages=api_messages,
         )

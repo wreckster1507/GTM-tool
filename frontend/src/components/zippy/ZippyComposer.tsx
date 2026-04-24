@@ -20,9 +20,10 @@ export function ZippyComposer({ disabled, onSubmit }: ZippyComposerProps) {
     const el = textareaRef.current;
     if (el) {
       el.style.height = "auto";
-      // Cap the textarea at ~6 lines so long pastes scroll internally rather
-      // than pushing the composer off-screen.
-      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      // Cap the textarea at ~8 lines (220px) so long pastes scroll internally
+      // rather than pushing the composer off-screen. Floor at 64px so the box
+      // always looks like a real input, not a one-line strip.
+      el.style.height = `${Math.min(Math.max(el.scrollHeight, 80), 220)}px`;
     }
   }
 
@@ -43,30 +44,46 @@ export function ZippyComposer({ disabled, onSubmit }: ZippyComposerProps) {
   }
 
   return (
-    <div className="border-t border-stone-200 bg-stone-50/60 px-3 py-2.5">
-      <div className="flex flex-col gap-1.5 rounded-xl border border-stone-200 bg-white px-3 py-2 shadow-sm focus-within:border-violet-400">
+    <div
+      className="border-t border-stone-200 bg-stone-50/60"
+      style={{ padding: "14px 16px 18px" }}
+    >
+      <div
+        className="flex flex-col rounded-xl border border-stone-200 bg-white shadow-sm"
+        style={{ padding: "14px 16px", gap: 10 }}
+      >
         <textarea
           ref={textareaRef}
-          rows={1}
+          rows={2}
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Ask Zippy anything — grounded in your Drive + Beacon's shared knowledge base."
-          className="max-h-[160px] min-h-[28px] w-full resize-none bg-transparent text-sm leading-snug text-stone-900 placeholder-stone-400 focus:outline-none"
+          className="w-full resize-none bg-transparent text-stone-900 placeholder-stone-400 focus:outline-none"
+          style={{
+            fontSize: 15,
+            lineHeight: 1.55,
+            minHeight: 80,
+            maxHeight: 220,
+            padding: "8px 10px",
+            boxShadow: "none",
+            outline: "none",
+          }}
           disabled={disabled}
         />
         <div className="flex items-center justify-between">
-          <div className="text-[10px] text-stone-400">
+          <div className="text-stone-500" style={{ fontSize: 12 }}>
             ⏎ send · Shift+⏎ newline · ⌘J toggle · Esc close
           </div>
           <button
             type="button"
             onClick={submit}
             disabled={disabled || !value.trim()}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-500 text-white shadow-sm transition hover:from-violet-700 hover:to-fuchsia-600 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-500 text-white shadow-sm transition hover:from-violet-700 hover:to-fuchsia-600 disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ width: 36, height: 36 }}
             aria-label="Send"
           >
-            <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
+            <svg viewBox="0 0 20 20" fill="currentColor" style={{ width: 16, height: 16 }}>
               <path d="M3.105 3.105a.5.5 0 01.55-.105l13 5.5a.5.5 0 010 .92l-13 5.5a.5.5 0 01-.682-.63l1.89-4.74L10 10 4.863 8.475 2.973 3.735a.5.5 0 01.132-.63z" />
             </svg>
           </button>

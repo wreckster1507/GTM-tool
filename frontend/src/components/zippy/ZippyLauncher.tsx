@@ -25,26 +25,27 @@ export function ZippyLauncher() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full bg-gradient-to-br from-violet-600 via-violet-500 to-fuchsia-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/30 transition hover:shadow-violet-500/50 active:scale-[0.98]"
+        title="Ask Zippy (⌘J)"
         aria-label="Open Zippy"
+        className="group fixed z-40 flex cursor-pointer items-center justify-center rounded-full bg-gradient-to-br from-violet-600 via-violet-500 to-fuchsia-500 text-white shadow-lg shadow-violet-500/30 transition hover:shadow-violet-500/50 active:opacity-90"
+        style={{
+          bottom: 28,
+          right: 28,
+          width: 56,
+          height: 56,
+        }}
       >
-        <span aria-hidden="true" className="relative flex h-5 w-5">
+        <span aria-hidden="true" className="relative flex" style={{ width: 22, height: 22 }}>
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/30" />
           <svg
             viewBox="0 0 24 24"
             fill="none"
-            className="relative h-5 w-5"
+            className="relative"
             xmlns="http://www.w3.org/2000/svg"
+            style={{ width: 22, height: 22 }}
           >
-            <path
-              d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"
-              fill="currentColor"
-            />
+            <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" fill="currentColor" />
           </svg>
-        </span>
-        <span>Ask Zippy</span>
-        <span className="ml-1 rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-          ⌘J
         </span>
       </button>
 

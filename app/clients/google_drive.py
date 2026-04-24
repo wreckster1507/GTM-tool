@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 FOLDER_MIME = "application/vnd.google-apps.folder"
+SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 
 
 def _has_drive_scope(token_data: dict) -> bool:
@@ -82,10 +83,15 @@ async def list_folders(
     access_token, updated_token = await _ensure_token(token_data, client_id, client_secret)
 
     # Build the q query. Drive API v3 query syntax:
-    #   mimeType = 'application/vnd.google-apps.folder'  — folders only
-    #   trashed = false                                   — ignore trashed
-    #   '<parent_id>' in parents                          — direct children
-    q_parts = [f"mimeType='{FOLDER_MIME}'", "trashed=false"]
+    #   mimeType = folder                OR  mimeType = shortcut    — real folders + shortcuts
+    #   trashed  = false                                             — ignore trashed
+    #   '<parent_id>' in parents                                     — direct children
+    #
+    # We include shortcuts so folders that live under shared-drives / team-
+    # folders and are exposed via shortcuts aren't invisible to the picker.
+    # Shortcut targets are resolved below via shortcutDetails.
+    mime_clause = f"(mimeType='{FOLDER_MIME}' or mimeType='{SHORTCUT_MIME}')"
+    q_parts = [mime_clause, "trashed=false"]
     if parent_id:
         q_parts.append(f"'{parent_id}' in parents")
     q = " and ".join(q_parts)
@@ -93,7 +99,10 @@ async def list_folders(
     params = {
         "q": q,
         "pageSize": page_size,
-        "fields": "nextPageToken, files(id, name, parents, modifiedTime, ownedByMe, shared, driveId)",
+        "fields": (
+            "nextPageToken, files(id, name, parents, modifiedTime, ownedByMe, "
+            "shared, driveId, mimeType, shortcutDetails)"
+        ),
         "orderBy": "name",
         "supportsAllDrives": "true",
         "includeItemsFromAllDrives": "true" if include_shared else "false",
@@ -121,7 +130,22 @@ async def list_folders(
             if len(folders) >= 1000:
                 break
 
-    return folders, updated_token
+    # Normalize: keep only items that represent folders (real or shortcut-to-folder).
+    # For shortcuts we rewrite `id` to the target folder's id so downstream
+    # drilling-in and recursive walks hit the real folder.
+    normalized: list[dict[str, Any]] = []
+    for f in folders:
+        mime = f.get("mimeType")
+        if mime == FOLDER_MIME:
+            normalized.append(f)
+        elif mime == SHORTCUT_MIME:
+            sd = f.get("shortcutDetails") or {}
+            if sd.get("targetMimeType") == FOLDER_MIME and sd.get("targetId"):
+                f["id"] = sd["targetId"]
+                normalized.append(f)
+            # else: shortcut to a non-folder — skip (the picker only lists folders).
+
+    return normalized, updated_token
 
 
 async def search_folders(
@@ -320,6 +344,10 @@ async def list_files_in_folder(
     """
     access_token, updated_token = await _ensure_token(token_data, client_id, client_secret)
 
+    # Exclude sub-folders (they're walked separately by the recursive caller)
+    # but INCLUDE shortcuts — some Drive layouts expose files only via
+    # shortcuts under shared/team folders, so skipping them would drop
+    # real content from the index.
     q = (
         f"'{folder_id}' in parents and trashed=false "
         f"and mimeType != '{FOLDER_MIME}'"
@@ -327,7 +355,10 @@ async def list_files_in_folder(
     params = {
         "q": q,
         "pageSize": page_size,
-        "fields": "nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
+        "fields": (
+            "nextPageToken, files(id, name, mimeType, modifiedTime, size, "
+            "webViewLink, shortcutDetails)"
+        ),
         "orderBy": "modifiedTime desc",
         "supportsAllDrives": "true",
         "includeItemsFromAllDrives": "true",
@@ -351,4 +382,19 @@ async def list_files_in_folder(
             if not page_token or len(files) >= max_files:
                 break
 
-    return files[:max_files], updated_token
+    # Resolve file shortcuts → real file id + mimeType so the downloader
+    # fetches the target, not the shortcut stub.
+    resolved: list[dict[str, Any]] = []
+    for f in files:
+        if f.get("mimeType") == SHORTCUT_MIME:
+            sd = f.get("shortcutDetails") or {}
+            target_id = sd.get("targetId")
+            target_mime = sd.get("targetMimeType")
+            if not target_id or target_mime == FOLDER_MIME:
+                # Skip shortcuts that point nowhere, or to folders (handled by folder walker).
+                continue
+            f["id"] = target_id
+            f["mimeType"] = target_mime or f["mimeType"]
+        resolved.append(f)
+
+    return resolved[:max_files], updated_token

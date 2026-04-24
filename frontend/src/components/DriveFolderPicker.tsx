@@ -260,8 +260,12 @@ export function DriveFolderPicker({
             </div>
           )}
           {!loading && !error && folders.length === 0 && (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: "#7c86a6", fontSize: 13 }}>
-              {isSearchMode ? "No folders matched that search." : "This folder is empty."}
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "#7c86a6", fontSize: 13, lineHeight: 1.5 }}>
+              {isSearchMode
+                ? "No folders matched that search."
+                : currentParentId
+                  ? "No sub-folders here. Any files inside this folder will be synced — click \u201cUse this folder\u201d to select it."
+                  : "This folder is empty."}
             </div>
           )}
           {!loading && !error && folders.length > 0 && (

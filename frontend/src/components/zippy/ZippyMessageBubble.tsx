@@ -18,10 +18,16 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-stone-900 px-3.5 py-2 text-[13px] text-white shadow-sm">
+        <div
+          className="max-w-[78%] rounded-2xl rounded-br-sm bg-stone-900 text-white shadow-sm"
+          style={{ padding: "10px 14px", fontSize: 15, lineHeight: 1.55 }}
+        >
           <AssistantContent content={message.content} />
           {timestamp && (
-            <div className="mt-1 text-right text-[10px] text-stone-300">
+            <div
+              className="text-right text-stone-300"
+              style={{ marginTop: 4, fontSize: 12 }}
+            >
               {timestamp}
             </div>
           )}
@@ -31,13 +37,16 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
   }
 
   return (
-    <div className="flex items-start gap-2.5">
+    <div className="flex items-start" style={{ gap: 10 }}>
       <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-fuchsia-500 text-white shadow-sm">
         <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
           <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
         </svg>
       </div>
-      <div className="min-w-0 max-w-[88%] flex-1 rounded-2xl rounded-tl-sm border border-stone-200 bg-white px-3.5 py-2.5 text-[13px] leading-relaxed text-stone-800 shadow-sm">
+      <div
+        className="min-w-0 max-w-[88%] flex-1 rounded-2xl rounded-tl-sm border border-stone-200 bg-white text-stone-800 shadow-sm"
+        style={{ padding: "14px 18px", fontSize: 15, lineHeight: 1.65 }}
+      >
         <AssistantContent content={message.content} />
 
         {message.artifacts && message.artifacts.length > 0 && (
@@ -56,14 +65,23 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
                   </svg>
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium text-violet-900">
+                  <div
+                    className="truncate font-medium text-violet-900"
+                    style={{ fontSize: 14 }}
+                  >
                     {artifact.filename}
                   </div>
-                  <div className="truncate text-[11px] text-violet-700/70">
+                  <div
+                    className="truncate text-violet-700/80"
+                    style={{ fontSize: 13, marginTop: 2 }}
+                  >
                     {artifact.summary}
                   </div>
                 </div>
-                <span className="text-[11px] font-medium text-violet-600 group-hover:underline">
+                <span
+                  className="font-medium text-violet-600 group-hover:underline"
+                  style={{ fontSize: 13 }}
+                >
                   Open
                 </span>
               </a>
@@ -73,12 +91,15 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
 
         {message.citations && message.citations.length > 0 && (
           <div className="mt-3 border-t border-stone-100 pt-2">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+            <div
+              className="font-semibold uppercase tracking-wide text-stone-500"
+              style={{ fontSize: 12, marginBottom: 6, letterSpacing: 0.4 }}
+            >
               Sources
             </div>
-            <ul className="flex flex-col gap-1">
+            <ul className="flex flex-col" style={{ gap: 4 }}>
               {message.citations.slice(0, 5).map((c) => (
-                <li key={`${c.source_id}-${c.chunk_index}`} className="text-[11px]">
+                <li key={`${c.source_id}-${c.chunk_index}`} style={{ fontSize: 13 }}>
                   <a
                     href={c.drive_url || "#"}
                     target="_blank"
@@ -88,7 +109,10 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
                   >
                     <span>•</span>
                     <span className="truncate">{c.source_name}</span>
-                    <span className="rounded bg-violet-100 px-1.5 text-[10px] text-violet-700">
+                    <span
+                      className="rounded bg-violet-100 text-violet-700"
+                      style={{ fontSize: 12, padding: "1px 6px" }}
+                    >
                       {Math.round(c.score * 100)}%
                     </span>
                   </a>
@@ -99,7 +123,10 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
         )}
 
         {timestamp && (
-          <div className="mt-1.5 text-right text-[10px] text-stone-400">
+          <div
+            className="text-right text-stone-400"
+            style={{ marginTop: 6, fontSize: 12 }}
+          >
             {timestamp}
           </div>
         )}
@@ -114,13 +141,15 @@ function AssistantContent({ content }: { content: string }) {
   // into proper <ul>, ### → bold heading, inline bold/italic/code/md-links.
   const blocks = parseBlocks(content);
   return (
-    <div className="flex flex-col gap-2 break-words">
+    <div className="flex flex-col break-words" style={{ gap: 10 }}>
       {blocks.map((b, i) => {
+        const isFirst = i === 0;
         if (b.type === "list") {
           return (
             <ul
               key={i}
-              className="ml-4 list-disc space-y-1 marker:text-stone-400"
+              className="list-disc marker:text-stone-400"
+              style={{ marginLeft: 18, display: "flex", flexDirection: "column", gap: 6 }}
             >
               {b.items.map((line, j) => (
                 <li key={j}>{renderInline(line)}</li>
@@ -130,7 +159,11 @@ function AssistantContent({ content }: { content: string }) {
         }
         if (b.type === "heading") {
           return (
-            <p key={i} className="font-semibold text-stone-900">
+            <p
+              key={i}
+              className="font-semibold text-stone-900"
+              style={{ marginTop: isFirst ? 0 : 6, fontSize: 15.5 }}
+            >
               {renderInline(b.text)}
             </p>
           );
@@ -216,7 +249,8 @@ function renderInline(text: string): ReactNode[] {
       tokens.push(
         <code
           key={`c-${key++}`}
-          className="rounded bg-stone-100 px-1 py-0.5 text-[12px] text-stone-800"
+          className="rounded bg-stone-100 text-stone-800"
+          style={{ fontSize: 13.5, padding: "1px 5px" }}
         >
           {raw.slice(1, -1)}
         </code>,

@@ -1452,6 +1452,13 @@ export const settingsApi = {
     request<{ checked: number; generated: number; emailed: number; skipped: number }>("/api/v1/settings/pre-meeting-automation/run-now", {
       method: "POST",
     }),
+  getZippySystemPrompt: () =>
+    request<{ prompt: string; is_default: boolean }>("/api/v1/settings/zippy-system-prompt"),
+  updateZippySystemPrompt: (prompt: string) =>
+    request<{ prompt: string; is_default: boolean }>("/api/v1/settings/zippy-system-prompt", {
+      method: "PATCH",
+      body: JSON.stringify({ prompt }),
+    }),
   getGmailSync: () =>
     request<GmailSyncSettings>("/api/v1/settings/email-sync"),
   updateGmailInbox: (inbox: string) =>
