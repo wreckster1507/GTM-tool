@@ -1268,6 +1268,8 @@ export default function PreMeetingAssistance() {
   // Default to "my upcoming" — current user's scheduled meetings.  Can be
   // cleared from the filter bar to see all reps.
   const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>(user?.id ? [user.id] : []);
+  // Internal-only meetings (attendees all @beacon.li) are hidden by default.
+  const [showInternal, setShowInternal] = useState<boolean>(false);
   const [typeFilter, setTypeFilter] = useState<MultiSelectValue>([]);
   const [linkFilter, setLinkFilter] = useState<MultiSelectValue>([]);
   // Text search across title, company name, attendee JSON. Debounced.
@@ -1310,11 +1312,12 @@ export default function PreMeetingAssistance() {
           hasIntel: hasIntelFilter,
           order: statusFilter.length === 1 && statusFilter[0] === "completed" ? "desc" : "asc",
           q: debouncedSearch || undefined,
+          includeInternal: showInternal,
         }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeFilter }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], assigneeId: assigneeFilter }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: true, assigneeId: assigneeFilter }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: false, assigneeId: assigneeFilter }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeFilter, includeInternal: showInternal }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], assigneeId: assigneeFilter, includeInternal: showInternal }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: true, assigneeId: assigneeFilter, includeInternal: showInternal }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: false, assigneeId: assigneeFilter, includeInternal: showInternal }),
       ]);
       const ms = pageResp.items;
       setMeetings(ms);
@@ -1354,11 +1357,11 @@ export default function PreMeetingAssistance() {
 
   useEffect(() => {
     loadData();
-  }, [page, statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter, debouncedSearch]);
+  }, [page, statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter, debouncedSearch, showInternal]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter, debouncedSearch]);
+  }, [statusFilter, intelFilter, assigneeFilter, typeFilter, linkFilter, debouncedSearch, showInternal]);
 
   // Debounce the search input so typing doesn't hit the API on every
   // keystroke. 250ms feels fast enough to still be "live".
@@ -1641,10 +1644,33 @@ export default function PreMeetingAssistance() {
             />
           )}
 
-          {(statusFilter.length !== 1 || statusFilter[0] !== "scheduled" || intelFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0) && (
+          <button
+            type="button"
+            onClick={() => setShowInternal((v) => !v)}
+            title={showInternal ? "Currently showing internal meetings; click to hide" : "Click to also show internal (all-beacon.li) meetings"}
+            style={{
+              height: 38,
+              padding: "0 12px",
+              borderRadius: 10,
+              border: showInternal ? "1px solid #c5b1ff" : "1px solid #d5e3ef",
+              background: showInternal ? "#efebff" : "#fff",
+              color: showInternal ? "#5b3bd4" : "#55657a",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: showInternal ? "#7c3aed" : "#b8c4d4" }} />
+            {showInternal ? "Internal on" : "Show internal"}
+          </button>
+
+          {(statusFilter.length !== 1 || statusFilter[0] !== "scheduled" || intelFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0 || showInternal) && (
             <button
               type="button"
-              onClick={() => { setStatusFilter(["scheduled"]); setIntelFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); }}
+              onClick={() => { setStatusFilter(["scheduled"]); setIntelFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); setShowInternal(false); }}
               style={{ height: 38, padding: "0 12px", borderRadius: 10, border: `1px solid #ffd0d8`, background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
             >
               <RefreshCw size={11} />

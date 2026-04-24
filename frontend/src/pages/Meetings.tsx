@@ -294,6 +294,9 @@ export default function Meetings() {
   // Default to "my upcoming" — current user's scheduled meetings. Users can
   // still clear the filter to see everything.
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>(user?.id ? [user.id] : []);
+  // Internal-only meetings (every attendee from an internal domain, e.g. beacon.li)
+  // are hidden by default.  Toggle in the filter bar to include them.
+  const [showInternal, setShowInternal] = useState<boolean>(false);
   const [linkFilter, setLinkFilter] = useState<string[]>([]);
   // Text search across title, linked company name, and attendee list.
   // Debounced via a separate committed value so we don't hit the API on
@@ -337,6 +340,7 @@ export default function Meetings() {
         linkState: linkFilter,
         q: debouncedSearch || undefined,
         syncedAfter: syncedAfterIso,
+        includeInternal: showInternal,
       });
 
       const ms = pageResp.items;
@@ -369,11 +373,11 @@ export default function Meetings() {
 
   useEffect(() => {
     loadData();
-  }, [page, statusFilter, typeFilter, assigneeFilter, linkFilter, debouncedSearch, recentSyncHours]);
+  }, [page, statusFilter, typeFilter, assigneeFilter, linkFilter, debouncedSearch, recentSyncHours, showInternal]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, typeFilter, assigneeFilter, linkFilter, debouncedSearch, recentSyncHours]);
+  }, [statusFilter, typeFilter, assigneeFilter, linkFilter, debouncedSearch, recentSyncHours, showInternal]);
 
   // Debounce the search input 250ms so typing doesn't hammer the API.
   useEffect(() => {
@@ -568,10 +572,32 @@ export default function Meetings() {
             placeholder="All reps"
           />
         )}
+        <button
+          type="button"
+          onClick={() => setShowInternal((v) => !v)}
+          title={showInternal ? "Currently showing internal meetings; click to hide" : "Click to also show internal (all-beacon.li) meetings"}
+          style={{
+            height: 36,
+            padding: "0 12px",
+            borderRadius: 8,
+            border: showInternal ? "1px solid #c5b1ff" : "1px solid #d5e3ef",
+            background: showInternal ? "#efebff" : "#fff",
+            color: showInternal ? "#5b3bd4" : "#55657a",
+            fontSize: 12.5,
+            fontWeight: 700,
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: showInternal ? "#7c3aed" : "#b8c4d4" }} />
+          {showInternal ? "Internal on" : "Show internal"}
+        </button>
         {hasFilters && (
           <button
             type="button"
-            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); setRecentSyncHours(""); setSearchInput(""); }}
+            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); setRecentSyncHours(""); setSearchInput(""); setShowInternal(false); }}
             style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
           >
             Reset
@@ -609,26 +635,47 @@ export default function Meetings() {
                         >
                           {m.title}
                         </Link>
-                        {(!m.company_id || !m.deal_id) && (
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              width: "fit-content",
-                              padding: "3px 8px",
-                              borderRadius: 999,
-                              border: "1px solid #ffd8b4",
-                              background: "#fff6ec",
-                              color: "#b25a1d",
-                              fontSize: 10,
-                              fontWeight: 700,
-                              textTransform: "uppercase",
-                              letterSpacing: "0.05em",
-                            }}
-                          >
-                            Needs review
-                          </span>
-                        )}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {m.is_internal && (
+                            <span
+                              title="Every attendee is from an internal domain. Internal meetings are hidden by default; the 'Show internal' toggle includes them."
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                padding: "3px 8px",
+                                borderRadius: 999,
+                                border: "1px solid #d7ccff",
+                                background: "#f1ecff",
+                                color: "#5b3bd4",
+                                fontSize: 10,
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: "0.05em",
+                              }}
+                            >
+                              Internal
+                            </span>
+                          )}
+                          {!m.is_internal && (!m.company_id || !m.deal_id) && (
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                padding: "3px 8px",
+                                borderRadius: 999,
+                                border: "1px solid #ffd8b4",
+                                background: "#fff6ec",
+                                color: "#b25a1d",
+                                fontSize: 10,
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: "0.05em",
+                              }}
+                            >
+                              Needs review
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td style={styles.td}>

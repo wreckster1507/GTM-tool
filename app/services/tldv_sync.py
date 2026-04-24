@@ -700,9 +700,11 @@ async def sync_tldv_meeting(
 
     internal_domains = await get_internal_domains(session)
     attendees = _extract_attendees(meeting_payload)
-    if is_internal_only(attendees, internal_domains):
-        stats.unmapped += 1
-        return {"skipped": True, "meeting_id": meeting_id, "reason": "internal_only"}
+    # Internal meetings are persisted but flagged is_internal=True so the UI
+    # can hide them by default. Company linking and follow-up-email generation
+    # are both skipped for internal meetings because the attendee domains
+    # can't produce a customer match.
+    meeting_is_internal = is_internal_only(attendees, internal_domains)
     attendee_emails = [
         email
         for email in (_normalize_email(attendee.get("email")) for attendee in attendees)
@@ -714,24 +716,32 @@ async def sync_tldv_meeting(
         )
     )
 
-    matched_contacts = await _match_contacts(session, attendee_emails)
-    matched_contact_ids = [contact.id for contact in matched_contacts if contact.id]
-
-    # Company linking is domain-first, matched only against already-sourced
-    # companies. Title-matching and gmail-recent-deal fallbacks were removed
-    # because they produced wrong links.  An unmatched meeting stays with
-    # company_id = NULL and surfaces a "Link company" action in the UI.
-    company = await _match_company_from_domains(session, attendee_domains)
-
-    # Deal linking: only via contacts we already know, and only if the deal's
-    # company matches the domain-linked company (or we have no company yet).
-    deal = await _match_deal_from_contacts(session, matched_contact_ids)
-    if deal and company and deal.company_id and deal.company_id != company.id:
-        # The deal we found belongs to a different company than what the
-        # attendee domains say — trust the domain, drop the deal link.
+    if meeting_is_internal:
+        # Internal meetings: no external attendees to link against, no customer
+        # company to attribute to. Save the meeting but leave company/deal NULL.
+        matched_contacts = []
+        matched_contact_ids = []
+        company = None
         deal = None
-    if deal and not company and deal.company_id:
-        company = await session.get(Company, deal.company_id)
+    else:
+        matched_contacts = await _match_contacts(session, attendee_emails)
+        matched_contact_ids = [contact.id for contact in matched_contacts if contact.id]
+
+        # Company linking is domain-first, matched only against already-sourced
+        # companies. Title-matching and gmail-recent-deal fallbacks were removed
+        # because they produced wrong links.  An unmatched meeting stays with
+        # company_id = NULL and surfaces a "Link company" action in the UI.
+        company = await _match_company_from_domains(session, attendee_domains)
+
+        # Deal linking: only via contacts we already know, and only if the deal's
+        # company matches the domain-linked company (or we have no company yet).
+        deal = await _match_deal_from_contacts(session, matched_contact_ids)
+        if deal and company and deal.company_id and deal.company_id != company.id:
+            # The deal we found belongs to a different company than what the
+            # attendee domains say — trust the domain, drop the deal link.
+            deal = None
+        if deal and not company and deal.company_id:
+            company = await session.get(Company, deal.company_id)
     mapped_via_gmail = False
 
     transcript_text = _transcript_text(transcript_payload)
@@ -757,22 +767,26 @@ async def sync_tldv_meeting(
         ),
         None,
     )
-    follow_up_contact_name = (
-        f"{primary_contact.first_name} {primary_contact.last_name}".strip()
-        if primary_contact
-        else str((primary_external_attendee or {}).get("name") or "").strip()
-    )
-    if not follow_up_contact_name:
-        follow_up_contact_name = "there"
-    follow_up_company_name = company.name if company and company.name else (_extract_title_candidates(str(meeting_payload.get("name") or ""))[:1] or ["the team"])[0]
-    follow_up_email_draft = await _build_followup_email_draft(
-        contact_name=follow_up_contact_name,
-        company_name=follow_up_company_name,
-        meeting_title=str(meeting_payload.get("name") or "Meeting"),
-        summary=str(ai_bundle.get("summary") or "").strip(),
-        action_items=action_items,
-        next_steps=list(dict.fromkeys(ai_bundle.get("next_steps") or action_items)),
-    )
+    # No follow-up email for internal meetings — nobody to send it to.
+    if meeting_is_internal:
+        follow_up_email_draft = None
+    else:
+        follow_up_contact_name = (
+            f"{primary_contact.first_name} {primary_contact.last_name}".strip()
+            if primary_contact
+            else str((primary_external_attendee or {}).get("name") or "").strip()
+        )
+        if not follow_up_contact_name:
+            follow_up_contact_name = "there"
+        follow_up_company_name = company.name if company and company.name else (_extract_title_candidates(str(meeting_payload.get("name") or ""))[:1] or ["the team"])[0]
+        follow_up_email_draft = await _build_followup_email_draft(
+            contact_name=follow_up_contact_name,
+            company_name=follow_up_company_name,
+            meeting_title=str(meeting_payload.get("name") or "Meeting"),
+            summary=str(ai_bundle.get("summary") or "").strip(),
+            action_items=action_items,
+            next_steps=list(dict.fromkeys(ai_bundle.get("next_steps") or action_items)),
+        )
 
     # existing_meeting already fetched above (for the skip check) — reuse it
     meeting = existing_meeting
@@ -789,6 +803,7 @@ async def sync_tldv_meeting(
     meeting.meeting_type = _infer_meeting_type(meeting.title, ai_bundle.get("summary") or "", transcript_text)
     meeting.meeting_url = str(meeting_payload.get("url") or "").strip() or None
     meeting.recording_url = recording_url
+    meeting.is_internal = meeting_is_internal
     meeting.attendees = attendee_payloads
     meeting.raw_notes = highlights_text or None
     meeting.ai_summary = ai_bundle.get("summary") or None

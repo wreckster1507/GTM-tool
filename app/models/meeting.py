@@ -65,6 +65,10 @@ class Meeting(MeetingBase, table=True):
     what_went_wrong: Optional[str] = Field(default=None, sa_column=Column(Text))
     next_steps: Optional[str] = Field(default=None, sa_column=Column(Text))
     intel_email_sent_at: Optional[datetime] = None
+    # True when every attendee email belongs to a workspace internal domain.
+    # Set at sync time; backfilled by migration 055.  The UI hides these from
+    # the default Meetings and Pre-Meeting views.
+    is_internal: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -94,6 +98,7 @@ class MeetingRead(MeetingBase):
     what_went_wrong: Optional[str] = None
     next_steps: Optional[str] = None
     intel_email_sent_at: Optional[datetime] = None
+    is_internal: bool = False
     created_at: datetime
     updated_at: datetime
 

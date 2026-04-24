@@ -855,6 +855,7 @@ export const meetingsApi = {
     order?: "asc" | "desc";
     q?: string;
     syncedAfter?: string;
+    includeInternal?: boolean;
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -871,6 +872,7 @@ export const meetingsApi = {
     const qTrimmed = (params.q ?? "").trim();
     if (qTrimmed) search.set("q", qTrimmed);
     if (params.syncedAfter) search.set("synced_after", params.syncedAfter);
+    if (params.includeInternal) search.set("include_internal", "true");
     return requestPaginated<Meeting>(`/api/v1/meetings/?${search.toString()}`);
   },
   get: (id: string) => request<Meeting>(`/api/v1/meetings/${id}`),

@@ -34,6 +34,7 @@ async def list_meetings(
     order: str = Query(default="desc"),
     q: Optional[str] = Query(default=None, description="Free-text search across title, linked company name, and attendee name/email."),
     synced_after: Optional[datetime] = Query(default=None, description="Only return meetings whose synced_at is on/after this ISO timestamp. Used by the 'Recently synced' shortcut."),
+    include_internal: bool = Query(default=False, description="If false (default), hide meetings where every attendee is from an internal domain. Set true to include them."),
 ):
     stmt = select(Meeting)
     count_stmt = select(func.count()).select_from(Meeting)
@@ -95,6 +96,12 @@ async def list_meetings(
     elif has_intel is False:
         stmt = stmt.where(Meeting.research_data.is_(None))
         count_stmt = count_stmt.where(Meeting.research_data.is_(None))
+
+    # Hide internal meetings from the default list. The frontend toggle flips
+    # include_internal=true when the user wants to see them.
+    if not include_internal:
+        stmt = stmt.where(Meeting.is_internal.is_(False))
+        count_stmt = count_stmt.where(Meeting.is_internal.is_(False))
 
     if synced_after is not None:
         # Strip timezone so the DB comparison works against a naive column.

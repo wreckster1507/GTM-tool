@@ -491,6 +491,7 @@ export interface Meeting {
   what_went_wrong?: string;
   next_steps?: string;
   manually_linked?: boolean;
+  is_internal?: boolean;
   created_at: string;
   updated_at: string;
 }
