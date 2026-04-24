@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { NavLink, useParams } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -46,6 +47,12 @@ import {
 } from "../lib/api";
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
+import { performanceApi, type RepSummary } from "../lib/api";
+import {
+  PerformanceTabContent,
+  PERFORMANCE_TABS,
+  type PerformanceTabKey,
+} from "./sales-analytics/PerformanceTabs";
 
 const WINDOW_OPTIONS = [30, 90, 180] as const;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
@@ -1237,8 +1244,72 @@ function MultiSelectDropdown({
   );
 }
 
+const ALL_TABS: Array<{ key: string; label: string }> = [
+  { key: "overview", label: "Overview" },
+  ...PERFORMANCE_TABS.map((t) => ({ key: t.key, label: t.label })),
+];
+
+function TabStrip({ active }: { active: string }) {
+  return (
+    <nav
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        padding: 4,
+        borderRadius: 999,
+        background: "#f4f7fb",
+        border: "1px solid #e3ebf4",
+        width: "fit-content",
+        maxWidth: "100%",
+        overflowX: "auto",
+      }}
+    >
+      {ALL_TABS.map((t) => {
+        const to = t.key === "overview" ? "/sales-analytics" : `/sales-analytics/${t.key}`;
+        const isActive = t.key === active;
+        return (
+          <NavLink
+            key={t.key}
+            to={to}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 999,
+              fontSize: 13,
+              fontWeight: 700,
+              textDecoration: "none",
+              color: isActive ? "#1f3144" : "#66788d",
+              background: isActive ? "#fff" : "transparent",
+              boxShadow: isActive ? "0 2px 8px rgba(32,53,84,0.08)" : "none",
+              whiteSpace: "nowrap",
+              transition: "background 0.12s",
+            }}
+          >
+            {t.label}
+          </NavLink>
+        );
+      })}
+    </nav>
+  );
+}
+
 export default function SalesAnalytics() {
   const { user } = useAuth();
+  const { tab: tabParam } = useParams<{ tab?: string }>();
+  const activeTab = (ALL_TABS.find((t) => t.key === tabParam)?.key ?? "overview") as
+    | "overview"
+    | PerformanceTabKey;
+  const [perfReps, setPerfReps] = useState<RepSummary[]>([]);
+
+  useEffect(() => {
+    if (activeTab !== "overview") {
+      performanceApi
+        .listReps()
+        .then(setPerfReps)
+        .catch(() => setPerfReps([]));
+    }
+  }, [activeTab]);
+
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
@@ -1616,6 +1687,12 @@ export default function SalesAnalytics() {
         </div>
       </section>
 
+      <TabStrip active={activeTab} />
+
+      {activeTab !== "overview" ? (
+        <PerformanceTabContent tab={activeTab as PerformanceTabKey} reps={perfReps} />
+      ) : (
+        <>
       {error && (
         <div className="crm-panel" style={{ padding: 18, border: "1px solid #f0d2d2", background: "#fff7f7", color: "#b45454" }}>
           {error}
@@ -1728,6 +1805,8 @@ export default function SalesAnalytics() {
           >
             <MonthlyUniqueFunnelView rows={data.monthly_unique_funnel} />
           </SectionCard>
+        </>
+      )}
         </>
       )}
       {highlightModal && (

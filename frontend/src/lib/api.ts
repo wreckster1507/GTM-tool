@@ -328,6 +328,164 @@ export const crmImportsApi = {
     ),
 };
 
+// ── Performance Analytics ────────────────────────────────────────────────────
+
+export type ScorecardMetric = {
+  key: string;
+  label: string;
+  value: number;
+  target: number | null;
+  attainment: number | null;
+  rag: "green" | "amber" | "red" | null;
+};
+
+export type ScorecardBlock = {
+  title: string;
+  metrics: ScorecardMetric[];
+};
+
+export type ScorecardResponse = {
+  header: {
+    rep_id: string | null;
+    rep_name: string | null;
+    role: string | null;
+    period_label: string;
+    period_start: string;
+    period_end: string;
+    overall_attainment: number;
+    overall_rag: "green" | "amber" | "red";
+  };
+  activity: ScorecardBlock;
+  outcomes: ScorecardBlock;
+  efficiency: ScorecardBlock;
+  pipeline_delta: { created_count: number; created_value: number; exited_count: number };
+  at_risk_deals: Array<{
+    deal_id: string;
+    deal_name: string;
+    stage: string;
+    dwell_days: number;
+    threshold_days: number;
+    over_by_days: number;
+  }>;
+};
+
+export type RepSummary = { id: string; name: string; email: string; role: string };
+
+export const performanceApi = {
+  getScorecard: (params: { rep_id?: string; period?: "week" | "month"; anchor?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.rep_id) qs.set("rep_id", params.rep_id);
+    if (params.period) qs.set("period", params.period);
+    if (params.anchor) qs.set("anchor", params.anchor);
+    const tail = qs.toString();
+    return request<ScorecardResponse>(`/api/v1/performance/scorecard${tail ? `?${tail}` : ""}`);
+  },
+  listReps: () => request<RepSummary[]>("/api/v1/performance/reps"),
+  getFunnel: (params: { period?: "week" | "month" | "quarter"; anchor?: string; rep_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.period) qs.set("period", params.period);
+    if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.rep_id) qs.set("rep_id", params.rep_id);
+    const tail = qs.toString();
+    return request<FunnelResponse>(`/api/v1/performance/funnel${tail ? `?${tail}` : ""}`);
+  },
+  getDealHealth: (params: { rep_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.rep_id) qs.set("rep_id", params.rep_id);
+    const tail = qs.toString();
+    return request<DealHealthResponse>(`/api/v1/performance/deal-health${tail ? `?${tail}` : ""}`);
+  },
+  getForecast: (params: {
+    period?: "month" | "quarter";
+    anchor?: string;
+    rep_id?: string;
+    quota?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.period) qs.set("period", params.period);
+    if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.rep_id) qs.set("rep_id", params.rep_id);
+    if (params.quota != null) qs.set("quota", String(params.quota));
+    const tail = qs.toString();
+    return request<ForecastResponse>(`/api/v1/performance/forecast${tail ? `?${tail}` : ""}`);
+  },
+  getSettings: () => request<AnalyticsSettings>("/api/v1/performance/settings"),
+  updateSettings: (patch: Partial<AnalyticsSettings>) =>
+    request<AnalyticsSettings>("/api/v1/performance/settings", {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  getLeaderboard: (params: {
+    metric: "calls_connected" | "demos_done" | "pocs_procured" | "closed_won" | "win_rate" | "avg_cycle_time_days";
+    period?: "week" | "month" | "quarter";
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set("metric", params.metric);
+    if (params.period) qs.set("period", params.period);
+    return request<LeaderboardResponse>(`/api/v1/performance/leaderboards?${qs.toString()}`);
+  },
+};
+
+export type DealHealthResponse = {
+  total_stuck: number;
+  by_stage: Record<string, number>;
+  deals: Array<{
+    deal_id: string;
+    deal_name: string;
+    stage: string;
+    dwell_days: number;
+    threshold_days: number;
+    over_by_days: number;
+  }>;
+};
+
+export type ForecastResponse = {
+  period_label: string;
+  quota: number | null;
+  commit_number: number;
+  best_case_number: number;
+  weighted_pipeline: number;
+  gap_to_quota: number | null;
+  buckets: Array<{
+    category: string;
+    deal_count: number;
+    acv: number;
+    weighted_acv: number;
+  }>;
+};
+
+export type LeaderboardResponse = {
+  metric: string;
+  period_label: string;
+  entries: Array<{ rep_id: string; rep_name: string; role: string; value: number }>;
+};
+
+export type AnalyticsSettings = {
+  weekly_targets: Record<string, Record<string, number>>;
+  monthly_targets: Record<string, Record<string, number>>;
+  rag_bands: { green_min: number; amber_min: number };
+  stuck_thresholds_days: Record<string, number>;
+  stage_probabilities: Record<string, number>;
+  conversion_transitions: Array<{ from: string; to: string }>;
+  workspace_timezone: string;
+  email_reply_lookback_days: number;
+};
+
+export type FunnelResponse = {
+  period_label: string;
+  period_start: string;
+  period_end: string;
+  funnel: Array<{ stage: string; deal_count: number; total_value: number }>;
+  conversion: Array<{
+    from_stage: string;
+    to_stage: string;
+    deals: number;
+    conv_rate: number;
+    median_days: number | null;
+  }>;
+  movement: { advanced: number; regressed: number; exited: number; entered: number };
+};
+
 export const enrichmentApi = {
   triggerCompany: (companyId: string) =>
     request<{ status: string; task_id: string; message: string }>(
@@ -716,6 +874,8 @@ export const meetingsApi = {
     return requestPaginated<Meeting>(`/api/v1/meetings/?${search.toString()}`);
   },
   get: (id: string) => request<Meeting>(`/api/v1/meetings/${id}`),
+  getRecordingUrl: (id: string) =>
+    request<{ url: string }>(`/api/v1/meetings/${id}/recording-url`),
   create: (data: Partial<Meeting>) =>
     request<Meeting>("/api/v1/meetings/", {
       method: "POST",

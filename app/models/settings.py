@@ -186,6 +186,20 @@ class WorkspaceSettings(SQLModel, table=True):
         ),
     )
     clickup_crm_settings: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # Performance analytics — targets, RAG bands, stuck thresholds, stage probabilities.
+    # Defaults live in app.core.analytics_defaults.build_default_analytics_settings();
+    # the settings endpoint fills it in lazily on first read.
+    analytics_settings: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # Domains considered "internal" for meeting filtering and related heuristics.
+    # Meetings whose attendees are all from these domains are dropped at sync time.
+    internal_domains: list[str] = Field(
+        default=["beacon.li"],
+        sa_column=Column(
+            JSON,
+            nullable=False,
+            server_default='["beacon.li"]',
+        ),
+    )
     prospect_funnel_config: dict = Field(
         default={
             "active": ["outreach", "in_progress", "meeting_booked"],

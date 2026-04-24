@@ -18,6 +18,7 @@ from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.sales_resource import SalesResource, SalesResourceCreate, SalesResourceRead, SalesResourceUpdate
 from app.models.user import User, UserRead, UserUpdate
 from app.models.company_stage_milestone import CompanyStageMilestone
+from app.models.deal_stage_history import DealStageHistory, DealStageHistoryRead
 from app.models.angel import (
     AngelInvestor, AngelInvestorCreate, AngelInvestorRead, AngelInvestorUpdate,
     AngelMapping, AngelMappingCreate, AngelMappingRead, AngelMappingUpdate,
@@ -43,6 +44,7 @@ __all__ = [
     "SalesResource", "SalesResourceCreate", "SalesResourceRead", "SalesResourceUpdate",
     "User", "UserRead", "UserUpdate",
     "CompanyStageMilestone",
+    "DealStageHistory", "DealStageHistoryRead",
     "AngelInvestor", "AngelInvestorCreate", "AngelInvestorRead", "AngelInvestorUpdate",
     "AngelMapping", "AngelMappingCreate", "AngelMappingRead", "AngelMappingUpdate",
     "Reminder", "ReminderCreate", "ReminderRead", "ReminderUpdate",

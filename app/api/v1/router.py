@@ -29,6 +29,7 @@ from app.api.v1.endpoints import (
     global_search,
     meetings,
     outreach,
+    performance,
     prospecting,
     reminders,
     sales_resources,
@@ -48,6 +49,7 @@ router.include_router(companies.router)
 router.include_router(contacts.router)
 router.include_router(deals.router)
 router.include_router(analytics.router)
+router.include_router(performance.router)
 router.include_router(crm_imports.router)
 router.include_router(execution_tracker.router)
 router.include_router(activities.router)

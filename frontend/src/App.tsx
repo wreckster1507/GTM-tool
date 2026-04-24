@@ -105,6 +105,7 @@ export default function App() {
               <Route path="live-meeting-assistance" element={<Battlecards />} />
               <Route path="deals/:id" element={<DealDetail />} />
               <Route path="sales-analytics" element={<SalesAnalytics />} />
+              <Route path="sales-analytics/:tab" element={<SalesAnalytics />} />
               <Route path="dashboard" element={<SalesAnalytics />} />
               <Route path="crm-insights-alerts" element={<SalesAnalytics />} />
               <Route path="workspace-insights" element={<Dashboard />} />

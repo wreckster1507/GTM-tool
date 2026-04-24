@@ -18,6 +18,7 @@ from app.models.user import User
 from app.repositories.deal import DealRepository
 from app.schemas.common import PaginatedResponse
 from app.services.company_stage_milestones import record_deal_stage_milestone
+from app.services.deal_stage_history import record_stage_transition
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 from app.services.meddpicc_assist import generate_meddpicc_assist
 
@@ -115,6 +116,15 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
         reached_at=deal.stage_entered_at or deal.created_at,
         source="deal_created",
     )
+    await record_stage_transition(
+        session,
+        deal_id=deal.id,
+        from_stage=None,
+        to_stage=deal.stage,
+        changed_by_id=_user.id,
+        source="deal_created",
+        changed_at=deal.stage_entered_at,
+    )
     await session.commit()
 
     return await DealRepository(session).get_with_joins(deal.id) or deal
@@ -190,6 +200,15 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
             reached_at=updated.stage_entered_at or updated.updated_at,
             source="deal_update",
         )
+        await record_stage_transition(
+            session,
+            deal_id=deal_id,
+            from_stage=previous_stage,
+            to_stage=updated.stage,
+            changed_by_id=_user.id,
+            source="deal_update",
+            changed_at=updated.stage_entered_at,
+        )
 
     if changes:
         activity = Activity(
@@ -261,11 +280,12 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
     if new_stage == old_stage:
         return await repo.get_with_joins(deal_id)
 
+    transition_at = datetime.utcnow()
     await repo.update(deal, {
         "stage": new_stage,
-        "stage_entered_at": datetime.utcnow(),
+        "stage_entered_at": transition_at,
         "days_in_stage": 0,
-        "updated_at": datetime.utcnow(),
+        "updated_at": transition_at,
     })
 
     # Auto-log stage change
@@ -282,6 +302,15 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
         stage=new_stage,
         reached_at=deal.stage_entered_at or deal.updated_at,
         source="stage_move",
+    )
+    await record_stage_transition(
+        session,
+        deal_id=deal_id,
+        from_stage=old_stage,
+        to_stage=new_stage,
+        changed_by_id=_user.id,
+        source="stage_move",
+        changed_at=transition_at,
     )
     await session.commit()
 
