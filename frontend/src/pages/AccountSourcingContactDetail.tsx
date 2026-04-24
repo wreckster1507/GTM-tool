@@ -341,7 +341,7 @@ export default function AccountSourcingContactDetail() {
                         <div style={{ marginTop: 6, color: "#6c5a2f", fontSize: 13.5, lineHeight: 1.6 }}>
                           {company
                             ? `${company.name} is attached to this prospect, but its account research is still incomplete. Enrich it now to unlock full account context here.`
-                            : `${suggestedCompanyName} has not been sourced into Beacon yet. Add and enrich it now so this prospect can inherit the account context.`}
+                            : `${suggestedCompanyName} is not mapped to an account yet. Add this company in Account Sourcing first, then map this prospect to that account so future research, deal creation, and outreach use the right company context.`}
                         </div>
                       </div>
                       <button

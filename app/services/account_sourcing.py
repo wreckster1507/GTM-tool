@@ -1117,6 +1117,19 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         or (prospecting.get("why_now") if isinstance(prospecting, dict) else None)
     )
 
+    inferred_timezone = None
+    try:
+        from app.services.timezone_infer import infer_timezone
+
+        inferred_timezone = infer_timezone(
+            phone=phone,
+            company_hq=contact_location or company_fields.get("headquarters"),
+            company_region=company_fields.get("region"),
+            company_name=company_fields.get("name"),
+        )
+    except Exception:
+        inferred_timezone = None
+
     base_fields = {
         "first_name": first[:120],
         "last_name": last[:160],
@@ -1137,6 +1150,7 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         "conversation_starter": conversation_starter,
         "personalization_notes": personalization_notes,
         "talking_points": talking_points or None,
+        "timezone": inferred_timezone,
         "enrichment_data": {
             "source": "upload",
             "raw_row": {key: value for key, value in row.items() if _has_nonempty_text(value)},

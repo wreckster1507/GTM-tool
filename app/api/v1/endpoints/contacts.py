@@ -518,6 +518,9 @@ async def import_contacts_csv(
         company, created_placeholder_company = await _get_or_create_uploaded_placeholder_company(session, row, current_user)
         company_fields = row_to_company_fields(row)
         company_context = {
+            "name": company.name if company else company_fields.get("name"),
+            "headquarters": company.headquarters if company else company_fields.get("headquarters"),
+            "region": company.region if company else company_fields.get("region"),
             "assigned_rep_email": company.assigned_rep_email if company else None,
             "recommended_outreach_lane": company.recommended_outreach_lane if company else None,
             "prospecting_profile": company.prospecting_profile if company else None,
@@ -551,8 +554,14 @@ async def import_contacts_csv(
                     domain=(company_fields.get("domain") or "").strip() or None,
                     contacts_count=1,
                 )
-            skipped_count += 1
-            continue
+            raw_enrichment = contact_fields.get("enrichment_data") if isinstance(contact_fields.get("enrichment_data"), dict) else {}
+            raw_enrichment["company_mapping"] = {
+                "status": "unmapped",
+                "suggested_company_name": (company_fields.get("name") or "").strip() or None,
+                "suggested_company_domain": (company_fields.get("domain") or "").strip() or None,
+                "hint": "Add this account in Account Sourcing, then map the prospect to that company.",
+            }
+            contact_fields["enrichment_data"] = raw_enrichment
 
         if created_placeholder_company:
             key = f"{(company_fields.get('domain') or '').strip().lower()}::{(company_fields.get('name') or '').strip().lower()}"
@@ -566,12 +575,13 @@ async def import_contacts_csv(
                     contacts_count=1,
                 )
 
-        touched_company_ids.add(company.id)
-        contact_fields["assigned_to_id"] = contact_fields.get("assigned_to_id") or company.assigned_to_id
-        contact_fields["assigned_rep_email"] = contact_fields.get("assigned_rep_email") or company.assigned_rep_email
-        contact_fields["sdr_id"] = contact_fields.get("sdr_id") or company.sdr_id
-        contact_fields["sdr_name"] = contact_fields.get("sdr_name") or company.sdr_name
-        contact_fields["company_id"] = company.id
+        if company:
+            touched_company_ids.add(company.id)
+            contact_fields["assigned_to_id"] = contact_fields.get("assigned_to_id") or company.assigned_to_id
+            contact_fields["assigned_rep_email"] = contact_fields.get("assigned_rep_email") or company.assigned_rep_email
+            contact_fields["sdr_id"] = contact_fields.get("sdr_id") or company.sdr_id
+            contact_fields["sdr_name"] = contact_fields.get("sdr_name") or company.sdr_name
+            contact_fields["company_id"] = company.id
 
         raw_enrichment = contact_fields.get("enrichment_data") if isinstance(contact_fields.get("enrichment_data"), dict) else {}
         raw_enrichment["source"] = "prospect_csv_upload"
@@ -589,17 +599,19 @@ async def import_contacts_csv(
                 await session.execute(select(Contact).where(Contact.email == email).limit(1))
             ).scalars().first()
         if not existing and first_name and last_name:
+            name_match_filters = [
+                Contact.first_name == first_name,
+                Contact.last_name == last_name,
+            ]
+            if company:
+                name_match_filters.append(Contact.company_id == company.id)
+            else:
+                name_match_filters.append(Contact.company_id.is_(None))
             existing = (
-                await session.execute(
-                    select(Contact).where(
-                        Contact.company_id == company.id,
-                        Contact.first_name == first_name,
-                        Contact.last_name == last_name,
-                    ).limit(1)
-                )
+                await session.execute(select(Contact).where(*name_match_filters).limit(1))
             ).scalars().first()
 
-        if existing and existing.company_id and existing.company_id != company.id:
+        if existing and company and existing.company_id and existing.company_id != company.id:
             skipped_count += 1
             continue
 
@@ -621,7 +633,8 @@ async def import_contacts_csv(
             if changed or not existing.persona:
                 existing.persona = classify_persona(existing)
                 existing.updated_at = datetime.utcnow()
-                refresh_contact_sequence_plan(existing, company, workspace_schedule=ws_schedule)
+                if company:
+                    refresh_contact_sequence_plan(existing, company, workspace_schedule=ws_schedule)
                 session.add(existing)
                 updated_count += 1
             else:
@@ -629,7 +642,8 @@ async def import_contacts_csv(
         else:
             contact = Contact(**contact_fields)
             contact.persona = classify_persona(contact)
-            refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+            if company:
+                refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
             session.add(contact)
             created_count += 1
 
@@ -653,7 +667,7 @@ async def import_contacts_csv(
             f"{warning_count} row{'s' if warning_count != 1 else ''} look{'s' if warning_count == 1 else ''} like a role mailbox or placeholder — review them in Prospecting."
         )
     if missing_rows:
-        message_parts.append("Placeholder companies were created for rows that still need enrichment.")
+        message_parts.append("Some prospects were imported without a company match. Add those accounts in Account Sourcing, then map the prospects to the company.")
 
     return ProspectImportResponse(
         imported_rows=len(rows),
