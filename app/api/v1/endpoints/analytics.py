@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.activity import Activity
 from app.models.company import Company
 from app.models.company_stage_milestone import CompanyStageMilestone
@@ -404,6 +404,7 @@ async def _load_monthly_unique_funnel(
 @router.get("/monthly-funnel-summary", response_model=list[MonthlyUniqueFunnelRow])
 async def monthly_funnel_summary(
     session: DBSession,
+    _user: CurrentUser,
     months: Annotated[int, Query(ge=3, le=24)] = 12,
 ):
     return await _load_monthly_unique_funnel(session, months=months)
@@ -412,6 +413,7 @@ async def monthly_funnel_summary(
 @router.get("/sales-dashboard", response_model=SalesDashboardRead)
 async def sales_dashboard(
     session: DBSession,
+    _user: CurrentUser,
     window_days: Annotated[int, Query(ge=30, le=365)] = 90,
     rep_id: Annotated[list[UUID], Query()] = [],
     geography: Annotated[list[str], Query()] = [],

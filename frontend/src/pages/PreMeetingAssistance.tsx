@@ -1277,8 +1277,11 @@ export default function PreMeetingAssistance() {
   const [statusFilter, setStatusFilter] = useState<MultiSelectValue>(["scheduled"]);
   const [intelFilter, setIntelFilter] = useState<MultiSelectValue>([]);
   // Default to "my upcoming" — current user's scheduled meetings.  Can be
-  // cleared from the filter bar to see all reps.
+  // cleared from the filter bar to see all reps.  If the default scope
+  // returns zero rows, we auto-broaden once per mount so the page is not
+  // blank for users without personally-assigned meetings.
   const [assigneeFilter, setAssigneeFilter] = useState<MultiSelectValue>(user?.id ? [user.id] : []);
+  const [autoFallbackApplied, setAutoFallbackApplied] = useState(false);
   // Internal-only meetings (attendees all @beacon.li) are hidden by default.
   const [showInternal, setShowInternal] = useState<boolean>(false);
   // Advanced filter disclosure — primary bar shows search / status / assignee /
@@ -1334,6 +1337,25 @@ export default function PreMeetingAssistance() {
         meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: false, assigneeId: assigneeFilter, includeInternal: showInternal }),
       ]);
       const ms = pageResp.items;
+
+      // Empty-set fallback: if default "my upcoming" returns zero, broaden
+      // to all reps once. Keeps the page useful for reps without owned
+      // meetings (e.g. fresh users) without fighting the filter system.
+      if (
+        !autoFallbackApplied
+        && pageResp.total === 0
+        && assigneeFilter.length === 1
+        && user?.id
+        && assigneeFilter[0] === user.id
+        && !debouncedSearch
+        && statusFilter.length === 1
+        && (statusFilter[0] === "scheduled" || statusFilter[0] === "overdue")
+      ) {
+        setAutoFallbackApplied(true);
+        setAssigneeFilter([]);
+        return;
+      }
+
       setMeetings(ms);
       setTotalMeetings(pageResp.total);
       setMeetingPages(pageResp.pages);

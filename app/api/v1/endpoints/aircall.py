@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.clients.aircall import AircallClient, AircallError
 from app.config import settings
+from app.core.dependencies import CurrentUser
 
 router = APIRouter(prefix="/aircall", tags=["aircall"])
 
@@ -25,7 +26,7 @@ class InitiateCallRequest(BaseModel):
 # ── Config endpoint — called on frontend load ─────────────────────────────────
 
 @router.get("/config")
-async def get_aircall_config() -> dict[str, Any]:
+async def get_aircall_config(_user: CurrentUser) -> dict[str, Any]:
     """
     Return the Aircall workspace config needed by the frontend:
     - List of numbers (id + digits + name)
@@ -71,7 +72,7 @@ async def _fetch_config(client: AircallClient):
 # ── User lookup — match CRM rep email to Aircall user ID ─────────────────────
 
 @router.get("/user-by-email")
-async def get_aircall_user(email: str) -> dict[str, Any]:
+async def get_aircall_user(email: str, _user: CurrentUser) -> dict[str, Any]:
     """
     Given a rep's email, return their Aircall user ID.
     The frontend uses this to init the Aircall Everywhere SDK with the correct user.
@@ -97,7 +98,7 @@ async def get_aircall_user(email: str) -> dict[str, Any]:
 # ── Availabilities ─────────────────────────────────────────────────────────────
 
 @router.get("/availabilities")
-async def get_availabilities() -> list[dict]:
+async def get_availabilities(_user: CurrentUser) -> list[dict]:
     """
     Return availability status for all agents.
     Used to show green/red dots on rep avatars.
@@ -114,7 +115,7 @@ async def get_availabilities() -> list[dict]:
 # ── Initiate call (API fallback) ───────────────────────────────────────────────
 
 @router.post("/call")
-async def initiate_call(body: InitiateCallRequest) -> dict[str, Any]:
+async def initiate_call(body: InitiateCallRequest, _user: CurrentUser) -> dict[str, Any]:
     """
     Trigger an outbound call via the Aircall API.
     This is a fallback — the primary path is the Aircall Everywhere SDK
@@ -140,7 +141,7 @@ async def initiate_call(body: InitiateCallRequest) -> dict[str, Any]:
 # ── Webhook registration (called on backend startup) ──────────────────────────
 
 @router.post("/register-webhook")
-async def register_webhook() -> dict[str, Any]:
+async def register_webhook(_user: CurrentUser) -> dict[str, Any]:
     """
     Idempotently register the CRM webhook URL with Aircall.
     Safe to call multiple times — won't create duplicates.

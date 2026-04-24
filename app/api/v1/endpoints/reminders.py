@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.company import Company
 from app.models.contact import Contact
@@ -45,6 +45,7 @@ async def _to_read(session: AsyncSession, r: Reminder) -> ReminderRead:
 @router.get("/", response_model=list[ReminderRead])
 async def list_reminders(
     session: DBSession,
+    _user: CurrentUser,
     contact_id: Optional[UUID] = Query(default=None),
     company_id: Optional[UUID] = Query(default=None),
     status: Optional[str] = Query(default=None),
@@ -66,7 +67,7 @@ async def list_reminders(
 
 
 @router.post("/", response_model=ReminderRead, status_code=201)
-async def create_reminder(payload: ReminderCreate, session: DBSession):
+async def create_reminder(payload: ReminderCreate, session: DBSession, _user: CurrentUser):
     contact = await session.get(Contact, payload.contact_id)
     if not contact:
         raise NotFoundError(f"Contact {payload.contact_id} not found")
@@ -85,7 +86,7 @@ async def create_reminder(payload: ReminderCreate, session: DBSession):
 
 
 @router.patch("/{reminder_id}", response_model=ReminderRead)
-async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: DBSession):
+async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: DBSession, _user: CurrentUser):
     reminder = await session.get(Reminder, reminder_id)
     if not reminder:
         raise NotFoundError(f"Reminder {reminder_id} not found")
@@ -111,7 +112,7 @@ async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: D
 
 
 @router.delete("/{reminder_id}", status_code=204)
-async def delete_reminder(reminder_id: UUID, session: DBSession):
+async def delete_reminder(reminder_id: UUID, session: DBSession, _user: CurrentUser):
     reminder = await session.get(Reminder, reminder_id)
     if not reminder:
         raise NotFoundError(f"Reminder {reminder_id} not found")

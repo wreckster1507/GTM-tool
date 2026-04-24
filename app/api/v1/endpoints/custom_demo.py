@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlmodel import col
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.custom_demo import CustomDemo
 from app.services.demo_generator import (
     extract_pdf_text,
@@ -171,7 +171,7 @@ def _demo_to_out(d: CustomDemo) -> DemoOut:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[DemoOut])
-async def list_demos(session: DBSession):
+async def list_demos(session: DBSession, _user: CurrentUser):
     rows = (await session.execute(
         select(CustomDemo).order_by(CustomDemo.created_at.desc())
     )).scalars().all()
@@ -182,6 +182,7 @@ async def list_demos(session: DBSession):
 async def generate_from_file(
     background_tasks: BackgroundTasks,
     session: DBSession,
+    _user: CurrentUser,
     file: UploadFile = File(...),
     title: str = Form(...),
     client_name: str = Form(default=""),
@@ -236,6 +237,7 @@ async def generate_from_editor(
     payload: EditorPayload,
     background_tasks: BackgroundTasks,
     session: DBSession,
+    _user: CurrentUser,
 ):
     """Submit a scene list built in the in-app editor."""
     editor_content = [s.model_dump() for s in payload.scenes]
@@ -264,6 +266,7 @@ async def generate_from_brief(
     payload: BriefPayload,
     background_tasks: BackgroundTasks,
     session: DBSession,
+    _user: CurrentUser,
 ):
     """Generate demo HTML from a structured company/demo brief."""
     source_text = _brief_payload_to_source_text(payload)
@@ -289,7 +292,7 @@ async def generate_from_brief(
 
 
 @router.get("/{demo_id}/status", response_model=DemoStatusOut)
-async def demo_status(demo_id: UUID, session: DBSession):
+async def demo_status(demo_id: UUID, session: DBSession, _user: CurrentUser):
     demo = await session.get(CustomDemo, demo_id)
     if not demo:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -297,7 +300,7 @@ async def demo_status(demo_id: UUID, session: DBSession):
 
 
 @router.get("/{demo_id}/html")
-async def demo_html(demo_id: UUID, session: DBSession):
+async def demo_html(demo_id: UUID, session: DBSession, _user: CurrentUser):
     """Return the raw HTML content."""
     demo = await session.get(CustomDemo, demo_id)
     if not demo:
@@ -337,6 +340,7 @@ async def revise_demo(
     demo_id: UUID,
     payload: RevisePayload,
     background_tasks: BackgroundTasks,
+    _user: CurrentUser,
     session: DBSession,
 ):
     """Revise the generated HTML with a natural-language instruction."""
@@ -367,7 +371,7 @@ async def revise_demo(
 
 
 @router.delete("/{demo_id}", status_code=204)
-async def delete_demo(demo_id: UUID, session: DBSession):
+async def delete_demo(demo_id: UUID, session: DBSession, _user: CurrentUser):
     demo = await session.get(CustomDemo, demo_id)
     if not demo:
         raise HTTPException(status_code=404, detail="Demo not found")

@@ -292,8 +292,11 @@ export default function Meetings() {
   const [statusFilter, setStatusFilter] = useState<string[]>(["scheduled"]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   // Default to "my upcoming" — current user's scheduled meetings. Users can
-  // still clear the filter to see everything.
+  // still clear the filter to see everything. If the default ("me") returns
+  // zero results, we auto-fall-back to all reps once per mount so users
+  // without assigned meetings don't see a blank page.
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>(user?.id ? [user.id] : []);
+  const [autoFallbackApplied, setAutoFallbackApplied] = useState(false);
   // Internal-only meetings (every attendee from an internal domain, e.g. beacon.li)
   // are hidden by default.  Toggle in the filter bar to include them.
   const [showInternal, setShowInternal] = useState<boolean>(false);
@@ -350,6 +353,25 @@ export default function Meetings() {
       setMeetings(ms);
       setTotalMeetings(pageResp.total);
       setMeetingPages(pageResp.pages);
+
+      // Empty-set fallback: if the default "my upcoming" scope returned
+      // zero meetings, broaden to all reps so the user sees something.
+      // Only auto-applies once per mount; users who explicitly re-filter
+      // to themselves later keep that choice.
+      if (
+        !autoFallbackApplied
+        && pageResp.total === 0
+        && assigneeFilter.length === 1
+        && user?.id
+        && assigneeFilter[0] === user.id
+        && !debouncedSearch
+        && statusFilter.length === 1
+        && statusFilter[0] === "scheduled"
+      ) {
+        setAutoFallbackApplied(true);
+        setAssigneeFilter([]);
+        return;
+      }
 
       const companyIds = Array.from(new Set(ms.map((meeting) => meeting.company_id).filter(Boolean))) as string[];
       const dealIds = Array.from(new Set(ms.map((meeting) => meeting.deal_id).filter(Boolean))) as string[];

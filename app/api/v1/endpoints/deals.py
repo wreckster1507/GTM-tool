@@ -51,6 +51,7 @@ def _summarize_text_change(label: str, value: str | None) -> str:
 @router.get("/board", response_model=dict[str, list[DealRead]])
 async def deal_board(
     session: DBSession,
+    _user: CurrentUser,
     pipeline_type: str = Query(default="deal"),
 ):
     """Return deals grouped by stage for kanban board display."""
@@ -62,6 +63,7 @@ async def deal_board(
 @router.get("/", response_model=PaginatedResponse[DealRead])
 async def list_deals(
     session: DBSession,
+    _user: CurrentUser,
     pagination: Pagination,
     company_id: Optional[UUID] = Query(default=None),
     stage: Optional[str] = Query(default=None),
@@ -133,7 +135,7 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
 # ── Get single ───────────────────────────────────────────────────────────────
 
 @router.get("/{deal_id}", response_model=DealRead)
-async def get_deal(deal_id: UUID, session: DBSession):
+async def get_deal(deal_id: UUID, session: DBSession, _user: CurrentUser):
     result = await DealRepository(session).get_with_joins(deal_id)
     if not result:
         raise NotFoundError(f"Deal {deal_id} not found")

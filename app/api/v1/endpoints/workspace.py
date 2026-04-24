@@ -15,7 +15,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.battlecard import Battlecard
 from app.models.company import Company
 from app.models.contact import Contact, ContactRead
@@ -499,7 +499,7 @@ async def _compute_alerts(
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/summary", response_model=WorkspaceSummary)
-async def workspace_summary(session: DBSession):
+async def workspace_summary(session: DBSession, _user: CurrentUser):
     """
     Single fast aggregate response for the Sales Workspace landing page.
     Replaces 4 separate list() API calls in the frontend.
@@ -532,7 +532,7 @@ async def workspace_summary(session: DBSession):
 
 
 @router.get("/alerts", response_model=list[Alert])
-async def workspace_alerts(session: DBSession):
+async def workspace_alerts(session: DBSession, _user: CurrentUser):
     """
     CRM alerts feed — computed from existing model state, no stored alerts table.
     Covers: stale deals, at-risk deals, missing close dates, contactless accounts,
@@ -542,7 +542,7 @@ async def workspace_alerts(session: DBSession):
 
 
 @router.get("/insights", response_model=WorkspaceInsights)
-async def workspace_insights(session: DBSession):
+async def workspace_insights(session: DBSession, _user: CurrentUser):
     now = datetime.utcnow()
     tracked_contacts = await _load_tracked_contacts(session)
     alerts = await _compute_alerts(session, tracked_contacts=tracked_contacts)

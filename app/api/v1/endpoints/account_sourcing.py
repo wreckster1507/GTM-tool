@@ -1048,7 +1048,7 @@ async def upload_csv(
 # ── Batch Status ───────────────────────────────────────────────────────────────
 
 @router.get("/batches/{batch_id}", response_model=SourcingBatchRead)
-async def get_batch_status(batch_id: UUID, session: DBSession = None):
+async def get_batch_status(batch_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Poll batch enrichment progress."""
     batch = await session.get(SourcingBatch, batch_id)
     if not batch:
@@ -1114,6 +1114,7 @@ async def get_batch_companies(batch_id: UUID, session: DBSession = None, page: P
 
 @router.get("/companies", response_model=PaginatedResponse[CompanyRead])
 async def list_sourced_companies(
+    _user: CurrentUser,
     session: DBSession = None,
     page: Pagination = None,
     q: str | None = Query(default=None),
@@ -1164,6 +1165,7 @@ async def list_sourced_companies(
 
 @router.get("/summary", response_model=CompanySourcingSummary)
 async def get_sourced_company_summary(
+    _user: CurrentUser,
     session: DBSession = None,
     assigned_rep_email: str | None = Query(default=None),
     owner_id: UUID | None = Query(default=None),
@@ -1413,6 +1415,7 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
 
 @router.get("/export")
 async def export_sourced_companies(
+    _user: CurrentUser,
     session: DBSession = None,
     assigned_rep: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
@@ -1456,6 +1459,7 @@ async def export_sourced_companies(
 
 @router.get("/export-contacts")
 async def export_sourced_contacts(
+    _user: CurrentUser,
     session: DBSession = None,
     assigned_rep_email: str | None = Query(default=None),
     batch_id: UUID | None = Query(default=None),
@@ -1837,7 +1841,7 @@ async def push_to_instantly(
 # ── Batches List ───────────────────────────────────────────────────────────────
 
 @router.get("/batches", response_model=list[SourcingBatchRead])
-async def list_batches(session: DBSession = None, page: Pagination = None):
+async def list_batches(_user: CurrentUser, session: DBSession = None, page: Pagination = None):
     """List all sourcing batches."""
     result = (
         await session.execute(

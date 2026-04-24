@@ -36,7 +36,7 @@ class DuplicateCheckResponse(BaseModel):
 
 
 @router.post("/check-duplicates", response_model=DuplicateCheckResponse)
-async def check_duplicates(payload: DuplicateCheckRequest, session: DBSession):
+async def check_duplicates(payload: DuplicateCheckRequest, session: DBSession, _user: CurrentUser):
     """
     Given lists of company names and domains from a CSV preview, return which
     ones already exist in the DB. Single query per dimension — O(1) DB round-trips.
@@ -71,6 +71,7 @@ async def check_duplicates(payload: DuplicateCheckRequest, session: DBSession):
 @router.get("/", response_model=PaginatedResponse[CompanyRead])
 async def list_companies(
     session: DBSession,
+    _user: CurrentUser,
     pagination: Pagination,
     icp_tier: Optional[str] = Query(default=None),
 ):
@@ -105,7 +106,7 @@ async def create_company(payload: CompanyCreate, session: DBSession, _user: Curr
 
 
 @router.get("/{company_id}", response_model=CompanyRead)
-async def get_company(company_id: UUID, session: DBSession):
+async def get_company(company_id: UUID, session: DBSession, _user: CurrentUser):
     return await CompanyRepository(session).get_or_raise(company_id)
 
 
@@ -140,7 +141,7 @@ async def delete_company(company_id: UUID, session: DBSession, _admin: AdminUser
 
 
 @router.get("/{company_id}/deals", response_model=List[DealRead])
-async def get_company_deals(company_id: UUID, session: DBSession):
+async def get_company_deals(company_id: UUID, session: DBSession, _user: CurrentUser):
     result = await session.execute(
         select(Deal)
         .where(Deal.company_id == company_id)
