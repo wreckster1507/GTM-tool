@@ -48,7 +48,7 @@ import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 
 const WINDOW_OPTIONS = [30, 90, 180] as const;
-const GEO_OPTIONS = ["all", "Americas", "India", "APAC", "Rest of World"] as const;
+const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 
 function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {

@@ -84,6 +84,7 @@ class ContactRepository(BaseRepository[Contact]):
         email_state: Optional[str] = None,
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
         scope_any_match: bool = False,
         prospect_only: bool = False,
         skip: int = 0,
@@ -220,6 +221,15 @@ class ContactRepository(BaseRepository[Contact]):
 
         ae_ids = _parse_uuid_values(ae_id)
         sdr_ids = _parse_uuid_values(sdr_id)
+        owner_ids = _parse_uuid_values(owner_id)
+
+        if owner_ids:
+            owner_filter = or_(
+                Contact.assigned_to_id.in_(owner_ids),
+                Contact.sdr_id.in_(owner_ids),
+            )
+            base_stmt = base_stmt.where(owner_filter)
+            count_stmt = count_stmt.where(owner_filter)
 
         if scope_any_match and (ae_ids or sdr_ids):
             clauses = []

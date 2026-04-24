@@ -301,14 +301,12 @@ def _activity_rep_id(
 def _normalize_geography_key(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if not raw:
-        return ""
+        return "Unassigned"
     if raw in {"us", "usa", "united states", "united states of america", "na", "north america", "americas", "latam", "latin america", "canada", "mexico"}:
-        return "Americas"
-    if raw in {"india", "in"}:
-        return "India"
-    if raw in {"apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan"}:
-        return "APAC"
-    return "Rest of World"
+        return "America"
+    if raw in {"india", "in", "apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan", "rest of world", "rest of the world", "row"}:
+        return "Rest of the World"
+    return "Rest of the World"
 
 
 def _contact_meeting_signal(contact_row) -> bool:

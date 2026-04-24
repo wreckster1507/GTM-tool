@@ -18,6 +18,13 @@ from app.services.icp_scorer import score_company
 router = APIRouter(prefix="/companies", tags=["companies"])
 
 
+def _visible_company_selector_filter():
+    # Global company selectors should only show source-of-truth accounts that
+    # came through Account Sourcing/manual add. Hidden/imported shells stay out
+    # of user-facing pickers until they are upgraded by a real upload.
+    return Company.sourcing_batch_id.isnot(None)
+
+
 class DuplicateCheckRequest(BaseModel):
     names: list[str] = []
     domains: list[str] = []
@@ -68,7 +75,7 @@ async def list_companies(
     icp_tier: Optional[str] = Query(default=None),
 ):
     repo = CompanyRepository(session)
-    filters = []
+    filters = [_visible_company_selector_filter()]
     if icp_tier:
         filters.append(Company.icp_tier == icp_tier)
     items, total = await repo.list_paginated(

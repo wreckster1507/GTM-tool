@@ -468,6 +468,7 @@ export interface Meeting {
   title: string;
   company_id?: string;
   deal_id?: string;
+  owner_user_id?: string;
   external_source?: string;
   external_source_id?: string;
   synced_by_user_id?: string;
@@ -475,6 +476,8 @@ export interface Meeting {
   scheduled_at?: string;
   status: string;
   meeting_type: string;
+  meeting_url?: string;
+  recording_url?: string;
   pre_brief?: string;
   demo_strategy?: string;
   research_data?: unknown;

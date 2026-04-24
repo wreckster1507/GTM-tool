@@ -1174,16 +1174,38 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
 
 
 def merge_company_from_upload(company: Company, fields: dict[str, Any]) -> Company:
+    source_of_truth_fields = [
+        "name",
+        "domain",
+        "industry",
+        "vertical",
+        "employee_count",
+        "arr_estimate",
+        "funding_stage",
+        "region",
+        "headquarters",
+        "assigned_to_id",
+        "assigned_rep",
+        "assigned_rep_email",
+        "assigned_rep_name",
+        "sdr_id",
+        "sdr_email",
+        "sdr_name",
+    ]
+    for key in source_of_truth_fields:
+        incoming = fields.get(key)
+        if incoming not in (None, "", [], {}):
+            setattr(company, key, incoming)
+
     simple_fields = [
         "industry",
         "vertical",
         "employee_count",
         "arr_estimate",
         "funding_stage",
+        "region",
+        "headquarters",
         "description",
-        "assigned_rep",
-        "assigned_rep_email",
-        "assigned_rep_name",
         "account_thesis",
         "why_now",
         "beacon_angle",
@@ -1890,6 +1912,12 @@ def row_to_company_fields(row: dict[str, str]) -> dict:
         val = _find(row, f)
         if val:
             extra[f] = val[:500]
+    region = _find(row, "region")
+    if region:
+        fields["region"] = region[:120]
+    headquarters = _find(row, "headquarters")
+    if headquarters:
+        fields["headquarters"] = headquarters[:255]
     if import_intelligence["analyst"]:
         extra["analyst"] = import_intelligence["analyst"]
     if import_intelligence["positive_signals"] or import_intelligence["negative_signals"]:
@@ -1908,17 +1936,22 @@ def row_to_company_fields(row: dict[str, str]) -> dict:
         for key in ("hiring", "funding", "product", "uploaded_intent_score", "positive_signal_count", "negative_signal_count")
     ):
         fields["intent_signals"] = uploaded_intent
-    assigned_rep = (
-        import_intelligence["analyst"].get("sdr")
-        or import_intelligence["analyst"].get("ae")
-    )
-    if assigned_rep:
-        cleaned_owner = str(assigned_rep).strip()
+    assigned_ae = import_intelligence["analyst"].get("ae")
+    if assigned_ae:
+        cleaned_owner = str(assigned_ae).strip()
         fields["assigned_rep"] = cleaned_owner[:255]
         if "@" in cleaned_owner:
             fields["assigned_rep_email"] = _clean_email(cleaned_owner)
         else:
             fields["assigned_rep_name"] = cleaned_owner[:255]
+
+    assigned_sdr = import_intelligence["analyst"].get("sdr")
+    if assigned_sdr:
+        cleaned_sdr = str(assigned_sdr).strip()
+        if "@" in cleaned_sdr:
+            fields["sdr_email"] = _clean_email(cleaned_sdr)
+        else:
+            fields["sdr_name"] = cleaned_sdr[:255]
 
     if prospecting_intelligence.get("account_thesis"):
         fields["account_thesis"] = str(prospecting_intelligence["account_thesis"])[:4000]

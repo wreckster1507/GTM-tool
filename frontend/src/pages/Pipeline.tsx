@@ -11,6 +11,7 @@ import SearchableCompanySelect from "../components/SearchableCompanySelect";
 type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
 type DragItem = { kind: "deal"; id: string; fromStage: string } | { kind: "prospect"; id: string; fromStage: ProspectStageId };
+type PendingDealMove = { dealId: string; dealName: string; fromStage: string; targetStage: string };
 type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
 type FunnelKey = "active" | "inactive" | "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
@@ -76,7 +77,7 @@ const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
   mofu: ["in_progress"],
   bofu: ["meeting_booked"],
 };
-const GEO_OPTIONS = ["Americas", "India", "APAC", "Rest of World"] as const;
+const GEO_OPTIONS = ["America", "Rest of the World"] as const;
 
 function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, defaults: FunnelConfig): FunnelConfig {
   return {
@@ -318,15 +319,13 @@ function EngagementBadge({
   );
 }
 
-function normalizeGeo(raw?: string | null): "Americas" | "India" | "APAC" | "Rest of World" | "" {
+function normalizeGeo(raw?: string | null): "America" | "Rest of the World" | "" {
   const value = (raw ?? "").trim().toLowerCase();
   if (!value) return "";
-  if (["us", "usa", "united states", "united states of america"].includes(value)) return "Americas";
-  if (["na", "north america", "americas", "latam", "latin america", "canada", "mexico"].includes(value)) return "Americas";
-  if (["india", "in"].includes(value)) return "India";
-  if (["apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan"].includes(value)) return "APAC";
-  if (value === "rest of world") return "Rest of World";
-  return "";
+  if (["us", "usa", "united states", "united states of america"].includes(value)) return "America";
+  if (["na", "north america", "america", "americas", "latam", "latin america", "canada", "mexico"].includes(value)) return "America";
+  if (["india", "in", "apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan", "rest of world", "rest of the world", "row"].includes(value)) return "Rest of the World";
+  return "Rest of the World";
 }
 
 function contactName(contact: Contact) {
@@ -716,7 +715,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                 {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
               </select>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.geography} onChange={(event) => setForm((current) => ({ ...current, geography: event.target.value }))}>
-                <option value="">Select geography</option>
+                <option value="">Unassigned</option>
                 {GEO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
             </div>
@@ -1475,6 +1474,7 @@ export default function Pipeline() {
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [convertingProspect, setConvertingProspect] = useState(false);
   const [pendingConvertProspect, setPendingConvertProspect] = useState<Contact | null>(null);
+  const [pendingDealMove, setPendingDealMove] = useState<PendingDealMove | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
   const [showFunnelSettings, setShowFunnelSettings] = useState(false);
   const [pipelineSummaryConfig, setPipelineSummaryConfig] = useState<PipelineSummarySettings>(() =>
@@ -1507,6 +1507,7 @@ export default function Pipeline() {
       }));
     return [...configured, ...extras];
   }, [dealBoard, dealStages]);
+  const dealStageLabelMap = useMemo(() => new Map(effectiveDealStages.map((stage) => [stage.id, stage.label])), [effectiveDealStages]);
 
   const effectiveProspectStages = useMemo(() => {
     return prospectStageMeta.length ? prospectStageMeta : PROSPECT_STAGES;
@@ -1676,7 +1677,14 @@ export default function Pipeline() {
         }
         return;
       }
-      if (geographyFilters.length && !geographyFilters.includes(normalizeGeo(company?.region))) return;
+      if (geographyFilters.length) {
+        const geo = normalizeGeo(company?.region);
+        if (geographyFilters.includes("unassigned") && !geo) {
+          next[stage].push(contact);
+          return;
+        }
+        if (!geo || !geographyFilters.includes(geo)) return;
+      }
       next[stage].push(contact);
     });
     return next;
@@ -1752,21 +1760,6 @@ export default function Pipeline() {
     ...card,
     value: summary[card.key],
   }));
-  const prospectingPulse = useMemo(() => {
-    const outreach = filteredProspects.outreach.length;
-    const inProgress = filteredProspects.in_progress.length;
-    const meetingBooked = filteredProspects.meeting_booked.length;
-    const needsAttention = filteredProspects.no_response.length + filteredProspects.negative_response.length;
-    const total = Object.values(filteredProspects).reduce((sum, items) => sum + items.length, 0);
-    const actionable = outreach + inProgress + meetingBooked;
-    const bars = [
-      { key: "outreach", value: outreach, color: "#60a5fa" },
-      { key: "in_progress", value: inProgress, color: "#14b8a6" },
-      { key: "meeting_booked", value: meetingBooked, color: "#8b5cf6" },
-      { key: "needs_attention", value: needsAttention, color: "#f59e0b" },
-    ].filter((item) => item.value > 0);
-    return { outreach, inProgress, meetingBooked, needsAttention, total, actionable, bars };
-  }, [filteredProspects]);
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
   const canImportCrm =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
@@ -1971,13 +1964,25 @@ export default function Pipeline() {
       clearDragState();
       return;
     }
-    setBusyStage(targetStage);
+    const draggedDeal = allDeals.find((deal) => deal.id === dragItem.id);
+    setPendingDealMove({
+      dealId: dragItem.id,
+      dealName: draggedDeal?.name || "this deal",
+      fromStage: dragItem.fromStage,
+      targetStage,
+    });
+    clearDragState();
+  };
+
+  const confirmPendingDealMove = async () => {
+    if (!pendingDealMove) return;
+    setBusyStage(pendingDealMove.targetStage);
     try {
-      await dealsApi.moveStage(dragItem.id, targetStage);
+      await dealsApi.moveStage(pendingDealMove.dealId, pendingDealMove.targetStage);
       await loadBoard();
     } finally {
       setBusyStage(null);
-      clearDragState();
+      setPendingDealMove(null);
     }
   };
 
@@ -2298,102 +2303,6 @@ export default function Pipeline() {
                 </label>
               </div>
             )}
-            <div
-              style={{
-                borderRadius: 14,
-                border: "1px solid #e7eef7",
-                background: "linear-gradient(180deg, #fbfdff 0%, #f8fbff 100%)",
-                padding: 12,
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: "#1f3654", letterSpacing: "0.03em", textTransform: "uppercase" }}>
-                    Prospecting Pulse
-                  </div>
-                  <div style={{ fontSize: 11, color: "#7a96b0", marginTop: 3, lineHeight: 1.45 }}>
-                    Lightweight SDR momentum view so deals stay the main focus.
-                  </div>
-                </div>
-                <span
-                  style={{
-                    flexShrink: 0,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    background: "#eef6ff",
-                    color: "#2563eb",
-                    border: "1px solid #d7e6fb",
-                  }}
-                >
-                  {currentBoardLoading ? "Loading..." : `${prospectingPulse.total} prospects`}
-                </span>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {[
-                  { label: "Ready to work", value: prospectingPulse.outreach + prospectingPulse.inProgress, tone: "#0f766e", bg: "#ecfdf5" },
-                  { label: "Meetings booked", value: prospectingPulse.meetingBooked, tone: "#6d28d9", bg: "#f5f3ff" },
-                  { label: "Needs attention", value: prospectingPulse.needsAttention, tone: "#b45309", bg: "#fff7ed" },
-                  { label: "Active motion", value: prospectingPulse.actionable, tone: "#1d4ed8", bg: "#eff6ff" },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    style={{
-                      minWidth: 0,
-                      borderRadius: 10,
-                      padding: "8px 9px",
-                      background: item.bg,
-                      border: "1px solid rgba(148,163,184,0.14)",
-                    }}
-                  >
-                    <div style={{ fontSize: 17, fontWeight: 800, color: item.tone, lineHeight: 1 }}>{currentBoardLoading ? "—" : item.value}</div>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#5d7288", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{item.label}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10 }}>
-                  <span style={{ color: "#7a96b0", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Lane mix</span>
-                  <span style={{ color: "#8da1b5", fontWeight: 600 }}>
-                    {prospectingPulse.total > 0 ? `${prospectingPulse.actionable} actively moving` : "No visible prospects"}
-                  </span>
-                </div>
-                <div style={{ display: "flex", width: "100%", height: 8, borderRadius: 999, overflow: "hidden", background: "#edf2f7" }}>
-                  {prospectingPulse.bars.length ? (
-                    prospectingPulse.bars.map((item) => (
-                      <div
-                        key={item.key}
-                        style={{
-                          width: `${(item.value / Math.max(prospectingPulse.total, 1)) * 100}%`,
-                          background: item.color,
-                        }}
-                      />
-                    ))
-                  ) : (
-                    <div style={{ width: "100%", background: "#dbe6f2" }} />
-                  )}
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {[
-                    { label: "Outreach", value: prospectingPulse.outreach, color: "#60a5fa" },
-                    { label: "In progress", value: prospectingPulse.inProgress, color: "#14b8a6" },
-                    { label: "Meeting booked", value: prospectingPulse.meetingBooked, color: "#8b5cf6" },
-                    { label: "Needs attention", value: prospectingPulse.needsAttention, color: "#f59e0b" },
-                  ].map((item) => (
-                    <span key={item.label} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: "#6b7f95", fontWeight: 600 }}>
-                      <span style={{ width: 7, height: 7, borderRadius: 999, background: item.color, display: "inline-block" }} />
-                      {item.label} {currentBoardLoading ? "—" : item.value}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
           </div>
 
           <div style={{ flex: 1 }} />
@@ -2461,6 +2370,43 @@ export default function Pipeline() {
         }, { replace: true });
       }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} onCompanyUpdated={(updated) => setCompanies((prev) => prev.some((c) => c.id === updated.id) ? prev.map((c) => c.id === updated.id ? updated : c) : [...prev, updated])} />}
       {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} companies={companies} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
+      {pendingDealMove && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.22)", zIndex: 60 }}
+            onClick={busyStage ? undefined : () => setPendingDealMove(null)}
+          />
+          <div style={{ position: "fixed", inset: 0, zIndex: 61, display: "grid", placeItems: "center", padding: 16 }}>
+            <div className="crm-panel" style={{ width: "min(520px, 100%)", padding: 24, borderRadius: 18 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#182042", marginBottom: 10 }}>Move this deal?</div>
+              <div style={{ color: "#5e738b", fontSize: 14, lineHeight: 1.7, marginBottom: 18 }}>
+                <strong style={{ color: "#182042" }}>{pendingDealMove.dealName}</strong> will move from{" "}
+                <strong>{dealStageLabelMap.get(pendingDealMove.fromStage) ?? pendingDealMove.fromStage}</strong> to{" "}
+                <strong>{dealStageLabelMap.get(pendingDealMove.targetStage) ?? pendingDealMove.targetStage}</strong>.
+                {" "}This will update pipeline tracking for the deal.
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button
+                  type="button"
+                  className="crm-button soft"
+                  disabled={Boolean(busyStage)}
+                  onClick={() => setPendingDealMove(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="crm-button primary"
+                  disabled={Boolean(busyStage)}
+                  onClick={confirmPendingDealMove}
+                >
+                  {busyStage ? "Moving..." : "Yes, move it"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
       {pendingConvertProspect && (
         <>
           <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.22)", zIndex: 60 }} onClick={() => setPendingConvertProspect(null)} />

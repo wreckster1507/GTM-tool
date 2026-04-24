@@ -1277,6 +1277,11 @@ export default function PreMeetingAssistance() {
   const [summary, setSummary] = useState({ total: 0, upcoming: 0, hasIntel: 0, noIntel: 0 });
   const hideDeveloper = isDeveloperUser(user);
 
+  useEffect(() => {
+    if (!user?.id) return;
+    setAssigneeFilter((current) => (current.length === 0 ? [user.id] : current));
+  }, [user?.id]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -1304,10 +1309,10 @@ export default function PreMeetingAssistance() {
           order: statusFilter.length === 1 && statusFilter[0] === "completed" ? "desc" : "asc",
           q: debouncedSearch || undefined,
         }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1 }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"] }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: true }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: false }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeFilter }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], assigneeId: assigneeFilter }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: true, assigneeId: assigneeFilter }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: false, assigneeId: assigneeFilter }),
       ]);
       const ms = pageResp.items;
       setMeetings(ms);

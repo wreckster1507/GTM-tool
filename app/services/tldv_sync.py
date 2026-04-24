@@ -84,6 +84,20 @@ def _internal_domains() -> set[str]:
     return {domain for domain in domains if domain}
 
 
+def _is_internal_only_attendee_set(attendees: list[dict[str, Any]]) -> bool:
+    internal = _internal_domains()
+    external_found = False
+    for attendee in attendees:
+        email = _normalize_email(attendee.get("email"))
+        if not email or "@" not in email:
+            continue
+        domain = _normalize_domain(email.split("@", 1)[1])
+        if domain and domain not in internal:
+            external_found = True
+            break
+    return not external_found
+
+
 def _infer_meeting_type(title: str, summary: str, transcript: str) -> str:
     text = " ".join(part.lower() for part in [title, summary, transcript] if part)
     if "poc" in text or "pilot" in text:
@@ -690,6 +704,9 @@ async def sync_tldv_meeting(
         recording_url = None
 
     attendees = _extract_attendees(meeting_payload)
+    if _is_internal_only_attendee_set(attendees):
+        stats.unmapped += 1
+        return {"skipped": True, "meeting_id": meeting_id, "reason": "internal_only"}
     attendee_emails = [
         email
         for email in (_normalize_email(attendee.get("email")) for attendee in attendees)
@@ -705,10 +722,13 @@ async def sync_tldv_meeting(
     matched_contact_ids = [contact.id for contact in matched_contacts if contact.id]
     deal = await _match_deal_from_contacts(session, matched_contact_ids)
     company = await session.get(Company, deal.company_id) if deal and deal.company_id else None
+    domain_company = await _match_company_from_domains(session, attendee_domains)
+    if domain_company:
+        company = domain_company
+        if deal and deal.company_id != domain_company.id:
+            deal = None
     mapped_via_gmail = False
 
-    if not company:
-        company = await _match_company_from_domains(session, attendee_domains)
     if not company:
         company = await _match_company_from_title(session, str(meeting_payload.get("name") or ""))
     if not deal:

@@ -810,12 +810,9 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 onChange={(e) => patchDeal({ geography: e.target.value || undefined } as Partial<Deal>)}
                 style={{ ...fieldInputStyle }}
               >
-                <option value="">Select region</option>
-                <option value="US">US</option>
-                <option value="Americas">Americas</option>
-                <option value="India">India</option>
-                <option value="APAC">APAC</option>
-                <option value="Rest of World">Rest of World</option>
+                <option value="">Unassigned</option>
+                <option value="America">America</option>
+                <option value="Rest of the World">Rest of the World</option>
               </select>
             </FieldRow>
 

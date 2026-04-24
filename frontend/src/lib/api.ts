@@ -167,6 +167,8 @@ export const contactsApi = {
     emailState?: string[];
     aeId?: string[];
     sdrId?: string[];
+    ownerId?: string;
+    scopeAnyMatch?: boolean;
     prospectOnly?: boolean;
   }) => {
     const search = new URLSearchParams({
@@ -181,6 +183,8 @@ export const contactsApi = {
     if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
     if (params.aeId?.length) search.set("ae_id", params.aeId.join(","));
     if (params.sdrId?.length) search.set("sdr_id", params.sdrId.join(","));
+    if (params.ownerId) search.set("owner_id", params.ownerId);
+    if (params.scopeAnyMatch) search.set("scope_any_match", "true");
     if (params.prospectOnly) search.set("prospect_only", "true");
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
@@ -990,6 +994,7 @@ export const accountSourcingApi = {
     disposition?: string[];
     recommendedOutreachLane?: string[];
     assignedRepEmail?: string;
+    ownerId?: string;
   }) => {
     const search = new URLSearchParams({
       skip: String(params?.skip ?? 0),
@@ -1000,13 +1005,18 @@ export const accountSourcingApi = {
     if (params?.disposition?.length) search.set("disposition", params.disposition.join(","));
     if (params?.recommendedOutreachLane?.length) search.set("recommended_outreach_lane", params.recommendedOutreachLane.join(","));
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
+    if (params?.ownerId) search.set("owner_id", params.ownerId);
     return requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
   },
 
-  summary: (assignedRepEmail?: string) =>
-    request<AccountSourcingSummary>(
-      `/api/v1/account-sourcing/summary${assignedRepEmail ? `?assigned_rep_email=${encodeURIComponent(assignedRepEmail)}` : ""}`
-    ),
+  summary: (params?: { assignedRepEmail?: string; ownerId?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
+    if (params?.ownerId) search.set("owner_id", params.ownerId);
+    return request<AccountSourcingSummary>(
+      `/api/v1/account-sourcing/summary${search.toString() ? `?${search.toString()}` : ""}`
+    );
+  },
 
   getCompany: (companyId: string) =>
     request<Company>(`/api/v1/account-sourcing/companies/${companyId}`),

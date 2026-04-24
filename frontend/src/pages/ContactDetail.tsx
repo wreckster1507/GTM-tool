@@ -25,6 +25,8 @@ export default function ContactDetail() {
   const [briefLoading, setBriefLoading] = useState(false);
   const [seqLoading, setSeqLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingTimezone, setEditingTimezone] = useState(false);
+  const [timezoneDraft, setTimezoneDraft] = useState("");
 
   const loadContact = async () => {
     if (!id) return;
@@ -32,6 +34,7 @@ export default function ContactDetail() {
     try {
       const c = await contactsApi.get(id);
       setContact(c);
+      setTimezoneDraft(c.timezone ?? "");
 
       const tasks: Promise<unknown>[] = [activitiesApi.list(undefined, id).then((a) => setActivities(a))];
       if (c.company_id) {
@@ -78,6 +81,13 @@ export default function ContactDetail() {
     } finally {
       setSeqLoading(false);
     }
+  };
+
+  const handleSaveTimezone = async () => {
+    if (!contact || !id) return;
+    const updated = await contactsApi.update(id, { timezone: timezoneDraft.trim() || null } as Partial<Contact>);
+    setContact(updated);
+    setEditingTimezone(false);
   };
 
   if (loading) {
@@ -172,6 +182,26 @@ export default function ContactDetail() {
                     <Linkedin size={13} />LinkedIn
                   </a>
                 )}
+                <span className="inline-flex items-center gap-2">
+                  <span className="font-semibold">Time zone:</span>
+                  {editingTimezone ? (
+                    <>
+                      <input
+                        value={timezoneDraft}
+                        onChange={(e) => setTimezoneDraft(e.target.value)}
+                        placeholder="e.g. America/Chicago"
+                        style={{ height: 32, borderRadius: 8, border: "1px solid #d5e3ef", padding: "0 10px", fontSize: 12, color: "#24364b" }}
+                      />
+                      <button className="crm-button soft" onClick={handleSaveTimezone}>Save</button>
+                      <button className="crm-button soft" onClick={() => { setTimezoneDraft(contact.timezone ?? ""); setEditingTimezone(false); }}>Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <span>{contact.timezone || "—"}</span>
+                      <button className="crm-button soft" onClick={() => setEditingTimezone(true)}>Edit</button>
+                    </>
+                  )}
+                </span>
               </div>
             </div>
           </div>

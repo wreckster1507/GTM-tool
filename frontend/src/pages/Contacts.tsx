@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary, LifecycleStep, LifecycleStepState } from "../lib/api";
@@ -9,7 +9,7 @@ import {
   Search, Users, CheckCircle2, XCircle, Sparkles, Trash2, AlertCircle, Loader2,
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
-  Mail, Clock, PhoneCall, Globe, X, AlertTriangle,
+  Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../lib/utils";
 import {
@@ -183,6 +183,38 @@ function parseSearchParamList(value: string | null): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: boolean }> = [
+  { key: "name", label: "Name", required: true },
+  { key: "company", label: "Company", required: true },
+  { key: "title", label: "Title" },
+  { key: "email", label: "Email", required: true },
+  { key: "progress", label: "Progress", required: true },
+  { key: "timezone", label: "Timezone" },
+  { key: "next_action", label: "Next Action" },
+  { key: "ae", label: "AE" },
+  { key: "sdr", label: "SDR" },
+  { key: "action", label: "Action", required: true },
+] as const;
+
+type ContactTableColumnKey = typeof CONTACT_TABLE_COLUMNS[number]["key"];
+const DEFAULT_CONTACT_TABLE_COLUMNS: ContactTableColumnKey[] = CONTACT_TABLE_COLUMNS.map((column) => column.key);
+
+function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey[] {
+  if (!raw) return DEFAULT_CONTACT_TABLE_COLUMNS;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_CONTACT_TABLE_COLUMNS;
+    const allowed = new Set(CONTACT_TABLE_COLUMNS.map((column) => column.key));
+    const next = parsed.filter((value): value is ContactTableColumnKey => typeof value === "string" && allowed.has(value as ContactTableColumnKey));
+    for (const required of CONTACT_TABLE_COLUMNS.filter((column) => column.required).map((column) => column.key)) {
+      if (!next.includes(required)) next.push(required);
+    }
+    return next.length ? next : DEFAULT_CONTACT_TABLE_COLUMNS;
+  } catch {
+    return DEFAULT_CONTACT_TABLE_COLUMNS;
+  }
+}
+
 export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -199,6 +231,7 @@ export default function Contacts() {
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
   const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("call")));
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
+  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
   // Company filter — optional narrowing to a single company's prospects.
@@ -238,9 +271,43 @@ export default function Contacts() {
   const [linkedinSuggestionCopied, setLinkedinSuggestionCopied] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const [tableColumns, setTableColumns] = useState<ContactTableColumnKey[]>(() => normalizeContactTableColumns(localStorage.getItem("crm.contacts.tableColumns")));
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
   const [creatingMissingCompanies, setCreatingMissingCompanies] = useState(false);
   const [enrichingMissingKey, setEnrichingMissingKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem("crm.contacts.tableColumns", JSON.stringify(tableColumns));
+  }, [tableColumns]);
+
+  const visibleColumns = useMemo(
+    () => CONTACT_TABLE_COLUMNS.filter((column) => tableColumns.includes(column.key)),
+    [tableColumns],
+  );
+
+  const moveTableColumn = (key: ContactTableColumnKey, direction: -1 | 1) => {
+    setTableColumns((current) => {
+      const index = current.indexOf(key);
+      if (index < 0) return current;
+      const target = index + direction;
+      if (target < 0 || target >= current.length) return current;
+      const next = [...current];
+      const [column] = next.splice(index, 1);
+      next.splice(target, 0, column);
+      return next;
+    });
+  };
+
+  const toggleTableColumn = (key: ContactTableColumnKey) => {
+    const column = CONTACT_TABLE_COLUMNS.find((item) => item.key === key);
+    if (column?.required) return;
+    setTableColumns((current) => (
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key]
+    ));
+  };
 
   // ── Angel mapping state ──────────────────────────────────────────────
   const [mappings, setMappings] = useState<AngelMapping[]>([]);
@@ -269,6 +336,7 @@ export default function Contacts() {
       limit: pageSize,
       q: debouncedSearch || undefined,
       companyId: companyFilter || undefined,
+      ownerId: ownerScope === "mine" ? user?.id : undefined,
       persona: personaFilter.length ? personaFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
       callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
@@ -426,6 +494,7 @@ export default function Contacts() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
+      ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
@@ -434,7 +503,7 @@ export default function Contacts() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [search, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, companyFilter, page]);
+  }, [aeFilter, callDispositionFilter, companyFilter, ownerScope, page, sdrFilter, search, sequenceFilter, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -445,12 +514,12 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, companyFilter]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, sdrFilter, sequenceFilter]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [tab, page, debouncedSearch, sequenceFilter, callDispositionFilter, aeFilter, sdrFilter, companyFilter]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, page, sdrFilter, sequenceFilter, tab, user?.id]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
   // one batch call. Gives each row a progress bar (●━●━◉━○━○) and "Day 7 ·
@@ -1085,6 +1154,7 @@ export default function Contacts() {
             {/* Filters */}
             {(() => {
               const hasFilters = !!(
+                ownerScope === "mine" ||
                 sequenceFilter.length ||
                 callDispositionFilter.length ||
                 aeFilter.length ||
@@ -1111,6 +1181,28 @@ export default function Contacts() {
                       account. Populated from the full company list on page
                       mount; for >500 accounts the list is still scannable
                       because entries are alphabetical. */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>View</span>
+                    <select
+                      value={ownerScope}
+                      onChange={(e) => setOwnerScope(e.target.value === "mine" ? "mine" : "all")}
+                      style={{
+                        height: 34,
+                        padding: "0 28px 0 10px",
+                        borderRadius: 9,
+                        border: ownerScope === "mine" ? "1.5px solid #ffc9b4" : "1px solid #c8d9e8",
+                        fontSize: 13,
+                        color: "#0f2744",
+                        background: ownerScope === "mine" ? "#fff3ec" : "#fff",
+                        outline: "none",
+                        minWidth: 140,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <option value="all">All prospects</option>
+                      <option value="mine">My prospects</option>
+                    </select>
+                  </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>Company</span>
                     <select
@@ -1179,6 +1271,53 @@ export default function Contacts() {
                   {/* Divider */}
                   <div style={{ flex: 1 }} />
 
+                  <div style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      onClick={() => setColumnMenuOpen((current) => !current)}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        height: 34, padding: "0 12px", borderRadius: 10,
+                        border: "1px solid #dce8f4", background: "#fff",
+                        color: "#4a6580", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      <Settings2 size={13} />
+                      Customize table
+                    </button>
+                    {columnMenuOpen && (
+                      <div style={{
+                        position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 30,
+                        width: 280, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff",
+                        boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 10, display: "flex", flexDirection: "column", gap: 8,
+                      }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em", padding: "2px 4px" }}>
+                          Rearrange columns
+                        </div>
+                        {CONTACT_TABLE_COLUMNS.map((column) => {
+                          const active = tableColumns.includes(column.key);
+                          return (
+                            <div key={column.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", borderRadius: 10, background: active ? "#f8fbff" : "transparent" }}>
+                              <button type="button" onClick={() => moveTableColumn(column.key, -1)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#7a8ea4", display: "inline-flex" }}>
+                                <GripVertical size={13} />
+                              </button>
+                              <span style={{ flex: 1, fontSize: 12.5, color: "#24364b", fontWeight: 600 }}>{column.label}</span>
+                              {!column.required && (
+                                <button type="button" onClick={() => toggleTableColumn(column.key)} style={{ border: "1px solid #dce8f4", background: active ? "#fff3ec" : "#fff", color: active ? "#b85024" : "#546679", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                  <EyeOff size={11} />
+                                  {active ? "Hide" : "Show"}
+                                </button>
+                              )}
+                              <button type="button" onClick={() => moveTableColumn(column.key, 1)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#7a8ea4", display: "inline-flex" }}>
+                                <ArrowLeftRight size={13} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Count */}
                   <span style={{
                     fontSize: 12, fontWeight: 600, color: "#4a6580",
@@ -1194,6 +1333,7 @@ export default function Contacts() {
                       type="button"
                       onClick={() => {
                         setSearch("");
+                        setOwnerScope("all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setAeFilter([]); setSdrFilter([]);
                         setCompanyFilter("");
@@ -1225,29 +1365,19 @@ export default function Contacts() {
             ) : (
               <div className="crm-panel overflow-hidden contacts-table-panel">
                 <div className="overflow-x-auto">
-                  <table className="crm-table" style={{ minWidth: 1360 }}>
+                  <table className="crm-table" style={{ minWidth: 1080 }}>
                     <thead>
                       <tr>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Name</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Company</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Title</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Progress</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Timezone</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Email Status</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Call</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>LinkedIn</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Next Action</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>AE</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>SDR</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>Action</th>
+                        {visibleColumns.map((column) => (
+                          <th key={column.key} style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>{column.label}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {contacts.map((c) => {
                         return (
                         <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
-                          <td>
+                          {visibleColumns.some((column) => column.key === "name") && <td>
                             <div className="flex items-center gap-3 min-w-0">
                               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[13px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
                                 {getInitials(`${c.first_name} ${c.last_name}`)}
@@ -1259,8 +1389,8 @@ export default function Contacts() {
                                 </p>
                               </div>
                             </div>
-                          </td>
-                          <td>
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "company") && <td>
                             {c.company_name ? (
                               <button
                                 onClick={(e) => { e.stopPropagation(); navigate(`/account-sourcing/${c.company_id}`); }}
@@ -1271,9 +1401,9 @@ export default function Contacts() {
                             ) : (
                               <span className="text-[#96a7ba]">-</span>
                             )}
-                          </td>
-                          <td>{c.title ?? <span className="text-[#96a7ba]">-</span>}</td>
-                          <td>
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "title") && <td>{c.title ?? <span className="text-[#96a7ba]">-</span>}</td>}
+                          {visibleColumns.some((column) => column.key === "email") && <td>
                             <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
                               {c.email
                                 ? <span style={{ fontSize: 13, color: "#1e3a52", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
@@ -1289,15 +1419,8 @@ export default function Contacts() {
                                       : "No direct channel saved"}
                               </div>
                             </div>
-                          </td>
-                          {/* Progress — single source of truth. When the
-                              contact has a live outreach sequence we render
-                              cadence step dots with real state (done / current
-                              / overdue / upcoming). When there's no sequence
-                              yet we keep the funnel-stage template so reps
-                              still see something actionable. Click opens the
-                              full lifecycle drawer either way. */}
-                          <td
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "progress") && <td
                             onClick={(e) => { e.stopPropagation(); setLifecycleContactId(c.id); }}
                             style={{ cursor: "pointer" }}
                           >
@@ -1305,9 +1428,8 @@ export default function Contacts() {
                               contact={c}
                               lifecycle={lifecycleSummaries[c.id]}
                             />
-                          </td>
-                          {/* Timezone */}
-                          <td>
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "timezone") && <td>
                             {c.timezone ? (
                               <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#4a6580" }}>
                                 <Globe size={11} />
@@ -1316,76 +1438,8 @@ export default function Contacts() {
                             ) : (
                               <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>
                             )}
-                          </td>
-                          {/* Email status */}
-                          <td>
-                            {(() => {
-                              const opens = c.email_open_count ?? 0;
-                              if (opens > 0) {
-                                return (
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
-                                      <Mail size={10} /> Opened ×{opens}
-                                    </span>
-                                    {c.email_last_opened_at && (
-                                      <span style={{ fontSize: 11, color: "#7a8ea4" }}>
-                                        {new Date(c.email_last_opened_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              }
-                              if (c.sequence_status === "sent" || c.sequence_status === "queued_instantly") {
-                                return <span style={{ fontSize: 11, color: "#7a8ea4" }}>Sent</span>;
-                              }
-                              return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
-                            })()}
-                          </td>
-                          {/* Call status */}
-                          <td>
-                            {(() => {
-                              const cs = c.call_status;
-                              const disposition = c.call_disposition;
-                              if (!cs || cs === "none") return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
-                              const callColors: Record<string, { bg: string; border: string; color: string }> = {
-                                connected: { bg: "#f0fdf4", border: "#bbf7d0", color: "#16a34a" },
-                                voicemail: { bg: "#fef9c3", border: "#fde68a", color: "#92400e" },
-                                attempted: { bg: "#f0f6ff", border: "#bfdbfe", color: "#1d4ed8" },
-                                callback: { bg: "#fdf4ff", border: "#e9d5ff", color: "#7c3aed" },
-                              };
-                              const style = callColors[cs] ?? { bg: "#f1f5f9", border: "#e2e8f0", color: "#475569" };
-                              return (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: style.color, background: style.bg, border: `1px solid ${style.border}`, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
-                                    <PhoneCall size={10} /> {cs.charAt(0).toUpperCase() + cs.slice(1)}
-                                  </span>
-                                  {disposition && (
-                                    <span style={{ fontSize: 11, color: "#7a8ea4" }}>{CALL_DISPOSITION_OPTIONS.find((o) => o.value === disposition)?.label ?? disposition.replace(/_/g, " ")}</span>
-                                  )}
-                                </div>
-                              );
-                            })()}
-                          </td>
-                          {/* LinkedIn status */}
-                          <td>
-                            {(() => {
-                              const ls = c.linkedin_status;
-                              if (!ls || ls === "none") return <span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span>;
-                              const liColors: Record<string, { bg: string; border: string; color: string }> = {
-                                sent: { bg: "#f0f6ff", border: "#bfdbfe", color: "#1d4ed8" },
-                                accepted: { bg: "#f0fdf4", border: "#bbf7d0", color: "#16a34a" },
-                                replied: { bg: "#fdf4ff", border: "#e9d5ff", color: "#7c3aed" },
-                              };
-                              const style = liColors[ls] ?? { bg: "#f1f5f9", border: "#e2e8f0", color: "#475569" };
-                              return (
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: style.color, background: style.bg, border: `1px solid ${style.border}`, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
-                                  <Link2 size={10} /> {ls.charAt(0).toUpperCase() + ls.slice(1)}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          {/* Next Action */}
-                          <td>
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "next_action") && <td>
                             {(() => {
                               const action = getNextAction(c);
                               if (action.channel === "none" && action.priority === "low") {
@@ -1403,8 +1457,8 @@ export default function Contacts() {
                                 </span>
                               );
                             })()}
-                          </td>
-                          <td onClick={(e) => e.stopPropagation()}>
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "ae") && <td onClick={(e) => e.stopPropagation()}>
                             <AssignDropdown
                               entityType="contact"
                               entityId={c.id}
@@ -1415,8 +1469,8 @@ export default function Contacts() {
                               label="AE"
                               compact
                             />
-                          </td>
-                          <td onClick={(e) => e.stopPropagation()}>
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "sdr") && <td onClick={(e) => e.stopPropagation()}>
                             <AssignDropdown
                               entityType="contact"
                               entityId={c.id}
@@ -1427,8 +1481,8 @@ export default function Contacts() {
                               label="SDR"
                               compact
                             />
-                          </td>
-                          <td onClick={(e) => e.stopPropagation()}>
+                          </td>}
+                          {visibleColumns.some((column) => column.key === "action") && <td onClick={(e) => e.stopPropagation()}>
                             <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
                               <button
                                 type="button"
@@ -1588,7 +1642,7 @@ export default function Contacts() {
                                 </div>
                               ) : null}
                             </div>
-                          </td>
+                          </td>}
                         </tr>
                       )})}
                     </tbody>

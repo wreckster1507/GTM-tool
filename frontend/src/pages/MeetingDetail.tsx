@@ -650,6 +650,15 @@ export default function MeetingDetail() {
                 </>
               ) : <span className="text-[#f59e0b] font-semibold">No company linked</span>}
               {meeting.scheduled_at && <span>· {formatDate(meeting.scheduled_at)}</span>}
+              {meeting.recording_url && (
+                <>
+                  ·
+                  <a href={meeting.recording_url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 hover:text-[#7c3aed]">
+                    tl;dv recording <ExternalLink size={12} />
+                  </a>
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">

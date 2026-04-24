@@ -288,7 +288,7 @@ export default function Meetings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>(["scheduled"]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
   const [linkFilter, setLinkFilter] = useState<string[]>([]);
@@ -310,6 +310,11 @@ export default function Meetings() {
     scheduled_at: "",
     attendee_ids: [] as string[],
   });
+
+  useEffect(() => {
+    if (!user?.id) return;
+    setAssigneeFilter((current) => (current.length === 0 ? [user.id] : current));
+  }, [user?.id]);
 
   const loadData = async () => {
     setLoading(true);
@@ -627,7 +632,16 @@ export default function Meetings() {
                       {m.company_id ? (companyName[m.company_id] ?? "-") : <span style={{ color: "#b25a1d", fontWeight: 700 }}>Unlinked</span>}
                     </td>
                     <td style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
-                    <td style={styles.td}>{formatDate(m.scheduled_at)}</td>
+                    <td style={styles.td}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span>{formatDate(m.scheduled_at)}</span>
+                        {m.recording_url && (
+                          <a href={m.recording_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "#7c3aed", fontWeight: 700, textDecoration: "none" }}>
+                            tl;dv recording
+                          </a>
+                        )}
+                      </div>
+                    </td>
                     <td style={styles.td}>
                       <span style={styles.statusChip}>{m.status}</span>
                     </td>

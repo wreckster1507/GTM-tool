@@ -30,6 +30,21 @@ async def _valid_stages(session, pipeline_type: str) -> frozenset[str]:
     return frozenset(await get_configured_deal_stage_ids(session)) if pipeline_type == "deal" else frozenset(PROSPECT_STAGES)
 
 
+def _normalize_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _summarize_text_change(label: str, value: str | None) -> str:
+    if not value:
+        return f"{label} cleared"
+    compact = " ".join(value.split())
+    preview = compact if len(compact) <= 120 else f"{compact[:117]}..."
+    return f"{label} updated: {preview}"
+
+
 # ── Board ────────────────────────────────────────────────────────────────────
 
 @router.get("/board", response_model=dict[str, list[DealRead]])
@@ -125,6 +140,11 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     stage_changed = False
     previous_stage = deal.stage
 
+    if "description" in update_data:
+        update_data["description"] = _normalize_optional_text(update_data.get("description"))
+    if "next_step" in update_data:
+        update_data["next_step"] = _normalize_optional_text(update_data.get("next_step"))
+
     # Validate stage if changed
     if "stage" in update_data and update_data["stage"] != deal.stage:
         pt = update_data.get("pipeline_type", deal.pipeline_type)
@@ -146,6 +166,10 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     if "commit_to_deal" in update_data and update_data["commit_to_deal"] != deal.commit_to_deal:
         label = "committed" if update_data["commit_to_deal"] else "uncommitted"
         changes.append(f"Deal {label}")
+    if "next_step" in update_data and update_data["next_step"] != _normalize_optional_text(deal.next_step):
+        changes.append(_summarize_text_change("Next step", update_data["next_step"]))
+    if "description" in update_data and update_data["description"] != _normalize_optional_text(deal.description):
+        changes.append(_summarize_text_change("Description", update_data["description"]))
 
     update_data["updated_at"] = datetime.utcnow()
     updated = await repo.update(deal, update_data)

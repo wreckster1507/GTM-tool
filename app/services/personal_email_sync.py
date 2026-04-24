@@ -5,7 +5,7 @@ Core logic for processing a batch of EmailMessage objects fetched from a
 user's personal Gmail. Handles:
 
   1. Deal/contact matching via email address → domain → AI fallback
-  2. CRM gap-filling: auto-create contacts and companies from emails
+  2. CRM gap-filling: auto-create contacts only when they map to an existing account
   3. Activity logging (deduped by message_id + deal_id)
   4. AI-driven task generation from email thread context
 
@@ -730,8 +730,6 @@ async def process_personal_emails(
                 if company:
                     company_id = company.id
                     company_domain_map[domain] = (company.id, company.name)
-                    stats["companies_created"] += 1
-
             display_name = msg.from_name if addr == msg.from_addr else None
             contact = await _get_or_create_contact_by_email(
                 session, addr, display_name, company_id, sync_user.id,
@@ -867,8 +865,6 @@ async def _gap_fill_contacts(
             if company:
                 company_id = company.id
                 company_domain_map[domain] = (company.id, company.name)
-                stats["companies_created"] += 1
-
         if not company_id and domain in FREE_EMAIL_PROVIDERS:
             continue
 

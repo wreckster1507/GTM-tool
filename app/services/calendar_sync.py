@@ -104,6 +104,15 @@ def _infer_meeting_type(title: str) -> str:
     return "discovery"
 
 
+def _is_internal_meeting(attendee_emails: list[str], user_email: str) -> bool:
+    user_domain = _domain_from_email(user_email)
+    external = [
+        email for email in attendee_emails
+        if email and email.lower().strip() != user_email.lower().strip() and _domain_from_email(email) != user_domain
+    ]
+    return len(external) == 0
+
+
 def _naive_utc(dt: datetime) -> datetime:
     """Convert a tz-aware datetime to naive UTC (matches DB column type)."""
     if dt.tzinfo is not None:
@@ -166,17 +175,18 @@ async def sync_calendar_events(
     for event in events:
         try:
             source_id = f"gcal:{event.event_id}"
+            if _is_internal_meeting(event.attendee_emails, user_email):
+                stats["skipped"] += 1
+                continue
+
             external_attendees = [
                 e for e in event.attendee_emails
                 if e != user_email and _domain_from_email(e) != user_domain
             ]
 
-            if not external_attendees:
-                stats["skipped"] += 1
-                continue
-
             matched_deal_id: UUID | None = None
             matched_company_id: UUID | None = None
+            domain_matched_company_id: UUID | None = None
 
             # ── Pass 1: exact contact email → deal (only when unambiguous) ─
             matched_contact_ids: list[UUID] = []
@@ -207,23 +217,27 @@ async def sync_calendar_events(
                         matched_company_id = next(iter(candidate_company_ids))
 
             # ── Pass 2: attendee domain → company (deal only if unambiguous) ─
-            if not matched_deal_id and not matched_company_id:
-                domain_company_ids: set[UUID] = set()
-                for addr in external_attendees:
-                    domain = _domain_from_email(addr)
-                    if not domain or domain in FREE_EMAIL_PROVIDERS:
-                        continue
-                    if domain in company_domain_map:
-                        domain_company_ids.add(company_domain_map[domain][0])
-                if len(domain_company_ids) == 1:
-                    matched_company_id = next(iter(domain_company_ids))
-                    company_deal_ids = [
-                        deal_id
-                        for deal_id, (company_id, stage) in deal_map.items()
-                        if company_id == matched_company_id and stage not in {"closed", "closed_won"}
-                    ]
-                    if len(company_deal_ids) == 1:
-                        matched_deal_id = company_deal_ids[0]
+            domain_company_ids: set[UUID] = set()
+            for addr in external_attendees:
+                domain = _domain_from_email(addr)
+                if not domain or domain in FREE_EMAIL_PROVIDERS:
+                    continue
+                if domain in company_domain_map:
+                    domain_company_ids.add(company_domain_map[domain][0])
+            if len(domain_company_ids) == 1:
+                domain_matched_company_id = next(iter(domain_company_ids))
+                matched_company_id = domain_matched_company_id
+                if matched_deal_id:
+                    deal_company_id = deal_map.get(matched_deal_id, (None, ""))[0]
+                    if deal_company_id != domain_matched_company_id:
+                        matched_deal_id = None
+                company_deal_ids = [
+                    deal_id
+                    for deal_id, (company_id, stage) in deal_map.items()
+                    if company_id == matched_company_id and stage not in {"closed", "closed_won"}
+                ]
+                if len(company_deal_ids) == 1:
+                    matched_deal_id = company_deal_ids[0]
 
             # ── Pass 3 intentionally avoids fuzzy title-only linking ───────
             # If we cannot safely match by attendee email or attendee domain,

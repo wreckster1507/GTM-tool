@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.activity import Activity
 from app.models.company import Company
+from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.settings import WorkspaceSettings
@@ -108,6 +109,7 @@ class ClickUpReplaceStats:
     deals_deleted: int = 0
     deal_contacts_deleted: int = 0
     deal_tasks_deleted: int = 0
+    deal_milestones_deleted: int = 0
     activities_deleted: int = 0
     contacts_deleted: int = 0
     contact_tasks_deleted: int = 0
@@ -367,9 +369,6 @@ async def _get_or_create_company(
     stats: ClickUpImportStats,
     company_cache: dict[str, Company],
 ) -> Company | None:
-    # Accounts are only created via Account Sourcing. ClickUp sync matches tasks
-    # to existing accounts; tasks without a matching account are skipped and can
-    # be picked up automatically once the account is added.
     raw_name = task.get("name") or "Unknown Company"
     company_name, _ = _extract_company_name(raw_name)
     associated_url = next((field.get("value") for field in task.get("custom_fields", []) if field.get("name") == "Associated Company"), None)
@@ -392,7 +391,19 @@ async def _get_or_create_company(
         stats.companies_reused += 1
         return company
 
-    return None
+    enrichment_sources = {"clickup_import": {"hidden_from_account_sourcing": True}}
+    company = Company(
+        name=company_name,
+        domain=domain,
+        enrichment_sources=enrichment_sources,
+        created_at=_parse_epoch_ms(task.get("date_created")) or datetime.utcnow(),
+        updated_at=_parse_epoch_ms(task.get("date_updated")) or datetime.utcnow(),
+    )
+    session.add(company)
+    await session.flush()
+    company_cache[cache_key] = company
+    stats.companies_created += 1
+    return company
 
 
 async def _upsert_deal(
@@ -770,6 +781,11 @@ async def replace_pipeline_deal_data(session: AsyncSession) -> ClickUpReplaceSta
 
         task_delete = await session.execute(delete(Task).where(Task.entity_type == "deal", Task.entity_id.in_(deal_ids)))
         stats.deal_tasks_deleted = task_delete.rowcount or 0
+
+        milestone_delete = await session.execute(
+            delete(CompanyStageMilestone).where(CompanyStageMilestone.deal_id.in_(deal_ids))
+        )
+        stats.deal_milestones_deleted = milestone_delete.rowcount or 0
 
         deal_contact_delete = await session.execute(delete(DealContact).where(DealContact.deal_id.in_(deal_ids)))
         stats.deal_contacts_deleted = deal_contact_delete.rowcount or 0

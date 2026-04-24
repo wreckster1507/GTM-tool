@@ -89,7 +89,6 @@ def _apply_text_multi_filter(stmt, column, raw_value: str | None):
 def _account_sourcing_visibility_filter():
     return or_(
         Company.sourcing_batch_id.isnot(None),
-        Company.enrichment_sources.contains({"clickup_import": {}}),
         Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
     )
 
@@ -796,6 +795,11 @@ async def upload_csv(
     all_users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()  # noqa: E712
     _user_by_email: dict[str, User] = {u.email.lower(): u for u in all_users}
     _user_by_name: dict[str, User] = {u.name.strip().lower(): u for u in all_users}
+    _user_by_first_name: dict[str, list[User]] = {}
+    for user in all_users:
+        first = (user.name or "").strip().split(" ", 1)[0].lower()
+        if first:
+            _user_by_first_name.setdefault(first, []).append(user)
 
     def _resolve_user(rep_email: str | None, rep_name: str | None) -> User | None:
         """Resolve an owner string from CSV to a User record."""
@@ -804,9 +808,13 @@ async def upload_csv(
             if found:
                 return found
         if rep_name:
-            found = _user_by_name.get(rep_name.strip().lower())
+            normalized_name = rep_name.strip().lower()
+            found = _user_by_name.get(normalized_name)
             if found:
                 return found
+            first_matches = _user_by_first_name.get(normalized_name) or []
+            if len(first_matches) == 1:
+                return first_matches[0]
         return None
 
     for row in rows:
@@ -816,10 +824,16 @@ async def upload_csv(
 
         # Resolve owner from CSV sdr/ae to actual User records
         ae_user = _resolve_user(fields.get("assigned_rep_email"), fields.get("assigned_rep_name") or fields.get("assigned_rep"))
+        sdr_user = _resolve_user(fields.get("sdr_email"), fields.get("sdr_name"))
         if ae_user:
             fields["assigned_to_id"] = ae_user.id
             fields["assigned_rep_email"] = ae_user.email
             fields["assigned_rep_name"] = ae_user.name
+            fields["assigned_rep"] = ae_user.name
+        if sdr_user:
+            fields["sdr_id"] = sdr_user.id
+            fields["sdr_email"] = sdr_user.email
+            fields["sdr_name"] = sdr_user.name
 
         try:
             company = None
@@ -846,6 +860,9 @@ async def upload_csv(
                 session.add(company)
                 await session.commit()
                 await session.refresh(company)
+                from app.services.company_auto_mapping import backfill_orphans_for_company
+                await backfill_orphans_for_company(session, company)
+                await session.commit()
                 if already_in_batch:
                     skipped += 1
                 else:
@@ -896,6 +913,9 @@ async def upload_csv(
                 if ae_user:
                     contact_fields["assigned_to_id"] = ae_user.id
                     contact_fields["assigned_rep_email"] = ae_user.email
+                if sdr_user:
+                    contact_fields["sdr_id"] = sdr_user.id
+                    contact_fields["sdr_name"] = sdr_user.name
                 # Contact rows are optional. When present, we merge them now so the
                 # background enrichment can build on the imported humans instead of
                 # discovering everything from scratch.

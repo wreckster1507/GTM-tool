@@ -16,23 +16,57 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
+from app.models.meeting import Meeting
 
 
 async def backfill_orphans_for_company(
     session: AsyncSession, company: Company
 ) -> dict[str, int]:
     if not company or not company.id:
-        return {"contacts_linked": 0, "deals_linked": 0}
+        return {"contacts_linked": 0, "deals_linked": 0, "shadow_companies_absorbed": 0}
 
     domain: Optional[str] = (company.domain or "").strip().lower() or None
+    shadow_companies_absorbed = 0
+
+    if domain and not domain.endswith(".unknown"):
+        shadow_stmt = select(Company).where(
+            Company.id != company.id,
+            Company.sourcing_batch_id.is_(None),
+            or_(
+                func.lower(Company.domain) == domain,
+                func.lower(func.trim(Company.name)) == func.lower(func.trim(company.name)),
+            ),
+        )
+        shadow_companies = (await session.execute(shadow_stmt)).scalars().all()
+        for shadow in shadow_companies:
+            if not shadow.id:
+                continue
+            await session.execute(
+                update(Contact)
+                .where(Contact.company_id == shadow.id)
+                .values(company_id=company.id)
+            )
+            await session.execute(
+                update(Deal)
+                .where(Deal.company_id == shadow.id)
+                .values(company_id=company.id)
+            )
+            await session.execute(
+                update(Meeting)
+                .where(Meeting.company_id == shadow.id)
+                .values(company_id=company.id)
+            )
+            shadow_companies_absorbed += 1
+
     if not domain or domain.endswith(".unknown"):
-        return {"contacts_linked": 0, "deals_linked": 0}
+        await session.flush()
+        return {"contacts_linked": 0, "deals_linked": 0, "shadow_companies_absorbed": shadow_companies_absorbed}
 
     # 1) Link orphan contacts by email domain. Postgres position() lets us find
     #    the "@" and take everything after it without a Python roundtrip.
@@ -67,4 +101,8 @@ async def backfill_orphans_for_company(
             deals_linked = int(result.rowcount or 0)
 
     await session.flush()
-    return {"contacts_linked": len(contact_ids), "deals_linked": deals_linked}
+    return {
+        "contacts_linked": len(contact_ids),
+        "deals_linked": deals_linked,
+        "shadow_companies_absorbed": shadow_companies_absorbed,
+    }
