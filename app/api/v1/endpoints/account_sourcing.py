@@ -801,21 +801,25 @@ async def upload_csv(
         if first:
             _user_by_first_name.setdefault(first, []).append(user)
 
-    def _resolve_user(rep_email: str | None, rep_name: str | None) -> User | None:
-        """Resolve an owner string from CSV to a User record."""
+    def _resolve_user(rep_email: str | None, rep_name: str | None) -> dict[str, str] | None:
+        """Resolve an owner string from CSV to plain user values safe across commits."""
+        found: User | None = None
         if rep_email:
             found = _user_by_email.get(rep_email.strip().lower())
-            if found:
-                return found
-        if rep_name:
+        if not found and rep_name:
             normalized_name = rep_name.strip().lower()
             found = _user_by_name.get(normalized_name)
-            if found:
-                return found
-            first_matches = _user_by_first_name.get(normalized_name) or []
-            if len(first_matches) == 1:
-                return first_matches[0]
-        return None
+            if not found:
+                first_matches = _user_by_first_name.get(normalized_name) or []
+                if len(first_matches) == 1:
+                    found = first_matches[0]
+        if not found:
+            return None
+        return {
+            "id": str(found.id),
+            "email": found.email,
+            "name": found.name,
+        }
 
     for row in rows:
         fields = row_to_company_fields(row)
@@ -826,14 +830,14 @@ async def upload_csv(
         ae_user = _resolve_user(fields.get("assigned_rep_email"), fields.get("assigned_rep_name") or fields.get("assigned_rep"))
         sdr_user = _resolve_user(fields.get("sdr_email"), fields.get("sdr_name"))
         if ae_user:
-            fields["assigned_to_id"] = ae_user.id
-            fields["assigned_rep_email"] = ae_user.email
-            fields["assigned_rep_name"] = ae_user.name
-            fields["assigned_rep"] = ae_user.name
+            fields["assigned_to_id"] = ae_user["id"]
+            fields["assigned_rep_email"] = ae_user["email"]
+            fields["assigned_rep_name"] = ae_user["name"]
+            fields["assigned_rep"] = ae_user["name"]
         if sdr_user:
-            fields["sdr_id"] = sdr_user.id
-            fields["sdr_email"] = sdr_user.email
-            fields["sdr_name"] = sdr_user.name
+            fields["sdr_id"] = sdr_user["id"]
+            fields["sdr_email"] = sdr_user["email"]
+            fields["sdr_name"] = sdr_user["name"]
 
         try:
             company = None
@@ -911,11 +915,11 @@ async def upload_csv(
             if contact_fields:
                 # Propagate resolved owner to contacts
                 if ae_user:
-                    contact_fields["assigned_to_id"] = ae_user.id
-                    contact_fields["assigned_rep_email"] = ae_user.email
+                    contact_fields["assigned_to_id"] = ae_user["id"]
+                    contact_fields["assigned_rep_email"] = ae_user["email"]
                 if sdr_user:
-                    contact_fields["sdr_id"] = sdr_user.id
-                    contact_fields["sdr_name"] = sdr_user.name
+                    contact_fields["sdr_id"] = sdr_user["id"]
+                    contact_fields["sdr_name"] = sdr_user["name"]
                 # Contact rows are optional. When present, we merge them now so the
                 # background enrichment can build on the imported humans instead of
                 # discovering everything from scratch.
