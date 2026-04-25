@@ -200,9 +200,19 @@ async def run_due_pre_meeting_intel_once() -> dict[str, int]:
         emailed = 0
         skipped = 0
 
+        def _research_is_empty(rd) -> bool:
+            """Treat JSONB null, empty dict, empty string, and None all as 'no brief yet'."""
+            if rd is None:
+                return True
+            if isinstance(rd, dict) and not rd:
+                return True
+            if isinstance(rd, str) and rd.strip().lower() in ("", "null", "{}"):
+                return True
+            return False
+
         for meeting in meetings:
             try:
-                if config["auto_generate_if_missing"] and not meeting.research_data:
+                if config["auto_generate_if_missing"] and _research_is_empty(meeting.research_data):
                     await run_pre_meeting_intelligence(meeting.id, session)
                     generated += 1
                     meeting = await session.get(Meeting, meeting.id)
