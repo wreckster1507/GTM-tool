@@ -13,7 +13,7 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   "/prospecting": { title: "Prospecting", subtitle: "Activate contacts, personas, and outreach readiness" },
   "/contacts": { title: "Prospecting", subtitle: "Stakeholders, personas, and outreach" },
   "/pre-meeting-assistance": { title: "Pre-Meeting Assistance", subtitle: "Pre-brief and account context before every call" },
-  "/meetings": { title: "Pre-Meeting Assistance", subtitle: "Pre-brief, debrief, and meeting quality scoring" },
+  "/meetings": { title: "Meetings", subtitle: "Schedule calls, track demos, and review meeting history" },
   "/sales-analytics": { title: "Sales Analytics", subtitle: "Rep performance, forecast visibility, and pipeline quality" },
   "/team": { title: "Team Management", subtitle: "Manage team members, roles, and permissions" },
   "/settings": { title: "Settings", subtitle: "Configure shared workflows, inboxes, and workspace defaults" },

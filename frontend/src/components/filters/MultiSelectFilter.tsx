@@ -38,6 +38,18 @@ export default function MultiSelectFilter({
     if (open) setTimeout(() => inputRef.current?.focus(), 40);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      setFilterText("");
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
+
   const toggle = (value: string) => {
     onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   };

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
@@ -293,6 +294,7 @@ function EngagementPanel({
 
 export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert, onCompanyUpdated }: Props) {
   const { isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [dealContacts, setDealContacts] = useState<DealContact[]>([]);
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
@@ -505,6 +507,10 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   };
 
   const stageLabel = stages.find((s) => s.id === deal.stage)?.label ?? deal.stage;
+  const selectedCompanyName = companies.find(c => c.id === deal.company_id)?.name
+    ?? companyResults.find(c => c.id === deal.company_id)?.name
+    ?? deal.company_name
+    ?? "None";
   const emailSyncAddress = deal.email_cc_alias && sharedInbox.includes("@")
     ? (() => {
         const [local, domain] = sharedInbox.split("@");
@@ -698,8 +704,33 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                   style={{ ...fieldInputStyle, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
                 >
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: (deal.company_id || deal.company_name) ? "#1a202c" : "#a0aec0" }}>
-                    {companies.find(c => c.id === deal.company_id)?.name ?? companyResults.find(c => c.id === deal.company_id)?.name ?? deal.company_name ?? "None"}
+                    {selectedCompanyName}
                   </span>
+                  {deal.company_id && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        navigate(`/account-sourcing/${deal.company_id}`);
+                      }}
+                      title={`Open ${selectedCompanyName} account`}
+                      style={{
+                        marginLeft: "auto",
+                        marginRight: 6,
+                        border: "1px solid #c8daf0",
+                        background: "#f0f6ff",
+                        color: "#175089",
+                        borderRadius: 8,
+                        padding: "3px 7px",
+                        fontSize: 10,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                    >
+                      Open
+                    </button>
+                  )}
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0, marginLeft: 4 }}>
                     <path d="M2 4l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
@@ -1090,9 +1121,14 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                   const name = `${dc.first_name ?? ""} ${dc.last_name ?? ""}`.trim();
                   const ps = PERSONA_STYLE[dc.persona ?? ""] ?? { bg: "#edf3f9", color: "#546679" };
                   return (
-                    <div key={dc.contact_id} style={{
+                    <div
+                      key={dc.contact_id}
+                      onClick={() => navigate(`/contacts/${dc.contact_id}`)}
+                      title="Open prospect detail"
+                      style={{
                       display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
                       borderRadius: 12, border: "1px solid #e8eef5", background: "#fff",
+                      cursor: "pointer",
                     }}>
                       <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(name)}`}
                         style={{ width: 28, height: 28, flexShrink: 0 }}>
@@ -1119,7 +1155,10 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                         </span>
                       )}
                       <button
-                        onClick={() => handleUnlinkContact(dc.contact_id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleUnlinkContact(dc.contact_id);
+                        }}
                         style={{ color: "#c8d2dd", cursor: "pointer", background: "none", border: "none" }}
                         title="Remove"
                       >
@@ -1145,9 +1184,14 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                     {unlinked.map((c) => {
                       const name = `${c.first_name ?? ""} ${c.last_name ?? ""}`.trim();
                       return (
-                        <div key={c.id} style={{
+                        <div
+                          key={c.id}
+                          onClick={() => navigate(`/contacts/${c.id}`)}
+                          title="Open prospect detail"
+                          style={{
                           display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
                           borderRadius: 12, border: "1px dashed #dbe6f2", background: "#fafcfe",
+                          cursor: "pointer",
                         }}>
                           <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(name)}`}
                             style={{ width: 24, height: 24, flexShrink: 0 }}>
@@ -1158,7 +1202,8 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                             <div style={{ fontSize: 10, color: "#94a3b8" }}>{c.title ?? c.email}</div>
                           </div>
                           <button
-                            onClick={async () => {
+                            onClick={async (event) => {
+                              event.stopPropagation();
                               const dc = await dealsApi.addContact(deal.id, c.id, c.persona ?? undefined);
                               setDealContacts((prev) => [dc, ...prev]);
                             }}

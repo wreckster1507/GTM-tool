@@ -582,6 +582,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
   const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority: "normal", assigned_to_id: "", geography: "", tags: "", source: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [validationErrors, setValidationErrors] = useState<{ name: boolean; source: boolean }>({ name: false, source: false });
   const [companySearch, setCompanySearch] = useState("");
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -603,12 +604,17 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
   const selectedCompanyName = companies.find((c) => c.id === form.company_id)?.name ?? "";
 
   const handleCreate = async () => {
-    if (!form.name.trim()) {
-      setError("Deal name is required");
-      return;
-    }
-    if (!form.source) {
-      setError("Deal source is required");
+    const nextValidationErrors = {
+      name: !form.name.trim(),
+      source: !form.source,
+    };
+    setValidationErrors(nextValidationErrors);
+    const missingFields = [
+      nextValidationErrors.name ? "Deal name" : null,
+      nextValidationErrors.source ? "Deal source" : null,
+    ].filter(Boolean);
+    if (missingFields.length) {
+      setError(`Complete required fields: ${missingFields.join(", ")}.`);
       return;
     }
     setSaving(true);
@@ -647,7 +653,23 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <input style={modalInputStyle} placeholder="Deal name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+            <input
+              style={{
+                ...modalInputStyle,
+                border: validationErrors.name ? "1.5px solid #f59e0b" : modalInputStyle.border,
+                background: validationErrors.name ? "#fffbf5" : "#fff",
+              }}
+              placeholder="Deal name *"
+              value={form.name}
+              onChange={(event) => {
+                const nextName = event.target.value;
+                setForm((current) => ({ ...current, name: nextName }));
+                if (error) setError("");
+                if (validationErrors.name && nextName.trim()) {
+                  setValidationErrors((current) => ({ ...current, name: false }));
+                }
+              }}
+            />
             {/* Searchable company combobox */}
             <div ref={companyDropdownRef} style={{ position: "relative" }}>
               <div
@@ -731,7 +753,14 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
               <select
                 style={{ ...modalInputStyle, background: form.source ? "#fff" : "#fffbf5", border: form.source ? "1px solid #dbe6f2" : "1.5px solid #fbbf24", color: form.source ? "#1f2d3d" : "#92400e" }}
                 value={form.source}
-                onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))}
+                onChange={(event) => {
+                  const nextSource = event.target.value;
+                  setForm((current) => ({ ...current, source: nextSource }));
+                  if (error) setError("");
+                  if (validationErrors.source && nextSource) {
+                    setValidationErrors((current) => ({ ...current, source: false }));
+                  }
+                }}
               >
                 <option value="">Select source (required)</option>
                 <option value="inbound">Inbound</option>

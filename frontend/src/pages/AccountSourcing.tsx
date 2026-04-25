@@ -53,6 +53,7 @@ function SummaryCard({
   tone = "neutral",
   onClick,
   active = false,
+  showActiveBadge = true,
 }: {
   icon: ReactNode;
   label: string;
@@ -61,6 +62,7 @@ function SummaryCard({
   tone?: "neutral" | "primary" | "warm" | "green";
   onClick?: () => void;
   active?: boolean;
+  showActiveBadge?: boolean;
 }) {
   const toneStyle = {
     neutral: { bg: "#f8fbff", border: colors.border, accent: colors.sub, activeBorder: "#94a3b8" },
@@ -85,7 +87,7 @@ function SummaryCard({
       }}
       onClick={onClick}
     >
-      {active && (
+      {active && showActiveBadge && (
         <span
           style={{
             position: "absolute", top: 10, right: 12,
@@ -838,6 +840,8 @@ export default function AccountSourcing() {
           const isTierActive = (t: string) => tierFilter.length === 1 && tierFilter[0] === t;
           const isDispositionActive = (d: string) => dispositionFilter.length === 1 && dispositionFilter[0] === d;
           const clearAllFilters = () => {
+            setSearch("");
+            setOwnerScope("all");
             setTierFilter([]);
             setDispositionFilter([]);
             setLaneFilter([]);
@@ -876,7 +880,12 @@ export default function AccountSourcing() {
             setActiveTab(activeTab === "imports" ? "accounts" : "imports");
           };
           const sourcedActive =
-            activeTab === "accounts" && tierFilter.length === 0 && dispositionFilter.length === 0 && laneFilter.length === 0;
+            activeTab === "accounts"
+            && !search.trim()
+            && ownerScope === "all"
+            && tierFilter.length === 0
+            && dispositionFilter.length === 0
+            && laneFilter.length === 0;
           const importsActive = activeTab === "imports";
 
           return (
@@ -890,6 +899,7 @@ export default function AccountSourcing() {
                   tone="neutral"
                   onClick={toggleSourced}
                   active={sourcedActive}
+                  showActiveBadge={false}
                 />
                 <SummaryCard
                   icon={<Flame size={18} />}
@@ -938,6 +948,7 @@ export default function AccountSourcing() {
                   tone="green"
                   onClick={toggleImportsTab}
                   active={importsActive}
+                  showActiveBadge={false}
                 />
                 <SummaryCard
                   icon={<Sparkles size={18} />}
@@ -947,6 +958,7 @@ export default function AccountSourcing() {
                   tone="warm"
                   onClick={toggleImportsTab}
                   active={importsActive}
+                  showActiveBadge={false}
                 />
                 <SummaryCard
                   icon={<AlertCircle size={18} />}
@@ -956,6 +968,7 @@ export default function AccountSourcing() {
                   tone="warm"
                   onClick={toggleImportsTab}
                   active={importsActive}
+                  showActiveBadge={false}
                 />
               </div>
             </>
