@@ -18,6 +18,36 @@ function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {
   return DEVELOPER_EMAILS.has(email) || name === "sarthak aitha";
 }
 
+function meetingTiming(meeting: Meeting): "upcoming" | "overdue" | "completed" | "cancelled" {
+  if (meeting.status === "completed") return "completed";
+  if (meeting.status === "cancelled") return "cancelled";
+  if (!meeting.scheduled_at) return "upcoming";
+  return new Date(meeting.scheduled_at).getTime() < Date.now() ? "overdue" : "upcoming";
+}
+
+function timingLabel(meeting: Meeting): string {
+  const timing = meetingTiming(meeting);
+  if (timing === "completed") return "Completed";
+  if (timing === "cancelled") return "Cancelled";
+  if (!meeting.scheduled_at) return "Unscheduled";
+  const diffHours = Math.round((new Date(meeting.scheduled_at).getTime() - Date.now()) / 3_600_000);
+  if (timing === "overdue") {
+    const overdueHours = Math.abs(diffHours);
+    return overdueHours >= 24 ? `${Math.round(overdueHours / 24)}d overdue` : `${Math.max(overdueHours, 1)}h overdue`;
+  }
+  if (diffHours < 1) return "Starts soon";
+  if (diffHours < 24) return `${diffHours}h away`;
+  return `${Math.round(diffHours / 24)}d away`;
+}
+
+function timingTone(meeting: Meeting) {
+  const timing = meetingTiming(meeting);
+  if (timing === "overdue") return { bg: "#fdecec", color: "#b42336", border: "#f5c2c2" };
+  if (timing === "completed") return { bg: "#ecf8f0", color: "#15803d", border: "#c7e8d3" };
+  if (timing === "cancelled") return { bg: "#f1f5f9", color: "#64748b", border: "#e2e8f0" };
+  return { bg: "#eef4ff", color: "#2948b9", border: "#c5d6ff" };
+}
+
 const styles: Record<string, CSSProperties> = {
   page: {
     display: "flex",
@@ -336,11 +366,20 @@ export default function Meetings() {
       const syncedAfterIso = recentSyncHours
         ? new Date(Date.now() - parseInt(recentSyncHours, 10) * 3600_000).toISOString()
         : undefined;
+      const apiStatusFilter = statusFilter.includes("overdue")
+        ? Array.from(new Set(statusFilter.filter((status) => status !== "overdue").concat(["scheduled"])))
+        : statusFilter;
+      const temporalStatusFilter = Array.from(new Set(statusFilter.flatMap((status) => {
+        if (status === "scheduled") return ["upcoming"];
+        if (status === "overdue") return ["overdue"];
+        return [];
+      })));
 
       const pageResp = await meetingsApi.listPaginated({
         skip: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE,
-        status: statusFilter,
+        status: apiStatusFilter,
+        temporalStatus: temporalStatusFilter,
         meetingType: typeFilter,
         assigneeId: assigneeFilter,
         linkState: linkFilter,
@@ -542,7 +581,8 @@ export default function Meetings() {
           </div>
           <MultiSelectDropdown
             options={[
-              { value: "scheduled", label: "Scheduled" },
+              { value: "scheduled", label: "Upcoming" },
+              { value: "overdue", label: "Overdue" },
               { value: "completed", label: "Completed" },
               { value: "cancelled", label: "Cancelled" },
             ]}
@@ -676,13 +716,18 @@ export default function Meetings() {
                   <th style={styles.th}>Type</th>
                   <th style={styles.th}>Scheduled</th>
                   <th style={styles.th}>Status</th>
+                  <th style={styles.th}>Prep</th>
                   <th style={styles.th}>Added by</th>
                   <th style={styles.th}>Score</th>
                 </tr>
               </thead>
               <tbody>
-                {meetings.map((m) => (
-                  <tr key={m.id}>
+                {meetings.map((m) => {
+                  const timingToneStyle = timingTone(m);
+                  const hasBrief = Boolean(m.research_data || m.pre_brief || m.demo_strategy);
+                  const prepBlocked = !m.company_id || !m.deal_id;
+                  return (
+                  <tr key={m.id} style={{ borderLeft: meetingTiming(m) === "overdue" ? "3px solid #dc2626" : "3px solid transparent" }}>
                     <td style={styles.td}>
                       <div style={{ display: "grid", gap: 6 }}>
                         <Link
@@ -773,7 +818,35 @@ export default function Meetings() {
                       </div>
                     </td>
                     <td style={styles.td}>
-                      <span style={styles.statusChip}>{m.status}</span>
+                      <span style={{ ...styles.statusChip, background: timingToneStyle.bg, color: timingToneStyle.color, borderColor: timingToneStyle.border }}>
+                        {timingLabel(m)}
+                      </span>
+                    </td>
+                    <td style={styles.td}>
+                      <div style={{ display: "grid", gap: 6, alignItems: "start" }}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            width: "fit-content",
+                            padding: "3px 8px",
+                            borderRadius: 999,
+                            border: hasBrief ? "1px solid #c7e8d3" : prepBlocked ? "1px solid #ffd8b4" : "1px solid #ffe3b3",
+                            background: hasBrief ? "#ecf8f0" : prepBlocked ? "#fff6ec" : "#fff8e6",
+                            color: hasBrief ? "#15803d" : prepBlocked ? "#b25a1d" : "#9a6b00",
+                            fontSize: 11,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {hasBrief ? "Brief ready" : prepBlocked ? "Needs link" : "Brief needed"}
+                        </span>
+                        <Link
+                          to={prepBlocked ? `/meetings/${m.id}` : `/pre-meeting-assistance#${m.id}`}
+                          style={{ fontSize: 12, fontWeight: 800, color: prepBlocked ? "#b25a1d" : "#1f6feb", textDecoration: "none" }}
+                        >
+                          {prepBlocked ? "Review link" : "Open prep"}
+                        </Link>
+                      </div>
                     </td>
                     <td style={styles.td}>
                       {(() => {
@@ -834,10 +907,11 @@ export default function Meetings() {
                     </td>
                     <td style={styles.td}>{m.meeting_score ?? "-"}</td>
                   </tr>
-                ))}
+                );
+                })}
                 {meetings.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "48px 12px" }}>
+                    <td colSpan={8} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "48px 12px" }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#25384d", marginBottom: 6 }}>
                         {totalMeetings === 0 ? "No meetings scheduled" : "No meetings match these filters"}
                       </div>

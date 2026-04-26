@@ -848,6 +848,7 @@ export const meetingsApi = {
     companyId?: string;
     dealId?: string;
     status?: string[];
+    temporalStatus?: string[];
     meetingType?: string[];
     assigneeId?: string[];
     linkState?: string[];
@@ -864,6 +865,7 @@ export const meetingsApi = {
     if (params.companyId) search.set("company_id", params.companyId);
     if (params.dealId) search.set("deal_id", params.dealId);
     for (const value of params.status ?? []) search.append("status", value);
+    for (const value of params.temporalStatus ?? []) search.append("temporal_status", value);
     for (const value of params.meetingType ?? []) search.append("meeting_type", value);
     for (const value of params.assigneeId ?? []) search.append("assignee_id", value);
     for (const value of params.linkState ?? []) search.append("link_state", value);

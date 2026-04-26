@@ -1311,18 +1311,23 @@ export default function PreMeetingAssistance() {
           ? intelFilter[0] === "has_intel"
           : undefined;
 
-      // "overdue" is a virtual status computed client-side (scheduled + past).
-      // Translate it to "scheduled" for the API so we fetch the right pool and
-      // let the client-side filter narrow it to actually-past meetings.
+      // "Upcoming" and "overdue" are virtual slices of scheduled meetings.
+      // Send the temporal slice to the API so pagination and totals line up.
       const apiStatusFilter = statusFilter.includes("overdue")
         ? Array.from(new Set(statusFilter.filter((s) => s !== "overdue").concat(["scheduled"])))
         : statusFilter;
+      const temporalStatusFilter = Array.from(new Set(statusFilter.flatMap((status) => {
+        if (status === "scheduled") return ["upcoming"];
+        if (status === "overdue") return ["overdue"];
+        return [];
+      })));
 
       const [pageResp, totalResp, upcomingResp, hasIntelResp, noIntelResp] = await Promise.all([
         meetingsApi.listPaginated({
           skip: (page - 1) * 25,
           limit: 25,
           status: apiStatusFilter,
+          temporalStatus: temporalStatusFilter,
           meetingType: typeFilter,
           assigneeId: assigneeFilter,
           linkState: linkFilter,
@@ -1332,9 +1337,9 @@ export default function PreMeetingAssistance() {
           includeInternal: showInternal,
         }),
         meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeFilter, includeInternal: showInternal }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], assigneeId: assigneeFilter, includeInternal: showInternal }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: true, assigneeId: assigneeFilter, includeInternal: showInternal }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], hasIntel: false, assigneeId: assigneeFilter, includeInternal: showInternal }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], assigneeId: assigneeFilter, includeInternal: showInternal }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeFilter, includeInternal: showInternal }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeFilter, includeInternal: showInternal }),
       ]);
       const ms = pageResp.items;
 
@@ -1506,11 +1511,12 @@ export default function PreMeetingAssistance() {
     const now = Date.now();
     return meetings.filter((m) => {
       if (statusFilter.length > 0) {
-        // "overdue" is a virtual status — pass when a scheduled meeting is in
-        // the past. Everything else compares against the real status field.
+        // Keep the client-side check aligned with the API's virtual status
+        // slices for any locally refreshed rows.
         const isOverdue = m.status === "scheduled" && m.scheduled_at && new Date(m.scheduled_at).getTime() < now;
+        const isUpcoming = m.status === "scheduled" && (!m.scheduled_at || new Date(m.scheduled_at).getTime() >= now);
         const matches = statusFilter.some((s) =>
-          s === "overdue" ? isOverdue : s === m.status
+          s === "overdue" ? isOverdue : s === "scheduled" ? isUpcoming : s === m.status
         );
         if (!matches) return false;
       }

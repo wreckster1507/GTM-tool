@@ -27,6 +27,7 @@ async def list_meetings(
     company_id: Optional[UUID] = Query(default=None),
     deal_id: Optional[UUID] = Query(default=None),
     status: list[str] = Query(default=[]),
+    temporal_status: list[str] = Query(default=[], description="'upcoming' and 'overdue' are virtual filters for scheduled meetings."),
     meeting_type: list[str] = Query(default=[]),
     assignee_id: list[UUID] = Query(default=[]),
     link_state: list[str] = Query(default=[]),
@@ -71,6 +72,28 @@ async def list_meetings(
     if status:
         stmt = stmt.where(Meeting.status.in_(status))
         count_stmt = count_stmt.where(Meeting.status.in_(status))
+    temporal_status_set = {value.strip().lower() for value in temporal_status if value}
+    if temporal_status_set:
+        now = datetime.utcnow()
+        scheduled_time_clauses = []
+        if "upcoming" in temporal_status_set:
+            scheduled_time_clauses.append(or_(Meeting.scheduled_at.is_(None), Meeting.scheduled_at >= now))
+        if "overdue" in temporal_status_set:
+            scheduled_time_clauses.append(Meeting.scheduled_at < now)
+
+        clauses = []
+        if scheduled_time_clauses:
+            clauses.append(
+                (Meeting.status == "scheduled")
+                & or_(*scheduled_time_clauses)
+            )
+        passthrough_statuses = [value for value in status if value != "scheduled"]
+        if passthrough_statuses:
+            clauses.append(Meeting.status.in_(passthrough_statuses))
+        if clauses:
+            temporal_clause = or_(*clauses)
+            stmt = stmt.where(temporal_clause)
+            count_stmt = count_stmt.where(temporal_clause)
     if meeting_type:
         stmt = stmt.where(Meeting.meeting_type.in_(meeting_type))
         count_stmt = count_stmt.where(Meeting.meeting_type.in_(meeting_type))
