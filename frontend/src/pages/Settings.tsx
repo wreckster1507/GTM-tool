@@ -393,6 +393,13 @@ export default function SettingsPage() {
         body: "After you connect Gmail, Beacon will keep checking your inbox and upcoming calendar events without you staying on this page.",
       };
     }
+    if (personalEmail.has_calendar_scope === false) {
+      return {
+        tone: "warning" as const,
+        title: "Calendar access needs reconnect",
+        body: "Your Gmail sync is connected, but Google Calendar permission is missing. Reconnect once so Beacon can create upcoming customer meetings automatically.",
+      };
+    }
     if (monitorPersonalSync && !personalEmail.backfill_completed) {
       return {
         tone: "info" as const,
@@ -1012,10 +1019,10 @@ export default function SettingsPage() {
                   <div style={{
                     display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px",
                     borderRadius: 20, fontSize: 13, fontWeight: 700,
-                    background: !personalEmail?.connected ? "#f3f5fc" : monitorPersonalSync ? "#eef5ff" : "#e8f8ee",
-                    color: !personalEmail?.connected ? "#66748f" : monitorPersonalSync ? "#3b4dc8" : "#217a49",
+                    background: !personalEmail?.connected ? "#f3f5fc" : monitorPersonalSync ? "#eef5ff" : personalEmail.has_calendar_scope === false ? "#fff4e6" : "#e8f8ee",
+                    color: !personalEmail?.connected ? "#66748f" : monitorPersonalSync ? "#3b4dc8" : personalEmail.has_calendar_scope === false ? "#a46206" : "#217a49",
                   }}>
-                    {!personalEmail?.connected ? "Not connected" : monitorPersonalSync ? "Syncing…" : "Connected"}
+                    {!personalEmail?.connected ? "Not connected" : monitorPersonalSync ? "Syncing…" : personalEmail.has_calendar_scope === false ? "Email connected" : "Connected"}
                   </div>
                 </div>
 

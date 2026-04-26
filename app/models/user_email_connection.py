@@ -68,3 +68,4 @@ class UserEmailConnectionStatus(SQLModel):
     last_sync_epoch: Optional[int] = None
     backfill_completed: bool = False
     last_error: Optional[str] = None
+    has_calendar_scope: bool = False

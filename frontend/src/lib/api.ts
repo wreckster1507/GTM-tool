@@ -1862,6 +1862,7 @@ export interface PersonalEmailStatus {
   last_sync_epoch?: number;
   backfill_completed: boolean;
   last_error?: string;
+  has_calendar_scope?: boolean;
 }
 
 export interface PersonalEmailThread {

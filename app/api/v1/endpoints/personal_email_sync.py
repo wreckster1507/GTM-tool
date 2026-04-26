@@ -28,6 +28,7 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.models.activity import Activity, ActivityRead
 from app.models.user_email_connection import UserEmailConnection, UserEmailConnectionRead, UserEmailConnectionStatus
 from app.services.gmail_oauth import (
+    CALENDAR_SCOPE,
     build_gmail_connect_url,
     create_gmail_oauth_state,
     decode_gmail_oauth_state,
@@ -48,6 +49,11 @@ async def get_personal_email_status(session: DBSession, current_user: CurrentUse
     connection = result.scalar_one_or_none()
     if not connection or not connection.is_active:
         return UserEmailConnectionStatus(connected=False)
+    scopes = connection.token_data.get("scopes") if isinstance(connection.token_data, dict) else []
+    if isinstance(scopes, str):
+        has_calendar_scope = CALENDAR_SCOPE in scopes
+    else:
+        has_calendar_scope = any(CALENDAR_SCOPE in str(scope) for scope in (scopes or []))
 
     return UserEmailConnectionStatus(
         connected=True,
@@ -55,6 +61,7 @@ async def get_personal_email_status(session: DBSession, current_user: CurrentUse
         last_sync_epoch=connection.last_sync_epoch,
         backfill_completed=connection.backfill_completed,
         last_error=connection.last_error,
+        has_calendar_scope=has_calendar_scope,
     )
 
 
