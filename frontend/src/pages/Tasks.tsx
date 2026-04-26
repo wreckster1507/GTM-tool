@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Sparkles, Trash2 } from "lucide-react";
+import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { tasksApi } from "../lib/api";
+import { globalSearchApi, tasksApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import { formatDate } from "../lib/utils";
-import type { TaskWorkspaceItem } from "../types";
+import { formatDate, formatDomain, isPlaceholderDomain } from "../lib/utils";
+import type { GlobalSearchItem, TaskWorkspaceItem } from "../types";
 import { getSystemTaskGuidance } from "../components/tasks/systemTaskGuidance";
 
 const colors = {
@@ -73,6 +73,44 @@ function parseMeetingPayload(payload?: Record<string, unknown>) {
   };
 }
 
+function displayEntitySubtitle(value?: string | null) {
+  return isPlaceholderDomain(value) ? formatDomain(value) : value;
+}
+
+function getTaskTemplates(task: TaskWorkspaceItem) {
+  const entity = task.entity_name || "this account";
+  const lowerText = `${task.title} ${task.description ?? ""}`.toLowerCase();
+  const templates = [
+    {
+      label: "Call outcome",
+      body: `Outcome: Called ${entity}.\nResult: Connected / voicemail / no answer\nNotes:\nNext step:`,
+    },
+    {
+      label: "Email follow-up",
+      body: `Outcome: Sent follow-up to ${entity}.\nMessage angle:\nNext step:`,
+    },
+  ];
+
+  if (lowerText.includes("close date") || lowerText.includes("forecast")) {
+    templates.unshift({
+      label: "Forecast hygiene",
+      body: `Outcome: Reviewed forecast hygiene for ${entity}.\nClose date update:\nConfidence:\nNext step:`,
+    });
+  } else if (lowerText.includes("meeting") || lowerText.includes("demo")) {
+    templates.unshift({
+      label: "Meeting follow-up",
+      body: `Outcome: Followed up on ${entity} meeting.\nCustomer ask:\nOwner:\nNext step/date:`,
+    });
+  } else if (task.entity_type === "deal") {
+    templates.unshift({
+      label: "Deal next step",
+      body: `Outcome: Updated deal next step for ${entity}.\nBuyer commitment:\nRep action:\nDue date:`,
+    });
+  }
+
+  return templates.slice(0, 3);
+}
+
 function MeetingFollowUpBlock({ task }: { task: TaskWorkspaceItem }) {
   const [copied, setCopied] = useState(false);
   const { meetingTitle, meetingSummary, followUpEmailDraft, actionItems, hasMeetingContent } = parseMeetingPayload(task.action_payload);
@@ -138,6 +176,8 @@ function MeetingFollowUpBlock({ task }: { task: TaskWorkspaceItem }) {
 type TaskStatusFilter = "open" | "completed" | "dismissed" | "all";
 type TaskTypeFilter = "all" | "manual" | "system";
 type EntityFilter = "all" | "company" | "contact" | "deal";
+type CreateTaskEntityType = Exclude<EntityFilter, "all">;
+type TaskPriority = "low" | "medium" | "high";
 type QueueScope = "mine" | "team";
 type DueDateFilter = "all" | "overdue" | "today" | "tomorrow" | "this_week" | "upcoming" | "unscheduled";
 
@@ -227,7 +267,9 @@ function getDueBadge(dueAt?: string | null, status?: string): DueBadge | null {
 function TaskWorkspaceCard({
   task,
   commentDraft,
+  outcomeDraft,
   onCommentDraftChange,
+  onOutcomeDraftChange,
   onAddComment,
   onAccept,
   onComplete,
@@ -239,7 +281,9 @@ function TaskWorkspaceCard({
 }: {
   task: TaskWorkspaceItem;
   commentDraft: string;
+  outcomeDraft: string;
   onCommentDraftChange: (value: string) => void;
+  onOutcomeDraftChange: (value: string) => void;
   onAddComment: () => void;
   onAccept: () => void;
   onComplete: () => void;
@@ -257,6 +301,7 @@ function TaskWorkspaceCard({
   const dueBadge = getDueBadge(task.due_at, task.status);
   const matrixMeta = parseTaskMatrixMeta(task.action_payload);
   const priorityLabelStyle = matrixMeta.priorityLabel ? PRIORITY_LABEL_STYLE[matrixMeta.priorityLabel] : null;
+  const templates = getTaskTemplates(task);
 
   return (
     <div className="crm-panel" style={{ padding: 18, borderRadius: 16, boxShadow: "none", display: "grid", gap: 12 }}>
@@ -302,7 +347,7 @@ function TaskWorkspaceCard({
               {task.entity_name}
               <ExternalLink size={14} />
             </Link>
-            {task.entity_subtitle ? <span style={{ color: colors.faint, fontSize: 13 }}>{task.entity_subtitle}</span> : null}
+            {displayEntitySubtitle(task.entity_subtitle) ? <span style={{ color: colors.faint, fontSize: 13 }}>{displayEntitySubtitle(task.entity_subtitle)}</span> : null}
           </div>
           {task.description ? <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{task.description}</div> : null}
         </div>
@@ -380,6 +425,33 @@ function TaskWorkspaceCard({
         </div>
       ) : null}
 
+      {isOpen ? (
+        <div style={{ borderRadius: 14, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "12px 13px", display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>OUTCOME LOG</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {templates.map((template) => (
+                <button
+                  key={template.label}
+                  type="button"
+                  onClick={() => onOutcomeDraftChange(template.body)}
+                  className="crm-button soft"
+                  style={{ padding: "5px 8px", fontSize: 11 }}
+                >
+                  {template.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <textarea
+            value={outcomeDraft}
+            onChange={(e) => onOutcomeDraftChange(e.target.value)}
+            placeholder="Log the result before completing: what happened, buyer response, and next step..."
+            style={{ width: "100%", minHeight: 76, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical", background: "#fff" }}
+          />
+        </div>
+      ) : null}
+
       {task.task_type === "manual" && isOpen ? (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={onDismiss} className="crm-button soft">Dismiss</button>
@@ -409,6 +481,21 @@ function TaskWorkspaceCard({
           </div>
         )}
         <div style={{ display: "grid", gap: 6 }}>
+          {templates.length > 0 ? (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {templates.map((template) => (
+                <button
+                  key={`comment-${template.label}`}
+                  type="button"
+                  onClick={() => onCommentDraftChange(template.body)}
+                  className="crm-button soft"
+                  style={{ padding: "5px 8px", fontSize: 11 }}
+                >
+                  Use {template.label.toLowerCase()}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <textarea
             value={commentDraft}
             onChange={(e) => onCommentDraftChange(e.target.value)}
@@ -499,6 +586,20 @@ export default function TasksPage() {
   const [dueDateFilter, setDueDateFilter] = useState<DueDateFilter>(() => (searchParams.get("due") as DueDateFilter) ?? "all");
   const [queueScope, setQueueScope] = useState<QueueScope>(() => (searchParams.get("scope") as QueueScope) ?? "mine");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [outcomeDrafts, setOutcomeDrafts] = useState<Record<string, string>>({});
+  const [showCreateTask, setShowCreateTask] = useState(() => searchParams.get("new") === "task");
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [createTaskForm, setCreateTaskForm] = useState({
+    title: "",
+    description: "",
+    entity_type: "deal" as CreateTaskEntityType,
+    entity_id: "",
+    priority: "medium" as TaskPriority,
+    due_at: "",
+  });
+  const [entitySearch, setEntitySearch] = useState("");
+  const [entityOptions, setEntityOptions] = useState<GlobalSearchItem[]>([]);
+  const [entitySearching, setEntitySearching] = useState(false);
   const isAdmin = user?.role === "admin";
 
   // Sync filter state to URL
@@ -510,9 +611,41 @@ export default function TasksPage() {
       entityFilter !== "all" ? next.set("entity", entityFilter) : next.delete("entity");
       dueDateFilter !== "all" ? next.set("due", dueDateFilter) : next.delete("due");
       queueScope !== "mine" ? next.set("scope", queueScope) : next.delete("scope");
+      showCreateTask ? next.set("new", "task") : next.delete("new");
       return next;
     }, { replace: true });
-  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope]);
+  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope, showCreateTask]);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "task") setShowCreateTask(true);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!showCreateTask || entitySearch.trim().length < 2) {
+      setEntityOptions([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(async () => {
+      setEntitySearching(true);
+      try {
+        const result = await globalSearchApi.search(entitySearch.trim());
+        const options = result.sections
+          .flatMap((section) => section.items)
+          .filter((item) => item.kind === createTaskForm.entity_type)
+          .slice(0, 6);
+        if (!cancelled) setEntityOptions(options);
+      } catch {
+        if (!cancelled) setEntityOptions([]);
+      } finally {
+        if (!cancelled) setEntitySearching(false);
+      }
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [createTaskForm.entity_type, entitySearch, showCreateTask]);
 
   const load = async () => {
     setLoading(true);
@@ -553,6 +686,7 @@ export default function TasksPage() {
     overdue: tasks.filter((task) => task.status === "open" && getDueBadge(task.due_at, task.status)?.bucket === "overdue").length,
     dueToday: tasks.filter((task) => task.status === "open" && getDueBadge(task.due_at, task.status)?.bucket === "today").length,
   }), [tasks]);
+  const summaryValue = (value: number) => loading && tasks.length === 0 ? "—" : value;
 
   const patchTask = async (taskId: string, data: Parameters<typeof tasksApi.update>[1]) => {
     await tasksApi.update(taskId, data);
@@ -570,6 +704,38 @@ export default function TasksPage() {
     await tasksApi.addComment(taskId, body);
     setCommentDrafts((current) => ({ ...current, [taskId]: "" }));
     await load();
+  };
+
+  const completeTask = async (task: TaskWorkspaceItem) => {
+    const outcome = (outcomeDrafts[task.id] || "").trim();
+    if (outcome) {
+      await tasksApi.addComment(task.id, outcome.startsWith("Outcome:") ? outcome : `Outcome: ${outcome}`);
+      setOutcomeDrafts((current) => ({ ...current, [task.id]: "" }));
+    }
+    await patchTask(task.id, { status: "completed" });
+  };
+
+  const createManualTask = async () => {
+    if (!createTaskForm.title.trim() || !createTaskForm.entity_id.trim()) return;
+    setCreatingTask(true);
+    try {
+      await tasksApi.create({
+        entity_type: createTaskForm.entity_type,
+        entity_id: createTaskForm.entity_id.trim(),
+        title: createTaskForm.title.trim(),
+        description: createTaskForm.description.trim() || undefined,
+        priority: createTaskForm.priority,
+        due_at: createTaskForm.due_at ? new Date(createTaskForm.due_at).toISOString() : undefined,
+        assigned_to_id: user?.id,
+      });
+      setShowCreateTask(false);
+      setCreateTaskForm({ title: "", description: "", entity_type: "deal", entity_id: "", priority: "medium", due_at: "" });
+      setEntitySearch("");
+      setEntityOptions([]);
+      await load();
+    } finally {
+      setCreatingTask(false);
+    }
   };
 
   const deleteTask = async (task: TaskWorkspaceItem) => {
@@ -605,35 +771,42 @@ export default function TasksPage() {
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => setShowCreateTask(true)} className="crm-button primary">
+              <Plus size={14} />
+              New Task
+            </button>
             <span className="crm-chip" style={{ background: colors.violetSoft, color: colors.violet, borderColor: "#eadbff" }}>
               <Sparkles size={14} />
-              {summary.system} recommendations
+              {summaryValue(summary.system)} recommendations
             </span>
             <span className="crm-chip" style={{ background: colors.primarySoft, color: colors.primary, borderColor: "#d5e5ff" }}>
               <MessageSquare size={14} />
-              {summary.manual} manual
+              {summaryValue(summary.manual)} manual
             </span>
             <span className="crm-chip" style={{ background: "#eef7f1", color: colors.green, borderColor: "#cfe8d7" }}>
               <CheckCircle2 size={14} />
-              {summary.completed} completed
+              {summaryValue(summary.completed)} completed
             </span>
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12 }}>
           {[
-            { label: "Open now", value: summary.open, tone: colors.primarySoft, color: colors.primary },
-            { label: "Beacon recommendations", value: summary.system, tone: colors.violetSoft, color: colors.violet },
-            { label: "Manual follow-ups", value: summary.manual, tone: "#eef7f1", color: colors.green },
-            { label: "Completed", value: summary.completed, tone: "#f6f7fb", color: colors.sub },
-            { label: "Overdue", value: summary.overdue, tone: colors.redSoft, color: colors.red },
-            { label: "Due today", value: summary.dueToday, tone: colors.amberSoft, color: colors.amber },
+            { label: "Open now", value: summaryValue(summary.open), tone: colors.primarySoft, color: colors.primary },
+            { label: "Beacon recommendations", value: summaryValue(summary.system), tone: colors.violetSoft, color: colors.violet },
+            { label: "Manual follow-ups", value: summaryValue(summary.manual), tone: "#eef7f1", color: colors.green },
+            { label: "Completed", value: summaryValue(summary.completed), tone: "#f6f7fb", color: colors.sub },
+            { label: "Overdue", value: summaryValue(summary.overdue), tone: colors.redSoft, color: colors.red },
+            { label: "Due today", value: summaryValue(summary.dueToday), tone: colors.amberSoft, color: colors.amber },
           ].map((item) => (
             <div key={item.label} style={{ border: `1px solid ${colors.border}`, borderRadius: 16, padding: "16px 18px", background: "#fff" }}>
               <div style={{ color: colors.faint, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 8 }}>{item.label}</div>
               <div style={{ color: item.color, fontWeight: 800, fontSize: 28 }}>{item.value}</div>
             </div>
           ))}
+        </div>
+        <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "10px 12px", color: colors.sub, fontSize: 12.5, lineHeight: 1.55 }}>
+          <span style={{ fontWeight: 800, color: colors.text }}>Priority guide:</span> P0/P1 = urgent customer or revenue blocker, P2 = important next action, P3/low = useful follow-up when higher-priority work is clear.
         </div>
       </section>
 
@@ -714,10 +887,12 @@ export default function TasksPage() {
               key={task.id}
               task={task}
               commentDraft={commentDrafts[task.id] || ""}
+              outcomeDraft={outcomeDrafts[task.id] || ""}
               onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+              onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
               onAddComment={() => addComment(task.id)}
               onAccept={() => acceptTask(task.id)}
-              onComplete={() => patchTask(task.id, { status: "completed" })}
+              onComplete={() => completeTask(task)}
               onDismiss={() => patchTask(task.id, { status: "dismissed" })}
               onManualTakeover={() => takeManualOwnership(task)}
               onReschedule={(newDate) => patchTask(task.id, { due_at: new Date(newDate).toISOString() })}
@@ -727,6 +902,122 @@ export default function TasksPage() {
           ))
         )}
       </section>
+
+      {showCreateTask ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 120, background: "rgba(15,23,42,0.42)", display: "grid", placeItems: "center", padding: 18 }} onClick={() => setShowCreateTask(false)}>
+          <div className="crm-panel" style={{ width: "min(560px, 100%)", padding: 22, display: "grid", gap: 14 }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, color: colors.text, fontSize: 20, fontWeight: 800 }}>New task</h3>
+                <p style={{ margin: "4px 0 0", color: colors.sub, fontSize: 13 }}>Fast manual task entry. No AI generation, just a clean follow-up record.</p>
+              </div>
+              <button type="button" onClick={() => setShowCreateTask(false)} className="crm-button soft" aria-label="Close">
+                <X size={14} />
+              </button>
+            </div>
+            <label style={{ display: "grid", gap: 6, color: colors.sub, fontSize: 12, fontWeight: 800 }}>
+              TITLE
+              <input
+                value={createTaskForm.title}
+                onChange={(event) => setCreateTaskForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="e.g. Update next step after discovery call"
+                style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14 }}
+              />
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 10 }}>
+              <label style={{ display: "grid", gap: 6, color: colors.sub, fontSize: 12, fontWeight: 800 }}>
+                RECORD TYPE
+                <select
+                  value={createTaskForm.entity_type}
+                  onChange={(event) => {
+                    setCreateTaskForm((current) => ({ ...current, entity_type: event.target.value as CreateTaskEntityType, entity_id: "" }));
+                    setEntitySearch("");
+                    setEntityOptions([]);
+                  }}
+                  style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14, background: "#fff" }}
+                >
+                  <option value="deal">Deal</option>
+                  <option value="contact">Prospect</option>
+                  <option value="company">Company</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 6, color: colors.sub, fontSize: 12, fontWeight: 800 }}>
+                RECORD
+                <div style={{ position: "relative" }}>
+                  <input
+                    value={entitySearch}
+                    onChange={(event) => {
+                      setEntitySearch(event.target.value);
+                      setCreateTaskForm((current) => ({ ...current, entity_id: "" }));
+                    }}
+                    placeholder={`Search ${createTaskForm.entity_type}`}
+                    style={{ width: "100%", height: 42, borderRadius: 12, border: `1px solid ${createTaskForm.entity_id ? "#bfe4cf" : colors.border}`, padding: "0 12px", fontSize: 14, boxSizing: "border-box" }}
+                  />
+                  {(entityOptions.length > 0 || entitySearching) && !createTaskForm.entity_id ? (
+                    <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 125, border: `1px solid ${colors.border}`, borderRadius: 12, background: "#fff", boxShadow: "0 14px 30px rgba(15,23,42,0.12)", overflow: "hidden" }}>
+                      {entitySearching ? (
+                        <div style={{ padding: "10px 12px", color: colors.faint, fontSize: 12 }}>Searching...</div>
+                      ) : entityOptions.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setCreateTaskForm((current) => ({ ...current, entity_id: item.id }));
+                            setEntitySearch(item.subtitle ? `${item.title} · ${item.subtitle}` : item.title);
+                            setEntityOptions([]);
+                          }}
+                          style={{ width: "100%", border: "none", background: "transparent", padding: "10px 12px", textAlign: "left", cursor: "pointer", display: "grid", gap: 2 }}
+                        >
+                          <span style={{ color: colors.text, fontSize: 13, fontWeight: 800 }}>{item.title}</span>
+                          <span style={{ color: colors.faint, fontSize: 11 }}>{item.subtitle || item.meta || item.kind}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </label>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <label style={{ display: "grid", gap: 6, color: colors.sub, fontSize: 12, fontWeight: 800 }}>
+                PRIORITY
+                <select
+                  value={createTaskForm.priority}
+                  onChange={(event) => setCreateTaskForm((current) => ({ ...current, priority: event.target.value as TaskPriority }))}
+                  style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14, background: "#fff" }}
+                >
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 6, color: colors.sub, fontSize: 12, fontWeight: 800 }}>
+                DUE DATE
+                <input
+                  type="date"
+                  value={createTaskForm.due_at}
+                  onChange={(event) => setCreateTaskForm((current) => ({ ...current, due_at: event.target.value }))}
+                  style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14 }}
+                />
+              </label>
+            </div>
+            <label style={{ display: "grid", gap: 6, color: colors.sub, fontSize: 12, fontWeight: 800 }}>
+              DESCRIPTION
+              <textarea
+                value={createTaskForm.description}
+                onChange={(event) => setCreateTaskForm((current) => ({ ...current, description: event.target.value }))}
+                placeholder="Context, desired outcome, and any next-step note."
+                style={{ minHeight: 96, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", resize: "vertical" }}
+              />
+            </label>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" onClick={() => setShowCreateTask(false)} className="crm-button soft">Cancel</button>
+              <button type="button" onClick={() => void createManualTask()} disabled={creatingTask || !createTaskForm.title.trim() || !createTaskForm.entity_id.trim()} className="crm-button primary">
+                {creatingTask ? "Creating..." : "Create task"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { CalendarDays, Check, ChevronDown, Filter, Plus, Search, X } from "lucide-react";
 import { authApi, companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
 import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import { useAuth } from "../lib/AuthContext";
 import type { Company, Contact, Deal, Meeting, User } from "../types";
-import { formatDate } from "../lib/utils";
+import { formatOptionalDate, isValidDateValue } from "../lib/utils";
 
 const MEETING_TYPES = ["discovery", "demo", "poc", "qbr", "other"];
 const PAGE_SIZE = 25;
@@ -21,7 +21,7 @@ function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {
 function meetingTiming(meeting: Meeting): "upcoming" | "overdue" | "completed" | "cancelled" {
   if (meeting.status === "completed") return "completed";
   if (meeting.status === "cancelled") return "cancelled";
-  if (!meeting.scheduled_at) return "upcoming";
+  if (!meeting.scheduled_at || !isValidDateValue(meeting.scheduled_at)) return "upcoming";
   return new Date(meeting.scheduled_at).getTime() < Date.now() ? "overdue" : "upcoming";
 }
 
@@ -29,7 +29,8 @@ function timingLabel(meeting: Meeting): string {
   const timing = meetingTiming(meeting);
   if (timing === "completed") return "Completed";
   if (timing === "cancelled") return "Cancelled";
-  if (!meeting.scheduled_at) return "Unscheduled";
+  if (!meeting.scheduled_at) return "No date set";
+  if (!isValidDateValue(meeting.scheduled_at)) return "Invalid date";
   const diffHours = Math.round((new Date(meeting.scheduled_at).getTime() - Date.now()) / 3_600_000);
   if (timing === "overdue") {
     const overdueHours = Math.abs(diffHours);
@@ -310,6 +311,7 @@ function MultiSelectDropdown({
 
 export default function Meetings() {
   const { isAdmin, user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -357,6 +359,16 @@ export default function Meetings() {
     if (!user?.id) return;
     setAssigneeFilter((current) => (current.length === 0 ? [user.id] : current));
   }, [user?.id]);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "meeting") return;
+    setShowModal(true);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("new");
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const loadData = async () => {
     setLoading(true);
@@ -726,6 +738,15 @@ export default function Meetings() {
                   const timingToneStyle = timingTone(m);
                   const hasBrief = Boolean(m.research_data || m.pre_brief || m.demo_strategy);
                   const prepBlocked = !m.company_id || !m.deal_id;
+                  const needsReviewReason =
+                    !m.company_id && !m.deal_id
+                      ? "Missing company and deal link. Open the meeting and use Re-link before trusting prep."
+                      : !m.company_id
+                        ? "Missing company link. Open the meeting and use Re-link."
+                        : !m.deal_id
+                          ? "Missing deal link. Open the meeting and use Re-link."
+                          : "";
+                  const invalidSchedule = Boolean(m.scheduled_at && !isValidDateValue(m.scheduled_at));
                   return (
                   <tr key={m.id} style={{ borderLeft: meetingTiming(m) === "overdue" ? "3px solid #dc2626" : "3px solid transparent" }}>
                     <td style={styles.td}>
@@ -759,6 +780,7 @@ export default function Meetings() {
                           )}
                           {!m.is_internal && (!m.company_id || !m.deal_id) && (
                             <span
+                              title={needsReviewReason}
                               style={{
                                 display: "inline-flex",
                                 alignItems: "center",
@@ -809,7 +831,14 @@ export default function Meetings() {
                     <td style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
                     <td style={styles.td}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <span>{formatDate(m.scheduled_at)}</span>
+                        <span style={{ color: invalidSchedule ? "#b25a1d" : undefined, fontWeight: invalidSchedule ? 800 : undefined }}>
+                          {formatOptionalDate(m.scheduled_at)}
+                        </span>
+                        {invalidSchedule && (
+                          <span style={{ color: "#b25a1d", fontSize: 11, lineHeight: 1.35 }}>
+                            Imported calendar value is not a valid date. Open and fix before prep.
+                          </span>
+                        )}
                         <TldvRecordingLink
                           meetingId={m.id}
                           externalSource={m.external_source}
@@ -825,6 +854,7 @@ export default function Meetings() {
                     <td style={styles.td}>
                       <div style={{ display: "grid", gap: 6, alignItems: "start" }}>
                         <span
+                          title={prepBlocked ? needsReviewReason : "Prep is ready to open."}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",

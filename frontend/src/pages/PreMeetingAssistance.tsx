@@ -33,7 +33,7 @@ import {
 import { activitiesApi, authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Deal, Meeting, User as UserType } from "../types/index";
-import { formatDate } from "../lib/utils";
+import { formatOptionalDate, isValidDateValue } from "../lib/utils";
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 
 const colors = {
@@ -64,6 +64,7 @@ function isDeveloperUser(user?: Pick<UserType, "email" | "name"> | null) {
 
 function hoursUntil(dateStr?: string): number | null {
   if (!dateStr) return null;
+  if (!isValidDateValue(dateStr)) return null;
   const diff = new Date(dateStr).getTime() - Date.now();
   return Math.round(diff / (1000 * 60 * 60));
 }
@@ -449,6 +450,7 @@ function MeetingIntelCard({
               )}
               {needsReview && (
                 <span
+                  title="Beacon could not confidently link this meeting to a company and deal. Use Re-link before relying on the prep."
                   style={{
                     fontSize: 10,
                     fontWeight: 800,
@@ -485,7 +487,10 @@ function MeetingIntelCard({
         {/* Scheduled time */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.faint, fontSize: 12 }}>
           <CalendarDays size={13} />
-          <span>{formatDate(meeting.scheduled_at)}</span>
+          <span>{formatOptionalDate(meeting.scheduled_at)}</span>
+          {meeting.scheduled_at && !isValidDateValue(meeting.scheduled_at) && (
+            <span style={{ color: colors.orange, fontWeight: 700 }}>Fix date before prep</span>
+          )}
         </div>
 
         {needsReview && (
@@ -1513,8 +1518,9 @@ export default function PreMeetingAssistance() {
       if (statusFilter.length > 0) {
         // Keep the client-side check aligned with the API's virtual status
         // slices for any locally refreshed rows.
-        const isOverdue = m.status === "scheduled" && m.scheduled_at && new Date(m.scheduled_at).getTime() < now;
-        const isUpcoming = m.status === "scheduled" && (!m.scheduled_at || new Date(m.scheduled_at).getTime() >= now);
+        const scheduledTime = isValidDateValue(m.scheduled_at) ? new Date(m.scheduled_at as string).getTime() : null;
+        const isOverdue = m.status === "scheduled" && scheduledTime !== null && scheduledTime < now;
+        const isUpcoming = m.status === "scheduled" && (scheduledTime === null || scheduledTime >= now);
         const matches = statusFilter.some((s) =>
           s === "overdue" ? isOverdue : s === "scheduled" ? isUpcoming : s === m.status
         );
@@ -1541,8 +1547,8 @@ export default function PreMeetingAssistance() {
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
-      const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+      const ta = isValidDateValue(a.scheduled_at) ? new Date(a.scheduled_at as string).getTime() : 0;
+      const tb = isValidDateValue(b.scheduled_at) ? new Date(b.scheduled_at as string).getTime() : 0;
       return statusFilter.length === 1 && statusFilter[0] === "completed" ? tb - ta : ta - tb;
     });
   }, [filtered, statusFilter]);
@@ -1566,7 +1572,7 @@ export default function PreMeetingAssistance() {
           {(() => {
             const now = Date.now();
             const next = sorted.find(
-              (m) => m.scheduled_at && new Date(m.scheduled_at).getTime() >= now && m.status !== "cancelled",
+              (m) => m.scheduled_at && isValidDateValue(m.scheduled_at) && new Date(m.scheduled_at).getTime() >= now && m.status !== "cancelled",
             );
             if (!next) {
               return (
@@ -1628,7 +1634,7 @@ export default function PreMeetingAssistance() {
                     {next.title}
                   </div>
                   <div style={{ fontSize: 11.5, color: colors.sub, marginTop: 2, display: "flex", gap: 8, alignItems: "center" }}>
-                    {next.scheduled_at && <span>{new Date(next.scheduled_at).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>}
+                    {next.scheduled_at && <span>{formatOptionalDate(next.scheduled_at)}</span>}
                     <span style={{ width: 3, height: 3, borderRadius: 999, background: colors.faint }} />
                     {hasIntel
                       ? <span style={{ color: colors.green, fontWeight: 700 }}>Brief ready</span>

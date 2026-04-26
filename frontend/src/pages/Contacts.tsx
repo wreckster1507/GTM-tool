@@ -11,7 +11,7 @@ import {
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
 } from "lucide-react";
-import { avatarColor, getInitials } from "../lib/utils";
+import { avatarColor, formatDomain, getInitials } from "../lib/utils";
 import {
   getProspectTrackingScore,
   getProspectTrackingTone,
@@ -417,6 +417,17 @@ export default function Contacts() {
   };
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "prospect") return;
+    setTab("contacts");
+    setShowAddProspect(true);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("new");
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const loadContacts = () => {
     setLoading(true);
@@ -931,6 +942,18 @@ export default function Contacts() {
     }
   };
 
+  const callsLoggedCount = contacts.filter((c) => c.call_status && c.call_status !== "none").length;
+  const emailsOpenedCount = contacts.filter((c) => (c.email_open_count ?? 0) > 0).length;
+  const linkedinActiveCount = contacts.filter((c) => c.linkedin_status && c.linkedin_status !== "none").length;
+  const meetingsBookedCount = contacts.filter((c) => c.sequence_status === "meeting_booked").length;
+  const hasNoSyncedEngagement =
+    tab === "contacts" &&
+    contactsTotal > 0 &&
+    callsLoggedCount === 0 &&
+    emailsOpenedCount === 0 &&
+    linkedinActiveCount === 0 &&
+    meetingsBookedCount === 0;
+
   return (
     <>
       <div className="crm-page contacts-page space-y-6">
@@ -968,7 +991,7 @@ export default function Contacts() {
               </div>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#1e3a8a", lineHeight: 1 }}>
-                  {contacts.filter(c => c.call_status && c.call_status !== "none").length}
+                  {callsLoggedCount}
                 </div>
                 <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2, fontWeight: 600 }}>Calls Logged</div>
               </div>
@@ -985,7 +1008,7 @@ export default function Contacts() {
               </div>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", lineHeight: 1 }}>
-                  {contacts.filter(c => (c.email_open_count ?? 0) > 0).length}
+                  {emailsOpenedCount}
                 </div>
                 <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2, fontWeight: 600 }}>Emails Opened</div>
               </div>
@@ -1002,7 +1025,7 @@ export default function Contacts() {
               </div>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#4c1d95", lineHeight: 1 }}>
-                  {contacts.filter(c => c.linkedin_status && c.linkedin_status !== "none").length}
+                  {linkedinActiveCount}
                 </div>
                 <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2, fontWeight: 600 }}>LinkedIn Active</div>
               </div>
@@ -1019,11 +1042,16 @@ export default function Contacts() {
               </div>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#78350f", lineHeight: 1 }}>
-                  {contacts.filter(c => c.sequence_status === "meeting_booked").length}
+                  {meetingsBookedCount}
                 </div>
                 <div style={{ fontSize: 11, color: "#d97706", marginTop: 2, fontWeight: 600 }}>Meetings Booked</div>
               </div>
             </div>
+            {hasNoSyncedEngagement && (
+              <div style={{ flexBasis: "100%", border: "1px solid #f5ddaa", background: "#fff8e8", color: "#6f5a2d", borderRadius: 12, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.55 }}>
+                Engagement metrics are waiting for synced or logged activity. {aircallEnabled ? "Calls, email opens, LinkedIn touches, and booked meetings will populate as reps log activity or integrations sync." : "AirCall is currently off, so call counts will stay empty until it is enabled or calls are logged manually."}
+              </div>
+            )}
           </div>
 
           {/* Row 2 — contextual action bar */}
@@ -1145,6 +1173,7 @@ export default function Contacts() {
                 <button
                   type="button"
                   onClick={toggleAircall}
+                  title={aircallEnabled ? "AirCall calling is enabled for this browser." : "AirCall is disconnected/off for this browser. Click to enable when configured."}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     height: 38, padding: "0 14px", borderRadius: 10,
@@ -1156,7 +1185,7 @@ export default function Contacts() {
                   }}
                 >
                   <PhoneCall size={14} />
-                  {aircallEnabled ? "AirCall On" : "AirCall Off"}
+                  {aircallEnabled ? "AirCall: Connected" : "AirCall: Disconnected"}
                 </button>
                 <button
                   type="button"
@@ -2189,7 +2218,7 @@ export default function Contacts() {
                       <div>
                         <div style={{ color: "#1d2b3c", fontWeight: 700, fontSize: 13 }}>{company.name}</div>
                         <div style={{ color: "#7d6d4f", fontSize: 12, marginTop: 2 }}>
-                          {company.domain || "No domain provided"} · {company.contacts_count} prospect{company.contacts_count === 1 ? "" : "s"}
+                          {company.domain ? formatDomain(company.domain) : "No domain provided"} · {company.contacts_count} prospect{company.contacts_count === 1 ? "" : "s"}
                         </div>
                       </div>
                       <button

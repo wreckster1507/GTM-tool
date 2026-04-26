@@ -70,6 +70,17 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+async def _ensure_deal_contact(session: AsyncSession, deal_id: UUID, contact_id: UUID) -> None:
+    existing = await session.execute(
+        select(DealContact).where(
+            DealContact.deal_id == deal_id,
+            DealContact.contact_id == contact_id,
+        )
+    )
+    if not existing.scalar_one_or_none():
+        session.add(DealContact(deal_id=deal_id, contact_id=contact_id))
+
+
 def _clean_text(value: str | None) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -874,6 +885,11 @@ async def sync_tldv_meeting(
     meeting.updated_at = datetime.utcnow()
     session.add(meeting)
     await session.flush()
+
+    if deal and matched_contacts:
+        for contact in matched_contacts:
+            if contact.id:
+                await _ensure_deal_contact(session, deal.id, contact.id)
 
     if created:
         stats.meetings_created += 1

@@ -11,7 +11,7 @@ import {
 import { companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
 import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
-import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
+import { formatCurrency, formatDate, formatOptionalDate, avatarColor, getInitials, isValidDateValue } from "../lib/utils";
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
@@ -550,6 +550,21 @@ export default function MeetingDetail() {
     setAttendeeSaving(true);
     try {
       await meetingsApi.update(id, { attendees: attendeeList } as any);
+      if (meeting?.deal_id) {
+        const existingDealContacts = await dealsApi.getContacts(meeting.deal_id).catch(() => []);
+        const existingIds = new Set(existingDealContacts.map((contact) => contact.contact_id));
+        const contactsToLink = attendeeList.filter((attendee) => attendee.contact_id && !existingIds.has(attendee.contact_id));
+        if (contactsToLink.length > 0) {
+          await Promise.all(
+            contactsToLink.map((attendee) => dealsApi.addContact(meeting.deal_id!, attendee.contact_id, attendee.role || "attendee")),
+          );
+          setStatusMsg(`Saved attendees and linked ${contactsToLink.length} to the deal.`);
+        } else {
+          setStatusMsg("Attendees saved.");
+        }
+      } else {
+        setStatusMsg("Attendees saved. Link a deal to auto-add them as deal contacts.");
+      }
       await loadAll();
       setEditingAttendees(false);
     } finally {
@@ -650,7 +665,11 @@ export default function MeetingDetail() {
                   </a>
                 </>
               ) : <span className="text-[#f59e0b] font-semibold">No company linked</span>}
-              {meeting.scheduled_at && <span>· {formatDate(meeting.scheduled_at)}</span>}
+              {meeting.scheduled_at && (
+                <span style={{ color: isValidDateValue(meeting.scheduled_at) ? undefined : "#b25a1d", fontWeight: isValidDateValue(meeting.scheduled_at) ? undefined : 700 }}>
+                  · {formatOptionalDate(meeting.scheduled_at)}
+                </span>
+              )}
               {meeting.external_source?.toLowerCase() === "tldv" && (
                 <>
                   ·

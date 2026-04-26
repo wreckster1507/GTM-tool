@@ -40,6 +40,15 @@ def _contains(text_value: Optional[str], needle: str) -> bool:
     return bool(text_value and needle.lower() in text_value.lower())
 
 
+def _display_domain(value: Optional[str]) -> Optional[str]:
+    domain = (value or "").strip()
+    if not domain:
+        return None
+    if domain.lower().endswith(".unknown") or domain.isdigit():
+        return None
+    return domain
+
+
 @router.get("/global", response_model=GlobalSearchResponse)
 async def global_search(
     session: DBSession,
@@ -190,7 +199,7 @@ async def global_search(
             id=str(company.id),
             kind="company",
             title=company.name,
-            subtitle=company.domain,
+            subtitle=_display_domain(company.domain) or company.industry or "Domain not found",
             meta="Account",
             link=f"/account-sourcing/{company.id}",
         )

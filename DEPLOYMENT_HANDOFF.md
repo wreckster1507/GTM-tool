@@ -365,3 +365,106 @@ If another AI needs to continue deployment or debugging work:
    - live worker logs for `google_calendar`
    - whether Google Calendar API returns `403`
    - whether the production Google OAuth client/consent screen actually grants Calendar and Drive access
+
+
+Use this exact flow in PowerShell.
+
+1. Set shared variables.
+
+```powershell
+$TAG="v0.12-$(git rev-parse --short HEAD)"
+$KCFG="C:\\gtm-prototype\\tmp\\beacon-test-kubeconfig.yaml"
+$HELM="$env:LOCALAPPDATA\\Microsoft\\WinGet\\Packages\\Helm.Helm_Microsoft.Winget.Source_8wekyb3d8bbwe\\windows-amd64\\helm.exe"
+$CHART="C:\\Users\\sarthu\\Downloads\\gtm-helm\\gtm-helm\\gtm"
+$STAGING_VALUES="C:\\Users\\sarthu\\Downloads\\gtm-helm\\gtm-helm\\gtm.yaml"
+$PROD_VALUES="C:\\Users\\sarthu\\Downloads\\gtm-helm\\gtm-helm\\gtm-prod.yaml"
+$env:KUBECONFIG=$KCFG
+```
+
+1. Log in to ACR. Skip this if you already did it and it still works.
+
+```powershell
+$pw = '<ACR_PASSWORD_FROM_SECURE_STORE>'
+$pw | docker login beacon.azurecr.io -u codebuild --password-stdin
+```
+
+1. Build and push the backend image from the repo root.
+
+```powershell
+cd C:\\gtm-prototype
+docker buildx build --platform linux/amd64 . -t beacon.azurecr.io/gtm-be:$TAG --push --builder builder
+```
+
+1. Build and push the frontend image from the `frontend` folder.
+Use empty `VITE_API_URL` so the same frontend image works in both staging and prod.
+
+```powershell
+cd C:\\gtm-prototype\\frontend
+docker buildx build --platform linux/amd64 . -t beacon.azurecr.io/gtm-fe:$TAG --build-arg VITE_API_URL= --push --builder builder
+```
+
+1. Deploy to staging.
+
+```powershell
+& $HELM upgrade --install gtm $CHART `
+  -n gtm `
+  --create-namespace `
+  -f $STAGING_VALUES `
+  --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG `
+  --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG `
+  --kubeconfig $KCFG
+```
+
+1. Wait for the staging rollout.
+
+```powershell
+kubectl --kubeconfig $KCFG -n gtm rollout status deploy/gtm-backend-deployment
+kubectl --kubeconfig $KCFG -n gtm rollout status deploy/gtm-frontend-deployment
+kubectl --kubeconfig $KCFG -n gtm rollout status deploy/gtm-worker-deployment
+kubectl --kubeconfig $KCFG -n gtm rollout status deploy/gtm-beat-deployment
+kubectl --kubeconfig $KCFG -n gtm get pods
+```
+
+1. Smoke test staging.
+
+```powershell
+curl.exe -I <https://gtm.staging2.beacon.li/>
+curl.exe -i <https://gtm.staging2.beacon.li/api/v1/auth/google/login>
+```
+
+1. If staging looks good in browser and API checks pass, deploy the exact same tag to production.
+
+```powershell
+& $HELM upgrade --install gtm $CHART `
+  -n gtm-prod `
+  --create-namespace `
+  -f $PROD_VALUES `
+  --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG `
+  --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG `
+  --kubeconfig $KCFG
+```
+
+1. Wait for the production rollout.
+
+```powershell
+kubectl --kubeconfig $KCFG -n gtm-prod rollout status deploy/gtm-backend-deployment
+kubectl --kubeconfig $KCFG -n gtm-prod rollout status deploy/gtm-frontend-deployment
+kubectl --kubeconfig $KCFG -n gtm-prod rollout status deploy/gtm-worker-deployment
+kubectl --kubeconfig $KCFG -n gtm-prod rollout status deploy/gtm-beat-deployment
+kubectl --kubeconfig $KCFG -n gtm-prod get pods
+```
+
+1. Smoke test production.
+
+```powershell
+curl.exe -I <https://gtm.beacon.li/>
+curl.exe -i <https://gtm.beacon.li/api/v1/auth/google/login>
+```
+
+A couple of important rules while doing this:
+
+- Run backend build from `C:\\gtm-prototype`, not `frontend`.
+- Run frontend build from `C:\\gtm-prototype\\frontend`.
+- Do not deploy prod with a different tag than the one you validated in staging.
+
+If you want, I can also turn this into a single reusable `deploy-staging.ps1` and `deploy-prod.ps1` pair for you.

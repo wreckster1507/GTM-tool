@@ -45,6 +45,21 @@ import {
   ts,
 } from "./accountSourcingShared";
 
+type AccountSortKey = "recent" | "icp_desc" | "priority_desc" | "enriched_first" | "unenriched_first" | "name_asc";
+
+const ACCOUNT_SORT_OPTIONS: { value: AccountSortKey; label: string }[] = [
+  { value: "recent", label: "Newest first" },
+  { value: "icp_desc", label: "ICP score high to low" },
+  { value: "priority_desc", label: "Priority high to low" },
+  { value: "enriched_first", label: "Enriched first" },
+  { value: "unenriched_first", label: "Needs enrichment first" },
+  { value: "name_asc", label: "Company A-Z" },
+];
+
+function parseAccountSort(value: string | null): AccountSortKey {
+  return ACCOUNT_SORT_OPTIONS.some((option) => option.value === value) ? (value as AccountSortKey) : "recent";
+}
+
 function SummaryCard({
   icon,
   label,
@@ -305,6 +320,7 @@ export default function AccountSourcing() {
   const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
   const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
   const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
+  const [sortBy, setSortBy] = useState<AccountSortKey>(() => parseAccountSort(searchParams.get("sort")));
   const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
   const [companyTotal, setCompanyTotal] = useState(0);
   const [companyPages, setCompanyPages] = useState(1);
@@ -392,10 +408,11 @@ export default function AccountSourcing() {
       tierFilter.length ? next.set("tier", tierFilter.join(",")) : next.delete("tier");
       dispositionFilter.length ? next.set("disp", dispositionFilter.join(",")) : next.delete("disp");
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
+      sortBy !== "recent" ? next.set("sort", sortBy) : next.delete("sort");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [laneFilter, dispositionFilter, ownerScope, page, search, setSearchParams, tierFilter]);
+  }, [laneFilter, dispositionFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -426,6 +443,29 @@ export default function AccountSourcing() {
       setResettingScope("");
     }
   }, [load]);
+
+  const sortedCompanies = useMemo(() => {
+    const withIndex = companies.map((company, index) => ({ company, index }));
+    const timestamp = (value?: string | null) => {
+      const time = value ? new Date(value).getTime() : 0;
+      return Number.isNaN(time) ? 0 : time;
+    };
+    withIndex.sort((a, b) => {
+      if (sortBy === "name_asc") return a.company.name.localeCompare(b.company.name) || a.index - b.index;
+      if (sortBy === "icp_desc") return (b.company.icp_score ?? 0) - (a.company.icp_score ?? 0) || a.index - b.index;
+      if (sortBy === "priority_desc") {
+        return getAccountPrioritySnapshot(b.company).priorityScore - getAccountPrioritySnapshot(a.company).priorityScore || a.index - b.index;
+      }
+      if (sortBy === "enriched_first") {
+        return Number(Boolean(b.company.enriched_at)) - Number(Boolean(a.company.enriched_at)) || a.index - b.index;
+      }
+      if (sortBy === "unenriched_first") {
+        return Number(!a.company.enriched_at) - Number(!b.company.enriched_at) || a.index - b.index;
+      }
+      return timestamp(b.company.created_at) - timestamp(a.company.created_at) || a.index - b.index;
+    });
+    return withIndex.map((item) => item.company);
+  }, [companies, sortBy]);
 
   const hasFilters = !!(search || ownerScope === "mine" || tierFilter.length || dispositionFilter.length || laneFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
@@ -1228,6 +1268,27 @@ export default function AccountSourcing() {
                 allLabel="All lanes"
                 minWidth={170}
               />
+              <select
+                value={sortBy}
+                onChange={(event) => setSortBy(event.target.value as AccountSortKey)}
+                title="Sort the currently visible account page"
+                style={{
+                  height: 38,
+                  minWidth: 190,
+                  borderRadius: 10,
+                  border: `1px solid ${colors.border}`,
+                  background: colors.card,
+                  color: colors.text,
+                  padding: "0 12px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  outline: "none",
+                }}
+              >
+                {ACCOUNT_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
             </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700 }}>
@@ -1276,7 +1337,7 @@ export default function AccountSourcing() {
           </div>
         ) : (
           <div style={{ display: "grid", gap: 14 }}>
-            {companies.map((c) => (
+            {sortedCompanies.map((c) => (
               <CompanyCard key={c.id} company={c} onAssigned={() => load()} />
             ))}
             <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

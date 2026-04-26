@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Outlet, useLocation } from "react-router-dom";
-import { Search, ChevronDown, LogOut, Shield, User } from "lucide-react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Briefcase, CalendarDays, CheckSquare, ChevronDown, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
 import Sidebar from "./Sidebar";
 import GlobalSearchModal from "./GlobalSearchModal";
 import { useAuth } from "../../lib/AuthContext";
@@ -21,8 +21,10 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
 
 export default function Layout() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { user, logout, isAdmin } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showNewMenu, setShowNewMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const matchedMeta = Object.entries(PAGE_META).find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
@@ -52,6 +54,11 @@ export default function Layout() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  const handleNewAction = (path: string) => {
+    setShowNewMenu(false);
+    navigate(path);
+  };
+
   return (
     <div className={`crm-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <GlobalSearchModal open={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} />
@@ -65,6 +72,89 @@ export default function Layout() {
             </div>
           </div>
           <div className="crm-top-actions">
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNewMenu((value) => !value);
+                  setShowUserMenu(false);
+                }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  height: 44,
+                  padding: "0 14px",
+                  borderRadius: 14,
+                  border: "1px solid #ffcab8",
+                  background: "linear-gradient(135deg, #ff7a45 0%, #ff5d2b 100%)",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  boxShadow: "0 14px 28px rgba(255,107,53,0.18)",
+                }}
+              >
+                <Plus size={15} />
+                New
+                <ChevronDown size={13} />
+              </button>
+              {showNewMenu && (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "calc(100% + 6px)",
+                    width: 230,
+                    background: "#ffffff",
+                    border: "1px solid #dde6f0",
+                    borderRadius: 16,
+                    padding: 8,
+                    zIndex: 105,
+                    boxShadow: "0 18px 40px rgba(15,23,42,0.14)",
+                  }}
+                >
+                  {[
+                    { label: "Deal", hint: "Add a pipeline opportunity", path: "/pipeline?new=deal", icon: Briefcase },
+                    { label: "Prospect", hint: "Create a person to work", path: "/prospecting?new=prospect", icon: UserPlus },
+                    { label: "Meeting", hint: "Log or schedule a call", path: "/meetings?new=meeting", icon: CalendarDays },
+                    { label: "Task", hint: "Assign a follow-up", path: "/tasks?new=task", icon: CheckSquare },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.path}
+                        type="button"
+                        onClick={() => handleNewAction(item.path)}
+                        style={{
+                          width: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 11px",
+                          border: "none",
+                          borderRadius: 12,
+                          background: "transparent",
+                          color: "#203244",
+                          textAlign: "left",
+                          cursor: "pointer",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#f6f9fd")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <span style={{ width: 28, height: 28, borderRadius: 10, background: "#fff1ea", color: "#ff6b35", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                          <Icon size={14} />
+                        </span>
+                        <span style={{ display: "grid", gap: 2 }}>
+                          <span style={{ fontSize: 13, fontWeight: 800 }}>{item.label}</span>
+                          <span style={{ fontSize: 11, color: "#7b8ca2" }}>{item.hint}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <button type="button" className="crm-search-shell" onClick={() => setShowGlobalSearch(true)} style={{ cursor: "pointer" }}>
               <div className="relative">
                 <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8f98bd]" />

@@ -32,7 +32,10 @@ class MeetingBase(SQLModel):
         if v is None:
             return None
         if isinstance(v, str):
-            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            try:
+                v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("scheduled_at must be a valid ISO datetime, not free text") from exc
         if isinstance(v, datetime) and v.tzinfo is not None:
             v = v.astimezone(timezone.utc).replace(tzinfo=None)
         return v

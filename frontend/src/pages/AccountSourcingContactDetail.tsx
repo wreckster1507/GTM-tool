@@ -26,7 +26,7 @@ import {
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
-import { avatarColor, formatDate, getAccountPrioritySnapshot, getInitials } from "../lib/utils";
+import { avatarColor, formatDate, formatDomain, getAccountPrioritySnapshot, getInitials, isPlaceholderDomain } from "../lib/utils";
 import type { Activity, Company, Contact, Deal } from "../types";
 import { MessageSquare } from "lucide-react";
 import {
@@ -816,7 +816,9 @@ export default function AccountSourcingContactDetail() {
                       </div>
                     ) : (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <span>{company.domain || <span style={{ color: colors.faint, fontStyle: "italic" }}>No domain set</span>}</span>
+                        <span style={{ color: isPlaceholderDomain(company.domain) ? colors.faint : undefined, fontStyle: isPlaceholderDomain(company.domain) ? "italic" : undefined }}>
+                          {company.domain ? formatDomain(company.domain) : "No domain set"}
+                        </span>
                         <button type="button" onClick={() => { setDomainInput(company.domain || ""); setEditingDomain(true); }}
                           style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.primary, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                           Edit

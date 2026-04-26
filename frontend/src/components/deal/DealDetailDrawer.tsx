@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
@@ -102,6 +102,23 @@ function relativeTime(timestamp?: string): string {
   if (ageDays < 1) return "today";
   if (ageDays < 2) return "yesterday";
   return `${Math.floor(ageDays)}d ago`;
+}
+
+function formatEditableCurrency(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return "";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value));
+}
+
+function parseCurrencyInput(value: string): number | undefined {
+  const normalized = value.replace(/[$,\s]/g, "");
+  if (!normalized) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 type EngagementSignal = NonNullable<Deal["seller_engagement_signal"]>;
@@ -305,10 +322,17 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   const [comment, setComment] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
   const [sharedInbox, setSharedInbox] = useState("zippy@beacon.li");
+  const [sharedEmailSyncConnected, setSharedEmailSyncConnected] = useState<boolean | null>(null);
+  const [emailDraftTo, setEmailDraftTo] = useState("");
+  const [emailDraftSubject, setEmailDraftSubject] = useState(`Following up on ${deal.name}`);
+  const [emailDraftBody, setEmailDraftBody] = useState("");
+  const [emailDraftCopied, setEmailDraftCopied] = useState(false);
 
   // Inline editing states
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(deal.name);
+  const [amountInput, setAmountInput] = useState(formatEditableCurrency(deal.value));
+  const [amountFocused, setAmountFocused] = useState(false);
   const [showStageMenu, setShowStageMenu] = useState(false);
 
   // Link contact
@@ -365,13 +389,26 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
   useEffect(() => {
     settingsApi.getGmailSync().then((data) => {
       if (data.inbox) setSharedInbox(data.inbox);
+      setSharedEmailSyncConnected(Boolean(data.configured));
     }).catch(() => {});
   }, []);
 
   useEffect(() => {
     setActiveTab("overview");
     setComment("");
+    setAmountFocused(false);
+    setAmountInput(formatEditableCurrency(deal.value));
+    setEmailDraftSubject(`Following up on ${deal.name}`);
+    setEmailDraftBody("");
+    setEmailDraftTo("");
+    setEmailDraftCopied(false);
   }, [deal.id]);
+
+  useEffect(() => {
+    if (!amountFocused) {
+      setAmountInput(formatEditableCurrency(deal.value));
+    }
+  }, [deal.value, amountFocused]);
 
   useEffect(() => {
     if (!companyDropdownOpen) return;
@@ -493,6 +530,15 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
     setDealContacts((prev) => prev.filter((dc) => dc.contact_id !== contactId));
   };
 
+  const handleLinkAllCompanyContacts = async (contactsToLink: Contact[]) => {
+    if (!contactsToLink.length) return;
+    const linked = await Promise.all(
+      contactsToLink.map((contact) => dealsApi.addContact(deal.id, contact.id, contact.persona ?? undefined)),
+    );
+    setDealContacts((prev) => [...linked, ...prev]);
+    dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
+  };
+
   // ── Tags ──────────────────────────────────────────────────────────────────
 
   const handleAddTag = async () => {
@@ -517,6 +563,38 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
         return `${local}+${deal.email_cc_alias}@${domain}`;
       })()
     : undefined;
+  const canUseSharedEmailSync = sharedEmailSyncConnected === true && Boolean(emailSyncAddress);
+  const emailRecipients = useMemo(
+    () => dealContacts.filter((contact) => Boolean(contact.email)).map((contact) => ({
+      email: contact.email as string,
+      label: `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim() || (contact.email as string),
+    })),
+    [dealContacts],
+  );
+
+  const applyEmailTemplate = (kind: "followup" | "recap" | "pricing") => {
+    const companyName = selectedCompanyName && selectedCompanyName !== "None" ? selectedCompanyName : deal.company_name || "your team";
+    if (kind === "pricing") {
+      setEmailDraftSubject(`Pricing next steps for ${companyName}`);
+      setEmailDraftBody(`Hi,\n\nSharing the pricing and next-step context for ${companyName}.\n\nRecommended next step:\n\nOpen questions:\n\nBest,\n${users.find((u) => u.id === deal.assigned_to_id)?.name ?? ""}`.trim());
+      return;
+    }
+    if (kind === "recap") {
+      setEmailDraftSubject(`Recap and next steps: ${companyName}`);
+      setEmailDraftBody(`Hi,\n\nQuick recap from our discussion:\n\n- Current priority:\n- Beacon fit:\n- Agreed next step:\n\nPlease confirm if I captured this correctly.\n\nBest,\n${users.find((u) => u.id === deal.assigned_to_id)?.name ?? ""}`.trim());
+      return;
+    }
+    setEmailDraftSubject(`Following up on ${companyName}`);
+    setEmailDraftBody(`Hi,\n\nFollowing up on our conversation around ${companyName}. The next best step from our side is:\n\n\nDoes this still work for you?\n\nBest,\n${users.find((u) => u.id === deal.assigned_to_id)?.name ?? ""}`.trim());
+  };
+
+  const copyEmailDraft = async () => {
+    const ccLine = canUseSharedEmailSync && emailSyncAddress ? `CC: ${emailSyncAddress}\n` : "";
+    const draft = `To: ${emailDraftTo}\n${ccLine}Subject: ${emailDraftSubject}\n\n${emailDraftBody}`;
+    await navigator.clipboard?.writeText(draft);
+    setEmailDraftCopied(true);
+    window.setTimeout(() => setEmailDraftCopied(false), 1800);
+  };
 
   return (
     <>
@@ -803,11 +881,22 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
             {/* Amount */}
             <FieldRow label="Amount" icon={<span style={{ fontSize: 13, fontWeight: 700 }}>$</span>}>
               <input
-                type="number"
-                defaultValue={deal.value ?? ""}
-                onBlur={(e) => patchDeal({ value: e.target.value ? Number(e.target.value) : undefined } as Partial<Deal>)}
+                type="text"
+                inputMode="decimal"
+                value={amountInput}
+                onFocus={() => {
+                  setAmountFocused(true);
+                  setAmountInput(deal.value == null ? "" : String(Number(deal.value)));
+                }}
+                onChange={(e) => setAmountInput(e.target.value)}
+                onBlur={(e) => {
+                  setAmountFocused(false);
+                  const nextValue = parseCurrencyInput(e.target.value);
+                  setAmountInput(formatEditableCurrency(nextValue));
+                  patchDeal({ value: nextValue } as Partial<Deal>);
+                }}
                 style={{ ...fieldInputStyle }}
-                placeholder="0"
+                placeholder="$0.00"
               />
             </FieldRow>
 
@@ -842,6 +931,7 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 style={{ ...fieldInputStyle }}
               >
                 <option value="">Unassigned</option>
+                <option value="India">India</option>
                 <option value="America">America</option>
                 <option value="Rest of the World">Rest of the World</option>
               </select>
@@ -935,11 +1025,11 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 width: "100%",
                 minHeight: 42,
                 borderRadius: 10,
-                border: "1px solid #dbe6f2",
+                border: canUseSharedEmailSync ? "1px solid #dbe6f2" : "1px solid #ffd8b4",
                 padding: "10px 12px",
                 fontSize: 13,
-                background: "#f8fbff",
-                color: "#2d4258",
+                background: canUseSharedEmailSync ? "#f8fbff" : "#fff8f1",
+                color: canUseSharedEmailSync ? "#2d4258" : "#9a4f16",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -947,11 +1037,15 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 flexWrap: "wrap",
               }}
             >
-              <span style={{ fontWeight: 700 }}>{emailSyncAddress ?? "Alias unavailable"}</span>
-              {emailSyncAddress ? (
+              <span style={{ fontWeight: 700 }}>
+                {canUseSharedEmailSync ? emailSyncAddress : sharedEmailSyncConnected === false ? "Email sync not connected" : "Checking email sync..."}
+              </span>
+              {canUseSharedEmailSync ? (
                 <button
                   type="button"
-                  onClick={() => navigator.clipboard?.writeText(emailSyncAddress)}
+                  onClick={() => {
+                    if (emailSyncAddress) navigator.clipboard?.writeText(emailSyncAddress);
+                  }}
                   style={{
                     borderRadius: 8,
                     border: "1px solid #c8daf0",
@@ -968,7 +1062,9 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               ) : null}
             </div>
             <div style={{ marginTop: 6, fontSize: 12, color: "#7a96b0", lineHeight: 1.5 }}>
-              Ask reps to CC this exact address on client threads. Beacon uses the text after the <code>+</code> to map the email to this deal before any fallback matching.
+              {canUseSharedEmailSync
+                ? <>Ask reps to CC this exact address on client threads. Beacon uses the text after the <code>+</code> to map the email to this deal before any fallback matching.</>
+                : "Connect the shared Gmail mailbox in Settings before asking reps to CC Beacon. Until then, emails will not be captured from this alias."}
             </div>
           </div>
 
@@ -1177,8 +1273,32 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
               if (unlinked.length === 0) return null;
               return (
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0", marginBottom: 8 }}>
-                    Company Prospects ({unlinked.length})
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0" }}>
+                        Suggested people from this account ({unlinked.length})
+                      </div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+                        Auto-linking suggestion based on the deal company.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleLinkAllCompanyContacts(unlinked)}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        padding: "5px 9px",
+                        borderRadius: 8,
+                        background: "#eef5ff",
+                        color: "#175089",
+                        border: "1px solid #c8daf0",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Link all
+                    </button>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {unlinked.map((c) => {
@@ -1281,6 +1401,17 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 const updated = { ...deal.qualification, meddpicc };
                 await patchDeal({ qualification: updated } as Partial<Deal>);
               }}
+              onUpdateDetail={async (key, detail) => {
+                const existingDetails = deal.qualification?.meddpicc_details ?? {};
+                const updated = {
+                  ...deal.qualification,
+                  meddpicc_details: {
+                    ...existingDetails,
+                    [key]: detail,
+                  },
+                };
+                await patchDeal({ qualification: updated } as Partial<Deal>);
+              }}
             />
           ) : activeTab === "tasks" ? (
             <TaskCenterModal
@@ -1319,6 +1450,77 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                   <Mail size={13} />
                   {loadingEmails ? "Loading…" : "Refresh"}
                 </button>
+              </div>
+
+              <div style={{ border: "1px solid #dde8f4", borderRadius: 14, background: "linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)", padding: 14, display: "grid", gap: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#182042" }}>Compose email</div>
+                    <p style={{ margin: "3px 0 0", fontSize: 12, color: "#7c86a6" }}>
+                      Template-based draft, opened in your mail client. No AI tokens used here.
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => applyEmailTemplate("followup")} className="crm-button soft" style={{ fontSize: 12, padding: "6px 9px" }}>Follow-up</button>
+                    <button type="button" onClick={() => applyEmailTemplate("recap")} className="crm-button soft" style={{ fontSize: 12, padding: "6px 9px" }}>Recap</button>
+                    <button type="button" onClick={() => applyEmailTemplate("pricing")} className="crm-button soft" style={{ fontSize: 12, padding: "6px 9px" }}>Pricing</button>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 10 }}>
+                  <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 800, color: "#6a7894" }}>
+                    TO
+                    <select
+                      value={emailDraftTo}
+                      onChange={(e) => setEmailDraftTo(e.target.value)}
+                      style={{ height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", background: "#fff", color: "#22334d", fontSize: 13 }}
+                    >
+                      <option value="">Select recipient</option>
+                      {emailRecipients.map((recipient) => (
+                        <option key={recipient.email} value={recipient.email}>{recipient.label} · {recipient.email}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 800, color: "#6a7894" }}>
+                    SUBJECT
+                    <input
+                      value={emailDraftSubject}
+                      onChange={(e) => setEmailDraftSubject(e.target.value)}
+                      style={{ height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", color: "#22334d", fontSize: 13 }}
+                    />
+                  </label>
+                </div>
+                <textarea
+                  value={emailDraftBody}
+                  onChange={(e) => setEmailDraftBody(e.target.value)}
+                  placeholder="Pick a template or write the message here..."
+                  style={{ minHeight: 118, borderRadius: 12, border: "1px solid #dbe6f2", padding: "10px 12px", fontSize: 13, fontFamily: "inherit", lineHeight: 1.55, resize: "vertical" }}
+                />
+                {!canUseSharedEmailSync ? (
+                  <div style={{ borderRadius: 10, border: "1px solid #ffd8b4", background: "#fff8f1", color: "#9a4f16", padding: "8px 10px", fontSize: 12 }}>
+                    Shared email sync is not connected, so Beacon will not auto-capture this draft through the CC alias yet.
+                  </div>
+                ) : (
+                  <div style={{ borderRadius: 10, border: "1px solid #cfe6d8", background: "#f1fbf5", color: "#1f7a4d", padding: "8px 10px", fontSize: 12 }}>
+                    CC alias will be included: <strong>{emailSyncAddress}</strong>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => void copyEmailDraft()} disabled={!emailDraftSubject.trim() && !emailDraftBody.trim()} className="crm-button soft">
+                    {emailDraftCopied ? "Copied" : "Copy draft"}
+                  </button>
+                  <a
+                    className="crm-button primary"
+                    href={`mailto:${encodeURIComponent(emailDraftTo)}?${new URLSearchParams({
+                      subject: emailDraftSubject,
+                      body: emailDraftBody,
+                      ...(canUseSharedEmailSync && emailSyncAddress ? { cc: emailSyncAddress } : {}),
+                    }).toString()}`}
+                    style={{ pointerEvents: emailDraftTo && (emailDraftSubject || emailDraftBody) ? "auto" : "none", opacity: emailDraftTo && (emailDraftSubject || emailDraftBody) ? 1 : 0.55, textDecoration: "none" }}
+                  >
+                    <Mail size={13} />
+                    Open composer
+                  </a>
+                </div>
               </div>
 
               {loadingEmails ? (
@@ -1479,11 +1681,13 @@ function MeddpiccPanel({
   autoFilling,
   onAutoFill,
   onUpdate,
+  onUpdateDetail,
 }: {
   qualification?: DealQualification;
   autoFilling: boolean;
   onAutoFill: () => Promise<void>;
   onUpdate: (meddpicc: Record<string, number>) => Promise<void>;
+  onUpdateDetail: (key: string, detail: MeddpiccFieldDetail) => Promise<void>;
 }) {
   const meddpicc = (qualification?.meddpicc ?? {}) as Record<string, number>;
   const meddpiccDetails = qualification?.meddpicc_details ?? {};
@@ -1493,6 +1697,15 @@ function MeddpiccPanel({
 
   const handleChange = (key: string, value: number) => {
     onUpdate({ ...meddpicc, [key]: value });
+  };
+
+  const handleNotesSave = (key: string, detail: MeddpiccFieldDetail | undefined, notes: string) => {
+    const trimmed = notes.trim();
+    void onUpdateDetail(key, {
+      ...(detail ?? {}),
+      notes: trimmed || undefined,
+      updated_at: new Date().toISOString(),
+    });
   };
 
   const total = MEDDPICC_DIMENSIONS.reduce((sum, d) => sum + (meddpicc[d.key] ?? 0), 0);
@@ -1710,6 +1923,31 @@ function MeddpiccPanel({
                   {label}
                 </button>
               ))}
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 800, color: "#6b7f96", marginBottom: 6 }}>
+                Rep notes and evidence
+              </label>
+              <textarea
+                key={`${dim.key}-${detail?.updated_at ?? "empty"}`}
+                defaultValue={detail?.notes ?? ""}
+                onBlur={(event) => handleNotesSave(dim.key, detail, event.target.value)}
+                placeholder={`Add notes for ${dim.label}: who/what did we identify, and what evidence supports it?`}
+                rows={3}
+                style={{
+                  width: "100%",
+                  borderRadius: 10,
+                  border: "1px solid #dbe6f2",
+                  background: "#fbfdff",
+                  color: "#2d4258",
+                  padding: "10px 12px",
+                  fontSize: 12.5,
+                  lineHeight: 1.5,
+                  fontFamily: "inherit",
+                  resize: "vertical",
+                  outline: "none",
+                }}
+              />
             </div>
           </div>
         );

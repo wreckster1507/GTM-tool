@@ -1,4 +1,5 @@
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
@@ -58,6 +59,24 @@ def _validate_status(status: str) -> None:
 def _validate_assigned_role(role: str) -> None:
     if role not in TASK_ASSIGNED_ROLES:
         raise ValidationError(f"assigned_role must be one of: {sorted(TASK_ASSIGNED_ROLES)}")
+
+
+def _normalize_task_title(title: str | None) -> str:
+    cleaned = (title or "").strip()
+    if len(cleaned) < 3:
+        raise ValidationError("Task title must be at least 3 characters.")
+    if re.fullmatch(r"[\d\s.,_-]+", cleaned):
+        raise ValidationError("Task title must describe the work, not just a number.")
+    return cleaned
+
+
+def _display_domain(value: str | None) -> str | None:
+    domain = (value or "").strip()
+    if not domain:
+        return None
+    if domain.lower().endswith(".unknown") or domain.isdigit():
+        return "Domain not found"
+    return domain
 
 
 def _can_delete_task(task: Task, current_user: User) -> bool:
@@ -154,7 +173,7 @@ async def _build_workspace_task_reads(session: DBSession, tasks: list[Task]) -> 
             if not company:
                 continue
             entity_name = company.name
-            entity_subtitle = company.domain
+            entity_subtitle = _display_domain(company.domain)
             entity_link = f"/account-sourcing/{task.entity_id}"
         elif task.entity_type == "contact":
             contact = contact_map.get(task.entity_id)
@@ -343,12 +362,13 @@ async def create_task(payload: TaskCreate, session: DBSession, current_user: Cur
     _validate_priority(payload.priority)
     if payload.assigned_role:
         _validate_assigned_role(payload.assigned_role)
+    title = _normalize_task_title(payload.title)
 
     task = Task(
         entity_type=payload.entity_type,
         entity_id=payload.entity_id,
         task_type="manual",
-        title=payload.title.strip(),
+        title=title,
         description=payload.description.strip() if payload.description else None,
         priority=payload.priority,
         due_at=payload.due_at,
@@ -382,6 +402,8 @@ async def update_task(task_id: UUID, payload: TaskUpdate, session: DBSession, cu
             task.completed_at = datetime.utcnow()
     if "assigned_role" in update_data and update_data["assigned_role"] is not None:
         _validate_assigned_role(update_data["assigned_role"])
+    if "title" in update_data:
+        update_data["title"] = _normalize_task_title(update_data["title"])
     for key, value in update_data.items():
         setattr(task, key, value)
     task.updated_at = datetime.utcnow()

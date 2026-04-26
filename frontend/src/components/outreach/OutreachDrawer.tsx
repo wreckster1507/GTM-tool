@@ -98,6 +98,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
   const [sendingAccount, setSendingAccount] = useState(DEFAULT_SENDING_ACCOUNT);
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState("");
+  const [sequenceApproved, setSequenceApproved] = useState(false);
 
   // Inline editing state
   const [editing, setEditing] = useState(false);
@@ -121,6 +122,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
       setSteps([]);
       setError("");
       setLaunchError("");
+      setSequenceApproved(false);
       setReplies([]);
       setShowAdvancedSettings(false);
       return;
@@ -129,6 +131,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
     setLoading(true);
     setTab(stepTabKey(1));
     setShowAdvancedSettings(false);
+    setSequenceApproved(false);
 
     outreachApi
       .getSequence(contact.id)
@@ -235,6 +238,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
       setSeq(result);
       await loadSteps(result.id, result);
       setTab(stepTabKey(1));
+      setSequenceApproved(false);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Generation failed");
     } finally {
@@ -249,6 +253,10 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
 
   const handleLaunch = async () => {
     if (!seq || !sendingAccount.trim()) return;
+    if (!sequenceApproved) {
+      setLaunchError("Review and approve the sequence preview before launch.");
+      return;
+    }
     setLaunching(true);
     setLaunchError("");
     try {
@@ -304,6 +312,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
     );
     setTimingError("");
     setTimingOk(false);
+    setSequenceApproved(false);
   };
 
   const handleChannelChange = (stepId: string, rawValue: string) => {
@@ -328,6 +337,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
     );
     setTimingError("");
     setTimingOk(false);
+    setSequenceApproved(false);
   };
 
   const handleSaveTiming = async () => {
@@ -359,6 +369,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
       setSteps((current) =>
         current.map((step) => updatedSteps.find((item) => item.id === step.id) ?? step)
       );
+      setSequenceApproved(false);
       setTimingOk(true);
       setTimeout(() => setTimingOk(false), 2500);
     } catch (e: unknown) {
@@ -399,6 +410,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
             : step
         )
       );
+      setSequenceApproved(false);
 
       if (currentChannel === "email" && currentStep.step_number <= 3) {
         const suffix = String(currentStep.step_number) as "1" | "2" | "3";
@@ -475,6 +487,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
       });
       setSteps((current) => [...current, created]);
       setTab(stepTabKey(created.step_number));
+      setSequenceApproved(false);
       setTimingOk(true);
       setTimeout(() => setTimingOk(false), 2500);
     } catch (e: unknown) {
@@ -492,6 +505,7 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
       await outreachApi.deleteStep(stepId);
       const remaining = visibleTimingSteps.filter((step) => step.id !== stepId);
       setSteps((current) => current.filter((step) => step.id !== stepId));
+      setSequenceApproved(false);
       if (currentStep?.id === stepId && remaining.length > 0) {
         setTab(stepTabKey(remaining[remaining.length - 1].step_number));
       }
@@ -949,6 +963,28 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
                         Sends {visibleTimingSteps.map((step) => `Day ${step.delay_value}`).join(" -> ")} · Auto-stops on reply · Opens & clicks tracked
                       </div>
 
+                      <label style={{
+                        display: "flex", alignItems: "flex-start", gap: 9,
+                        padding: "10px 11px", borderRadius: 10,
+                        background: sequenceApproved ? palette.greenSoft : "#fffaf6",
+                        border: `1px solid ${sequenceApproved ? palette.greenBorder : "#ffd9c5"}`,
+                        color: sequenceApproved ? palette.green : "#a45125",
+                        fontSize: 12.5, lineHeight: 1.45, cursor: "pointer",
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={sequenceApproved}
+                          onChange={(event) => {
+                            setSequenceApproved(event.target.checked);
+                            if (event.target.checked) setLaunchError("");
+                          }}
+                          style={{ marginTop: 2, accentColor: palette.green }}
+                        />
+                        <span>
+                          I reviewed the full sequence preview, timing, and sending account. Launch only after this check, so accidental or unreviewed AI copy cannot go live.
+                        </span>
+                      </label>
+
                       {launchError && (
                         <p style={{ margin: 0, color: "#b42336", fontSize: 13 }}>{launchError}</p>
                       )}
@@ -962,9 +998,9 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                         <button
                           onClick={handleLaunch}
-                          disabled={launching || !sendingAccount.trim() || !contact?.email?.trim()}
+                          disabled={launching || !sendingAccount.trim() || !contact?.email?.trim() || !sequenceApproved}
                           style={launchBtn}
-                          title={!contact?.email?.trim() ? "Add an email to this contact before launching" : undefined}
+                          title={!contact?.email?.trim() ? "Add an email to this contact before launching" : !sequenceApproved ? "Review and approve the sequence preview first" : undefined}
                         >
                           {launching ? <RefreshCw size={13} className="animate-spin" /> : <Rocket size={13} />}
                           {launching ? "Launching..." : "Launch Sequence"}

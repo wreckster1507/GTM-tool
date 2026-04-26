@@ -151,10 +151,45 @@ function MeetingFollowUpBlock({ task }: { task: TaskItem }) {
   );
 }
 
+function getTaskTemplates(task: TaskItem, entityLabel: string) {
+  const label = entityLabel || "this record";
+  const text = `${task.title} ${task.description ?? ""}`.toLowerCase();
+  const templates = [
+    {
+      label: "Call outcome",
+      body: `Outcome: Called ${label}.\nResult: Connected / voicemail / no answer\nNotes:\nNext step:`,
+    },
+    {
+      label: "Email follow-up",
+      body: `Outcome: Sent follow-up for ${label}.\nMessage angle:\nNext step:`,
+    },
+  ];
+  if (text.includes("close date") || text.includes("forecast")) {
+    templates.unshift({
+      label: "Forecast hygiene",
+      body: `Outcome: Reviewed forecast hygiene for ${label}.\nClose date update:\nConfidence:\nNext step:`,
+    });
+  } else if (text.includes("meeting") || text.includes("demo")) {
+    templates.unshift({
+      label: "Meeting follow-up",
+      body: `Outcome: Followed up on ${label} meeting.\nCustomer ask:\nOwner:\nNext step/date:`,
+    });
+  } else if (task.entity_type === "deal") {
+    templates.unshift({
+      label: "Deal next step",
+      body: `Outcome: Updated next step for ${label}.\nBuyer commitment:\nRep action:\nDue date:`,
+    });
+  }
+  return templates.slice(0, 3);
+}
+
 function TaskCard({
   task,
+  entityLabel,
   commentDraft,
+  outcomeDraft,
   onCommentDraftChange,
+  onOutcomeDraftChange,
   onAddComment,
   onComplete,
   onDismiss,
@@ -164,8 +199,11 @@ function TaskCard({
   canDelete,
 }: {
   task: TaskItem;
+  entityLabel: string;
   commentDraft: string;
+  outcomeDraft: string;
   onCommentDraftChange: (value: string) => void;
+  onOutcomeDraftChange: (value: string) => void;
   onAddComment: () => void;
   onComplete: () => void;
   onDismiss: () => void;
@@ -181,6 +219,7 @@ function TaskCard({
   const systemGuidance = getSystemTaskGuidance(task);
   const matrixMeta = parseTaskMatrixMeta(task.action_payload);
   const priorityLabelStyle = matrixMeta.priorityLabel ? PRIORITY_LABEL_STYLE[matrixMeta.priorityLabel] : null;
+  const templates = getTaskTemplates(task, entityLabel);
 
   return (
     <div style={{ border: `1px solid ${colors.border}`, background: "#fff", borderRadius: 16, padding: "14px 16px", display: "grid", gap: 10 }}>
@@ -266,6 +305,32 @@ function TaskCard({
         </div>
       ) : null}
 
+      {isOpen ? (
+        <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "10px 12px", display: "grid", gap: 9 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>OUTCOME LOG</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {templates.map((template) => (
+                <button
+                  key={template.label}
+                  type="button"
+                  onClick={() => onOutcomeDraftChange(template.body)}
+                  style={{ borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "5px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  {template.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <textarea
+            value={outcomeDraft}
+            onChange={(e) => onOutcomeDraftChange(e.target.value)}
+            placeholder="Log the result before completing..."
+            style={{ width: "100%", minHeight: 66, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical", background: "#fff" }}
+          />
+        </div>
+      ) : null}
+
       {task.task_type === "manual" && isOpen ? (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={onDismiss} style={{ borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
@@ -297,6 +362,20 @@ function TaskCard({
           </div>
         )}
         <div style={{ display: "grid", gap: 6 }}>
+          {templates.length > 0 ? (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {templates.map((template) => (
+                <button
+                  key={`comment-${template.label}`}
+                  type="button"
+                  onClick={() => onCommentDraftChange(template.body)}
+                  style={{ borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "5px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Use {template.label.toLowerCase()}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <textarea
             value={commentDraft}
             onChange={(e) => onCommentDraftChange(e.target.value)}
@@ -312,6 +391,11 @@ function TaskCard({
       </div>
     </div>
   );
+}
+
+function isMeaningfulTaskTitle(value: string) {
+  const title = value.trim();
+  return title.length >= 3 && !/^[\d\s.,_-]+$/.test(title);
 }
 
 export default function TaskCenterModal({
@@ -344,6 +428,7 @@ export default function TaskCenterModal({
   const [dueAt, setDueAt] = useState("");
   const [assignedToId, setAssignedToId] = useState("");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [outcomeDrafts, setOutcomeDrafts] = useState<Record<string, string>>({});
   const [users, setUsers] = useState<UserType[]>([]);
   const isVisible = mode === "inline" ? true : Boolean(isOpen);
   const refreshPollRef = useRef<number | null>(null);
@@ -442,7 +527,7 @@ export default function TaskCenterModal({
   const assigneeOptions = useMemo(() => users, [users]);
 
   const createTask = async () => {
-    if (!title.trim()) return;
+    if (!isMeaningfulTaskTitle(title)) return;
     await tasksApi.create({
       entity_type: entityType,
       entity_id: entityId,
@@ -461,6 +546,15 @@ export default function TaskCenterModal({
     await tasksApi.update(taskId, data);
     onChanged?.();
     await load("none", { showSpinner: false });
+  };
+
+  const completeTask = async (task: TaskItem) => {
+    const outcome = (outcomeDrafts[task.id] || "").trim();
+    if (outcome) {
+      await tasksApi.addComment(task.id, outcome.startsWith("Outcome:") ? outcome : `Outcome: ${outcome}`);
+      setOutcomeDrafts((current) => ({ ...current, [task.id]: "" }));
+    }
+    await patchTask(task.id, { status: "completed" });
   };
 
   const addComment = async (taskId: string) => {
@@ -590,7 +684,7 @@ export default function TaskCenterModal({
               <button type="button" onClick={resetForm} style={{ borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                 Cancel
               </button>
-              <button type="button" onClick={createTask} disabled={!title.trim()} style={{ borderRadius: 10, border: "none", background: title.trim() ? colors.primary : "#e8eef5", color: title.trim() ? "#fff" : "#94a3b8", padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: title.trim() ? "pointer" : "default" }}>
+              <button type="button" onClick={createTask} disabled={!isMeaningfulTaskTitle(title)} style={{ borderRadius: 10, border: "none", background: isMeaningfulTaskTitle(title) ? colors.primary : "#e8eef5", color: isMeaningfulTaskTitle(title) ? "#fff" : "#94a3b8", padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: isMeaningfulTaskTitle(title) ? "pointer" : "default" }}>
                 Save task
               </button>
             </div>
@@ -611,10 +705,13 @@ export default function TaskCenterModal({
                   <TaskCard
                     key={task.id}
                     task={task}
+                    entityLabel={entityLabel}
                     commentDraft={commentDrafts[task.id] || ""}
+                    outcomeDraft={outcomeDrafts[task.id] || ""}
                     onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                    onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
                     onAddComment={() => addComment(task.id)}
-                    onComplete={() => patchTask(task.id, { status: "completed" })}
+                    onComplete={() => completeTask(task)}
                     onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}
@@ -639,10 +736,13 @@ export default function TaskCenterModal({
                   <TaskCard
                     key={task.id}
                     task={task}
+                    entityLabel={entityLabel}
                     commentDraft={commentDrafts[task.id] || ""}
+                    outcomeDraft={outcomeDrafts[task.id] || ""}
                     onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                    onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
                     onAddComment={() => addComment(task.id)}
-                    onComplete={() => patchTask(task.id, { status: "completed" })}
+                    onComplete={() => completeTask(task)}
                     onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}
@@ -669,10 +769,13 @@ export default function TaskCenterModal({
                       <TaskCard
                         key={task.id}
                         task={task}
+                        entityLabel={entityLabel}
                         commentDraft={commentDrafts[task.id] || ""}
+                        outcomeDraft={outcomeDrafts[task.id] || ""}
                         onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                        onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
                         onAddComment={() => addComment(task.id)}
-                        onComplete={() => patchTask(task.id, { status: "completed" })}
+                        onComplete={() => completeTask(task)}
                         onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                         onAccept={() => acceptTask(task.id)}
                         onManualTakeover={() => takeManualOwnership(task)}
@@ -698,10 +801,13 @@ export default function TaskCenterModal({
                   <TaskCard
                     key={task.id}
                     task={task}
+                    entityLabel={entityLabel}
                     commentDraft={commentDrafts[task.id] || ""}
+                    outcomeDraft={outcomeDrafts[task.id] || ""}
                     onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                    onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
                     onAddComment={() => addComment(task.id)}
-                    onComplete={() => patchTask(task.id, { status: "completed" })}
+                    onComplete={() => completeTask(task)}
                     onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}
@@ -722,10 +828,13 @@ export default function TaskCenterModal({
                   <TaskCard
                     key={task.id}
                     task={task}
+                    entityLabel={entityLabel}
                     commentDraft={commentDrafts[task.id] || ""}
+                    outcomeDraft={outcomeDrafts[task.id] || ""}
                     onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                    onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
                     onAddComment={() => addComment(task.id)}
-                    onComplete={() => patchTask(task.id, { status: "completed" })}
+                    onComplete={() => completeTask(task)}
                     onDismiss={() => patchTask(task.id, { status: "dismissed" })}
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}

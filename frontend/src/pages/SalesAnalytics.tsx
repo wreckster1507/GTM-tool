@@ -34,6 +34,7 @@ import {
   analyticsApi,
   authApi,
   dealsApi,
+  tasksApi,
   type SalesHighlight,
   type MonthlyUniqueFunnelRow,
   type SalesDashboard,
@@ -224,12 +225,18 @@ function HighlightDealsModal({
   subtitle,
   deals,
   loading,
+  creatingTasks,
+  taskMessage,
+  onCreateTasks,
   onClose,
 }: {
   title: string;
   subtitle: string;
   deals: Deal[];
   loading: boolean;
+  creatingTasks?: boolean;
+  taskMessage?: string;
+  onCreateTasks?: () => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -283,14 +290,38 @@ function HighlightDealsModal({
           >×</button>
         </div>
         <div style={{ padding: "14px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fafbfd" }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#203244" }}>
-            {loading ? "Loading deals..." : `${deals.length} deal${deals.length === 1 ? "" : "s"}`}
-          </span>
-          {!loading && total > 0 && (
-            <span style={{ fontSize: 13, fontWeight: 700, color: "#4561d5" }}>
-              {formatCurrency(total)} total
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#203244" }}>
+              {loading ? "Loading deals..." : `${deals.length} deal${deals.length === 1 ? "" : "s"}`}
             </span>
-          )}
+            {taskMessage ? <span style={{ fontSize: 12, color: "#2b8a5d", fontWeight: 700 }}>{taskMessage}</span> : null}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {!loading && total > 0 && (
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#4561d5" }}>
+                {formatCurrency(total)} total
+              </span>
+            )}
+            {!loading && deals.length > 0 && onCreateTasks ? (
+              <button
+                type="button"
+                onClick={onCreateTasks}
+                disabled={creatingTasks}
+                style={{
+                  border: "1px solid #d5e5ff",
+                  background: "#eef5ff",
+                  color: "#1f6feb",
+                  borderRadius: 10,
+                  padding: "7px 10px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: creatingTasks ? "default" : "pointer",
+                }}
+              >
+                {creatingTasks ? "Creating tasks..." : "Create hygiene tasks"}
+              </button>
+            ) : null}
+          </div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: loading ? 24 : "8px 0" }}>
           {loading ? (
@@ -1300,6 +1331,7 @@ export default function SalesAnalytics() {
     | "overview"
     | PerformanceTabKey;
   const [perfReps, setPerfReps] = useState<RepSummary[]>([]);
+  const tabContentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (activeTab !== "overview") {
@@ -1308,6 +1340,14 @@ export default function SalesAnalytics() {
         .then(setPerfReps)
         .catch(() => setPerfReps([]));
     }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "overview") return;
+    const id = window.setTimeout(() => {
+      tabContentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [activeTab]);
 
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
@@ -1323,6 +1363,9 @@ export default function SalesAnalytics() {
   const [boardDeals, setBoardDeals] = useState<Deal[] | null>(null);
   const [highlightModal, setHighlightModal] = useState<{ title: string; subtitle: string; deals: Deal[] } | null>(null);
   const [highlightLoading, setHighlightLoading] = useState(false);
+  const [creatingHighlightTasks, setCreatingHighlightTasks] = useState(false);
+  const [highlightTaskMessage, setHighlightTaskMessage] = useState("");
+  const [createdHighlightTaskKeys, setCreatedHighlightTaskKeys] = useState<Set<string>>(new Set());
 
   // When a custom date range is set, window buttons are ignored
   const usingCustomRange = !!(fromDate && toDate);
@@ -1496,6 +1539,70 @@ export default function SalesAnalytics() {
   const openDealModal = (title: string, subtitle: string, deals: Deal[]) => {
     setHighlightModal({ title, subtitle, deals });
     setHighlightLoading(false);
+    setHighlightTaskMessage("");
+  };
+
+  const buildHygieneTask = (deal: Deal, title: string, subtitle: string) => {
+    const lower = `${title} ${subtitle}`.toLowerCase();
+    const isOverdue = lower.includes("overdue");
+    const isMissingClose = lower.includes("missing") && lower.includes("close");
+    const isStalled = lower.includes("stalled") || lower.includes("stage");
+    const priority: "medium" | "high" = isOverdue || isStalled ? "high" : "medium";
+    const taskTitle = isOverdue
+      ? `Update overdue close date: ${deal.name}`
+      : isMissingClose
+        ? `Add close date: ${deal.name}`
+        : isStalled
+          ? `Unblock stalled deal: ${deal.name}`
+          : `Fix pipeline hygiene: ${deal.name}`;
+    const description = [
+      `Created from Beacon Readout: ${title}`,
+      subtitle,
+      isOverdue ? "Rep action: confirm the real close timing, update the forecast date, and log the buyer-confirmed next step." : "",
+      isMissingClose ? "Rep action: add the best-known close date or explicitly note why timing is unknown." : "",
+      isStalled ? "Rep action: confirm whether the deal is still active, add the next step, or move it to the correct lane." : "",
+    ].filter(Boolean).join("\n\n");
+
+    return {
+      title: taskTitle,
+      description,
+      priority,
+      due_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      assigned_to_id: deal.assigned_to_id || undefined,
+    };
+  };
+
+  const createHighlightTasks = async () => {
+    if (!highlightModal || highlightModal.deals.length === 0) return;
+    setCreatingHighlightTasks(true);
+    setHighlightTaskMessage("");
+    try {
+      const taskCandidates = highlightModal.deals
+        .filter((deal) => !createdHighlightTaskKeys.has(`${highlightModal.title}:${deal.id}`))
+        .slice(0, 25);
+      await Promise.all(taskCandidates.map((deal) => {
+        const task = buildHygieneTask(deal, highlightModal.title, highlightModal.subtitle);
+        return tasksApi.create({
+          entity_type: "deal",
+          entity_id: deal.id,
+          title: task.title,
+          description: task.description,
+          priority: task.priority,
+          due_at: task.due_at,
+          assigned_to_id: task.assigned_to_id,
+        });
+      }));
+      setCreatedHighlightTaskKeys((current) => {
+        const next = new Set(current);
+        for (const deal of taskCandidates) next.add(`${highlightModal.title}:${deal.id}`);
+        return next;
+      });
+      setHighlightTaskMessage(taskCandidates.length === 0 ? "Tasks already created for this drilldown." : `Created ${taskCandidates.length} task${taskCandidates.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setHighlightTaskMessage(error instanceof Error ? error.message : "Could not create tasks right now.");
+    } finally {
+      setCreatingHighlightTasks(false);
+    }
   };
 
   const handleOpenStalledDeals = (row: SalesVelocityRow) => {
@@ -1572,7 +1679,7 @@ export default function SalesAnalytics() {
           gap: 18,
         }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(300px, 0.8fr)", gap: 18, alignItems: "stretch" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(300px, 0.8fr)", gap: 18, alignItems: "start" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 900 }}>
             <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em", color: "#687b92" }}>Revenue Intelligence</p>
             <h2 style={{ margin: 0, fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>
@@ -1590,7 +1697,7 @@ export default function SalesAnalytics() {
               </span>
             </div>
           </div>
-          <div style={{ borderRadius: 22, border: "1px solid #e1e8f2", background: "rgba(255,255,255,0.82)", padding: 18, display: "grid", gap: 14, boxShadow: "0 14px 32px rgba(18,44,70,0.06)" }}>
+          <div style={{ borderRadius: 22, border: "1px solid #e1e8f2", background: "rgba(255,255,255,0.82)", padding: 18, display: "grid", gap: 14, boxShadow: "0 14px 32px rgba(18,44,70,0.06)", alignSelf: "start" }}>
             <div>
               <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6f8195" }}>Snapshot</p>
               <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.7, color: "#5d7288" }}>
@@ -1689,9 +1796,10 @@ export default function SalesAnalytics() {
 
       <TabStrip active={activeTab} />
 
-      {activeTab !== "overview" ? (
-        <PerformanceTabContent tab={activeTab as PerformanceTabKey} reps={perfReps} />
-      ) : (
+      <div ref={tabContentRef}>
+        {activeTab !== "overview" ? (
+          <PerformanceTabContent tab={activeTab as PerformanceTabKey} reps={perfReps} />
+        ) : (
         <>
       {error && (
         <div className="crm-panel" style={{ padding: 18, border: "1px solid #f0d2d2", background: "#fff7f7", color: "#b45454" }}>
@@ -1808,13 +1916,17 @@ export default function SalesAnalytics() {
         </>
       )}
         </>
-      )}
+        )}
+      </div>
       {highlightModal && (
         <HighlightDealsModal
           title={highlightModal.title}
           subtitle={highlightModal.subtitle}
           deals={highlightModal.deals}
           loading={highlightLoading}
+          creatingTasks={creatingHighlightTasks}
+          taskMessage={highlightTaskMessage}
+          onCreateTasks={() => void createHighlightTasks()}
           onClose={() => {
             if (!highlightLoading) setHighlightModal(null);
           }}

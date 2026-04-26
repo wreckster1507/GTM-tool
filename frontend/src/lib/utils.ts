@@ -16,6 +16,18 @@ export function formatCurrency(value?: number | null): string {
   }).format(value);
 }
 
+export function isPlaceholderDomain(value?: string | null): boolean {
+  const domain = (value || "").trim().toLowerCase();
+  if (!domain) return false;
+  return domain.endsWith(".unknown") || /^\d+$/.test(domain);
+}
+
+export function formatDomain(value?: string | null, fallback = "Domain not found"): string {
+  const domain = (value || "").trim();
+  if (!domain) return fallback;
+  return isPlaceholderDomain(domain) ? fallback : domain;
+}
+
 export function formatDate(dateStr?: string | null): string {
   if (!dateStr) return "—";
   return new Date(dateStr).toLocaleString("en-US", {
@@ -25,6 +37,16 @@ export function formatDate(dateStr?: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+export function isValidDateValue(dateStr?: string | null): boolean {
+  if (!dateStr) return false;
+  return !Number.isNaN(new Date(dateStr).getTime());
+}
+
+export function formatOptionalDate(dateStr?: string | null, fallback = "No date set"): string {
+  if (!dateStr) return fallback;
+  return isValidDateValue(dateStr) ? formatDate(dateStr) : "Invalid date";
 }
 
 export function getInitials(name: string): string {

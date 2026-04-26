@@ -33,7 +33,7 @@ import {
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
 import type { Company, Contact, DealStageSetting } from "../types";
-import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
+import { formatDate, formatDomain, getAccountPrioritySnapshot } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
 import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
@@ -487,8 +487,9 @@ export default function AccountSourcingCompanyDetail() {
     const items = cache.competitive_landscape_v2;
     return Array.isArray(items) ? items as Array<Record<string, unknown>> : [];
   }, [cache]);
+  const hasPartialResearchWithoutFullEnrichment = Boolean(company && !company.enriched_at && competitorCards.length > 0);
   const detailMetaItems = [
-    company?.domain ? (company.domain.endsWith(".unknown") ? `Domain unresolved: ${company.domain}` : company.domain) : undefined,
+    company?.domain ? (company.domain.endsWith(".unknown") ? formatDomain(company.domain) : company.domain) : undefined,
     asText(company?.industry),
     asText(company?.funding_stage),
     company?.employee_count ? `${company.employee_count.toLocaleString()} employees` : undefined,
@@ -818,7 +819,9 @@ export default function AccountSourcingCompanyDetail() {
                   <span>
                     {company.domain.endsWith(".unknown")
                       ? "This account still has an unresolved domain placeholder, so some web and paid enrichment may be incomplete."
-                      : "This account has not completed enrichment yet."}
+                      : hasPartialResearchWithoutFullEnrichment
+                        ? "Partial account intelligence is available below, but full enrichment has not completed yet."
+                        : "This account has not completed enrichment yet."}
                   </span>
                   {company.domain.endsWith(".unknown") ? (
                     <button
@@ -1335,6 +1338,11 @@ export default function AccountSourcingCompanyDetail() {
                 <div style={{ color: colors.faint }}>No competitor view has been captured yet.</div>
               ) : (
                 <div style={{ display: "grid", gap: 10 }}>
+                  {hasPartialResearchWithoutFullEnrichment && (
+                    <div style={{ border: "1px solid #ffe0b2", background: "#fff9f0", color: colors.amber, borderRadius: 12, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.55 }}>
+                      Partial research is present from import or cached intelligence. Run full enrichment before treating this as a completed account profile.
+                    </div>
+                  )}
                   {competitorCards.map((item, idx) => (
                     <div key={`competitor-${idx}`} style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "14px 16px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>

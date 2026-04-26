@@ -204,6 +204,7 @@ export interface MeddpiccFieldContact {
 export interface MeddpiccFieldDetail {
   summary?: string;
   evidence?: string;
+  notes?: string;
   change_reason?: "empty_field" | "material_refinement" | "contradiction";
   updated_at?: string;
   target_score?: number;

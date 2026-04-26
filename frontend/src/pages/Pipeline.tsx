@@ -77,7 +77,8 @@ const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
   mofu: ["in_progress"],
   bofu: ["meeting_booked"],
 };
-const GEO_OPTIONS = ["America", "Rest of the World"] as const;
+const GEO_OPTIONS = ["India", "America", "Rest of the World"] as const;
+const ENGAGEMENT_SIGNAL_LEGEND = "Signal legend: Active = last touch within 3d; Watch = 4-7d; Stale = older than 7d; No signal = no captured activity yet.";
 
 function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, defaults: FunnelConfig): FunnelConfig {
   return {
@@ -220,7 +221,7 @@ function EngagementBadge({
   const secondary = signal?.label && signal.label !== compactReason ? signal.label : summary.detail;
   const basis = signal?.label || (side === "rep" ? "No seller-side source yet" : "No buyer-side source yet");
   const statusWhy = engagementStatusJustification(tone.label, timestamp, side);
-  const tooltipText = [compactReason, secondary, timestamp ? `Last touch ${relativeTime(timestamp)}` : ""].filter(Boolean).join("\n");
+  const tooltipText = [compactReason, secondary, timestamp ? `Last touch ${relativeTime(timestamp)}` : "", ENGAGEMENT_SIGNAL_LEGEND].filter(Boolean).join("\n");
 
   return (
     <div
@@ -308,6 +309,9 @@ function EngagementBadge({
           <div style={{ fontSize: 11, color: "#6f7f95", lineHeight: 1.45 }}>
             <span style={{ fontWeight: 700 }}>Why {tone.label.toLowerCase()}:</span> {statusWhy}
           </div>
+          <div style={{ fontSize: 10, color: "#8ca0b3", lineHeight: 1.4 }}>
+            {ENGAGEMENT_SIGNAL_LEGEND}
+          </div>
           {timestamp && (
             <div style={{ fontSize: 10, color: "#8ca0b3" }}>
               Last touch {relativeTime(timestamp)}
@@ -319,12 +323,13 @@ function EngagementBadge({
   );
 }
 
-function normalizeGeo(raw?: string | null): "America" | "Rest of the World" | "" {
+function normalizeGeo(raw?: string | null): "India" | "America" | "Rest of the World" | "" {
   const value = (raw ?? "").trim().toLowerCase();
   if (!value) return "";
   if (["us", "usa", "united states", "united states of america"].includes(value)) return "America";
   if (["na", "north america", "america", "americas", "latam", "latin america", "canada", "mexico"].includes(value)) return "America";
-  if (["india", "in", "apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan", "rest of world", "rest of the world", "row"].includes(value)) return "Rest of the World";
+  if (["india", "in"].includes(value)) return "India";
+  if (["apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan", "rest of world", "rest of the world", "row"].includes(value)) return "Rest of the World";
   return "Rest of the World";
 }
 
@@ -1493,6 +1498,11 @@ export default function Pipeline() {
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [missingCloseDateOnly, setMissingCloseDateOnly] = useState(false);
   const [closeMonthFilter, setCloseMonthFilter] = useState("");
+  const [healthFilters, setHealthFilters] = useState<string[]>([]);
+  const [closeDateFilters, setCloseDateFilters] = useState<string[]>([]);
+  const [nextStepFilters, setNextStepFilters] = useState<string[]>([]);
+  const [activityFilters, setActivityFilters] = useState<string[]>([]);
+  const [contactFilters, setContactFilters] = useState<string[]>([]);
   const [showForecast, setShowForecast] = useState(true);
   const [createDealStage, setCreateDealStage] = useState<string | null>(null);
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
@@ -1536,6 +1546,18 @@ export default function Pipeline() {
       }));
     return [...configured, ...extras];
   }, [dealBoard, dealStages]);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "deal") return;
+    setTab("deal");
+    setCreateDealStage(effectiveDealStages.find((stage) => stage.group === "active")?.id ?? effectiveDealStages[0]?.id ?? "reprospect");
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("new");
+      return next;
+    }, { replace: true });
+  }, [effectiveDealStages, searchParams, setSearchParams]);
+
   const dealStageLabelMap = useMemo(() => new Map(effectiveDealStages.map((stage) => [stage.id, stage.label])), [effectiveDealStages]);
 
   const effectiveProspectStages = useMemo(() => {
@@ -1640,6 +1662,11 @@ export default function Pipeline() {
   const filteredDealBoard = useMemo(() => {
     const next: Record<string, Deal[]> = {};
     const today = new Date();
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfWeek = new Date(startOfToday);
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+    const endOfMonth = new Date(startOfToday);
+    endOfMonth.setDate(endOfMonth.getDate() + 30);
     const closedStageIds = new Set(effectiveDealStages.filter((stage) => stage.group === "closed").map((stage) => stage.id));
     for (const stage of effectiveDealStages) {
       let items = dealBoard[stage.id] ?? [];
@@ -1664,6 +1691,7 @@ export default function Pipeline() {
         const tag = deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : null;
         return tag ? priorityFilters.includes(tag) : false;
       });
+      if (healthFilters.length) items = items.filter((deal) => healthFilters.includes((deal.health || "unknown").toLowerCase()));
       if (commitFilter.length) items = items.filter((deal) => deal.commit_to_deal === true);
       if (stalledOnly) items = items.filter((deal) => (deal.days_in_stage ?? 0) >= 30);
       if (overdueOnly) {
@@ -1675,11 +1703,54 @@ export default function Pipeline() {
         });
       }
       if (missingCloseDateOnly) items = items.filter((deal) => !closedStageIds.has(deal.stage) && !deal.close_date_est);
+      if (closeDateFilters.length) {
+        items = items.filter((deal) => {
+          if (closedStageIds.has(deal.stage)) return false;
+          if (closeDateFilters.includes("missing") && !deal.close_date_est) return true;
+          if (!deal.close_date_est) return false;
+          const closeDate = new Date(deal.close_date_est);
+          if (Number.isNaN(closeDate.getTime())) return false;
+          return closeDateFilters.some((filter) => {
+            if (filter === "overdue") return closeDate < startOfToday;
+            if (filter === "this_week") return closeDate >= startOfToday && closeDate <= endOfWeek;
+            if (filter === "next_30") return closeDate >= startOfToday && closeDate <= endOfMonth;
+            return false;
+          });
+        });
+      }
       if (closeMonthFilter) items = items.filter((deal) => (deal.close_date_est ?? "").slice(0, 7) === closeMonthFilter);
+      if (nextStepFilters.length) {
+        items = items.filter((deal) => {
+          const hasNextStep = Boolean((deal.next_step || "").trim());
+          return (nextStepFilters.includes("has") && hasNextStep) || (nextStepFilters.includes("missing") && !hasNextStep);
+        });
+      }
+      if (activityFilters.length) {
+        items = items.filter((deal) => {
+          const lastTouch = deal.last_activity_at || deal.seller_engagement_at || deal.client_engagement_at;
+          if (activityFilters.includes("none") && !lastTouch) return true;
+          if (!lastTouch) return false;
+          const touchDate = new Date(lastTouch);
+          if (Number.isNaN(touchDate.getTime())) return false;
+          const days = (Date.now() - touchDate.getTime()) / 86_400_000;
+          return activityFilters.some((filter) => {
+            if (filter === "7d") return days >= 7;
+            if (filter === "14d") return days >= 14;
+            if (filter === "30d") return days >= 30;
+            return false;
+          });
+        });
+      }
+      if (contactFilters.length) {
+        items = items.filter((deal) => {
+          const count = deal.contact_count ?? deal.stakeholder_count ?? 0;
+          return (contactFilters.includes("has") && count > 0) || (contactFilters.includes("missing") && count === 0);
+        });
+      }
       next[stage.id] = items;
     }
     return next;
-  }, [assigneeFilters, closeMonthFilter, commitFilter, companyMap, dealBoard, effectiveDealStages, geographyFilters, missingCloseDateOnly, overdueOnly, priorityFilters, search, stageFilters, stalledOnly, tagFilters]);
+  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, nextStepFilters, overdueOnly, priorityFilters, search, stageFilters, stalledOnly, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -1794,7 +1865,7 @@ export default function Pipeline() {
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
-  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || Boolean(closeMonthFilter);
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || Boolean(closeMonthFilter);
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
   const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
@@ -1805,6 +1876,31 @@ export default function Pipeline() {
     { value: "P2", label: "P2" },
   ];
   const commitOptions = [{ value: "committed", label: "Committed" }];
+  const healthOptions = [
+    { value: "green", label: "Green" },
+    { value: "yellow", label: "Yellow" },
+    { value: "red", label: "Red" },
+  ];
+  const closeDateOptions = [
+    { value: "overdue", label: "Overdue" },
+    { value: "this_week", label: "This week" },
+    { value: "next_30", label: "Next 30 days" },
+    { value: "missing", label: "No close date" },
+  ];
+  const nextStepOptions = [
+    { value: "has", label: "Has next step" },
+    { value: "missing", label: "No next step" },
+  ];
+  const activityOptions = [
+    { value: "7d", label: "No activity 7d+" },
+    { value: "14d", label: "No activity 14d+" },
+    { value: "30d", label: "No activity 30d+" },
+    { value: "none", label: "No activity captured" },
+  ];
+  const contactOptions = [
+    { value: "has", label: "Has contacts" },
+    { value: "missing", label: "No contacts linked" },
+  ];
   const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
   const accentColor = tab === "deal" ? "#175089" : "#177b75";
   const accentBg = tab === "deal" ? "#f0f6ff" : "#f0faf9";
@@ -1829,6 +1925,11 @@ export default function Pipeline() {
     setTagFilters([]);
     setPriorityFilters([]);
     setCommitFilter([]);
+    setHealthFilters([]);
+    setCloseDateFilters([]);
+    setNextStepFilters([]);
+    setActivityFilters([]);
+    setContactFilters([]);
     setStalledOnly(false);
     setOverdueOnly(false);
     setMissingCloseDateOnly(false);
@@ -2262,6 +2363,11 @@ export default function Pipeline() {
             <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
             {tab === "deal" && <MultiSelectFilter values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
             {tab === "deal" && <MultiSelectFilter values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={healthFilters} onChange={setHealthFilters} label="Health" allLabel="All Health" options={healthOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={closeDateFilters} onChange={setCloseDateFilters} label="Close Date" allLabel="Any Close Date" options={closeDateOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={nextStepFilters} onChange={setNextStepFilters} label="Next Step" allLabel="Any Next Step" options={nextStepOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={activityFilters} onChange={setActivityFilters} label="Activity" allLabel="Any Activity" options={activityOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={contactFilters} onChange={setContactFilters} label="Contacts" allLabel="Any Contacts" options={contactOptions} />}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Deal Aging</label>

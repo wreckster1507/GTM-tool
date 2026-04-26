@@ -59,6 +59,17 @@ def _infer_display_name(addr: str) -> str:
     return " ".join(part.title() for part in parts)
 
 
+async def _ensure_deal_contact(session: AsyncSession, deal_id: UUID, contact_id: UUID) -> None:
+    existing = await session.execute(
+        select(DealContact).where(
+            DealContact.deal_id == deal_id,
+            DealContact.contact_id == contact_id,
+        )
+    )
+    if not existing.scalar_one_or_none():
+        session.add(DealContact(deal_id=deal_id, contact_id=contact_id))
+
+
 def _title_company_match(
     title: str,
     company_name_candidates: list[tuple[str, UUID, str]],
@@ -287,6 +298,10 @@ async def sync_calendar_events(
                     "title": row.title if row else None,
                     "matched": bool(contact_id),
                 })
+
+            if matched_deal_id and matched_contact_ids:
+                for contact_id in dict.fromkeys(matched_contact_ids):
+                    await _ensure_deal_contact(session, matched_deal_id, contact_id)
 
             meeting_type = _infer_meeting_type(event.title)
             scheduled_at = _naive_utc(event.start_dt) if event.start_dt else None
