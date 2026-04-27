@@ -1635,7 +1635,9 @@ async def _generate_executive_briefing(
     prior_meetings = crm_signals.get("prior_meetings", [])
     prior_meeting_lines = ""
     for pm in prior_meetings[:3]:
-        prior_meeting_lines += f"\n  [{pm.get('meeting_type', '?').upper()}] {pm.get('title', 'Meeting')} ({pm.get('scheduled_at', 'unknown date')[:10]})"
+        scheduled_at = pm.get("scheduled_at")
+        scheduled_label = scheduled_at[:10] if isinstance(scheduled_at, str) and scheduled_at else "unknown date"
+        prior_meeting_lines += f"\n  [{pm.get('meeting_type', '?').upper()}] {pm.get('title', 'Meeting')} ({scheduled_label})"
         if pm.get("ai_summary"):
             prior_meeting_lines += f"\n    Summary: {pm['ai_summary'][:200]}"
         if pm.get("transcript_summary"):
