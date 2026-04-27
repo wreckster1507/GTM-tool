@@ -4,11 +4,56 @@ Company repository.
 Adds domain-based lookup and a cascade-delete method that respects FK order.
 All raw SQL logic that previously lived in app/routes/companies.py lives here.
 """
+import re
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Common corporate suffixes that should not block dedupe.
+# Stripped from the END of names during normalization, longest-first so
+# "Pvt Ltd" wins over "Ltd" alone.
+_NAME_SUFFIXES = (
+    "pvt ltd", "private limited", "p ltd",
+    "technologies", "technology", "solutions", "systems", "labs",
+    "software", "services", "consulting", "group", "holdings",
+    "global", "international", "corporation", "incorporated",
+    "company", "limited", "corp", "inc", "llc", "ltd", "gmbh", "ag", "sa", "bv",
+)
+# Common public TLDs that show up when someone pastes a domain into the name field.
+_NAME_TLDS = (".com", ".io", ".ai", ".co", ".org", ".net", ".in", ".uk", ".eu", ".de")
+
+
+def _normalize_company_name(name: str) -> str:
+    """Aggressive normalization for dedupe: strip TLDs, suffixes, punctuation."""
+    s = (name or "").strip().lower().rstrip(" .,")
+    if not s:
+        return ""
+    # Strip a trailing TLD-as-suffix BEFORE collapsing punctuation, so
+    # "zywave.com" -> "zywave" rather than getting eaten as " com".
+    for tld in _NAME_TLDS:
+        if s.endswith(tld):
+            s = s[: -len(tld)]
+            break
+    # Collapse remaining punctuation so "Pvt. Ltd" matches the "pvt ltd" suffix.
+    s = re.sub(r"[.,]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return ""
+    # Strip suffixes iteratively in case of compounds like "Foo Solutions Inc"
+    changed = True
+    while changed:
+        changed = False
+        s = s.rstrip(" .,")
+        for suf in _NAME_SUFFIXES:
+            # Match suffix optionally followed by punctuation (handles "Inc.", "Pvt.")
+            if s.endswith(" " + suf) or s.endswith(" " + suf + "."):
+                idx = s.rfind(" " + suf)
+                s = s[:idx].rstrip(" .,")
+                changed = True
+                break
+    return re.sub(r"[^a-z0-9]+", "", s)
 
 from app.models.activity import Activity
 from app.models.company_stage_milestone import CompanyStageMilestone
@@ -35,6 +80,27 @@ class CompanyRepository(BaseRepository[Company]):
             select(Company).where(func.lower(func.trim(Company.name)) == name.strip().lower())
         )
         return result.scalars().first()
+
+    async def get_by_normalized_name(self, name: str) -> Optional[Company]:
+        """
+        Looser fallback used by importers to prevent placeholder-domain duplicates.
+        Compares names with corporate suffixes / TLDs / punctuation stripped, so
+        "zywave.com" matches "zywave", "OpenGov" matches "OpenGov Inc.", etc.
+        Only call AFTER get_by_domain and get_by_name miss.
+        """
+        target = _normalize_company_name(name)
+        if not target:
+            return None
+        # Pull a small candidate set by first 3 normalized chars to keep it cheap;
+        # then normalize in Python for the equality check.
+        prefix = target[:3]
+        result = await self.session.execute(
+            select(Company).where(func.lower(Company.name).like(f"{prefix}%"))
+        )
+        for candidate in result.scalars().all():
+            if _normalize_company_name(candidate.name or "") == target:
+                return candidate
+        return None
 
     async def delete_with_cascade(self, company_id: UUID) -> None:
         """

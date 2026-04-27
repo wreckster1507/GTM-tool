@@ -1179,7 +1179,7 @@ export default function SettingsPage() {
                       Each touch has a goal, optional subject hint, writing cue, and reference template. Beacon will adapt these to the actual contact instead of copying them verbatim.
                     </p>
                   </div>
-                  <button className="crm-button soft" type="button" onClick={handleAddTemplate} disabled={!outreachContent || outreachContent.step_templates.length >= 10}>
+                  <button className="crm-button soft" type="button" onClick={handleAddTemplate} disabled={!outreachContent || outreachContent.step_templates.length >= 20}>
                     <Plus size={15} />
                     Add step template
                   </button>

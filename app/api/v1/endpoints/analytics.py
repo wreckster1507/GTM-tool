@@ -199,6 +199,8 @@ class SalesDashboardRead(BaseModel):
     pipeline_by_owner: list[PipelineOwnerRow]
     velocity_by_stage: list[VelocityRow]
     forecast_by_month: list[ForecastRow]
+    forecast_buckets: list[ForecastRow] = []
+    forecast_granularity: str = "month"
     conversion_funnel: list[FunnelStep]
     monthly_unique_funnel: list[MonthlyUniqueFunnelRow]
     quota: QuotaState
@@ -419,6 +421,7 @@ async def sales_dashboard(
     geography: Annotated[list[str], Query()] = [],
     from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
     to_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window end")] = None,
+    forecast_granularity: Annotated[str, Query(pattern="^(week|month)$", description="Bucket size for forecast_buckets")] = "month",
 ):
     filter_rep_ids = rep_id or []
     filter_geographies = {_normalize_geography_key(g) for g in geography if g}
@@ -547,6 +550,10 @@ async def sales_dashboard(
     pipeline_by_owner: dict[str, dict] = {}
     velocity_by_stage: dict[str, dict[str, object]] = {}
     forecast_by_month: dict[str, dict[str, float | int | str]] = {}
+    # Parallel bucket map driven by `forecast_granularity` (week or month).
+    # Kept separate from forecast_by_month so existing consumers that read
+    # the monthly buckets keep working unchanged.
+    forecast_by_bucket: dict[str, dict[str, float | int | str]] = {}
     rep_activity: dict[str, dict[str, object]] = {}
     weekly_rep_activity: dict[str, dict[str, object]] = {}
 
@@ -591,6 +598,31 @@ async def sales_dashboard(
             month_bucket["deal_count"] += 1
             month_bucket["amount"] += amount
             month_bucket["weighted_amount"] += weighted_amount
+
+            # Granular bucket (week or month). ISO weeks make the key
+            # unambiguous across years (2026-W01, etc.).
+            if forecast_granularity == "week":
+                iso_year, iso_week, _ = row.close_date_est.isocalendar()
+                bucket_key = f"{iso_year}-W{iso_week:02d}"
+                # Label is the Monday of the ISO week, e.g. "Week of Mar 03".
+                week_start = row.close_date_est - timedelta(days=row.close_date_est.weekday())
+                bucket_label = f"Week of {week_start.strftime('%b %d')}"
+            else:
+                bucket_key = month_key
+                bucket_label = _month_label(month_key)
+            granular_bucket = forecast_by_bucket.setdefault(
+                bucket_key,
+                {
+                    "key": bucket_key,
+                    "label": bucket_label,
+                    "deal_count": 0,
+                    "amount": 0.0,
+                    "weighted_amount": 0.0,
+                },
+            )
+            granular_bucket["deal_count"] += 1
+            granular_bucket["amount"] += amount
+            granular_bucket["weighted_amount"] += weighted_amount
 
         if (row.days_in_stage or 0) >= 30:
             stale_deal_count += 1
@@ -1010,6 +1042,17 @@ async def sales_dashboard(
         for bucket in sorted(forecast_by_month.values(), key=lambda value: str(value["key"]))
     ]
 
+    forecast_bucket_rows = [
+        ForecastRow(
+            key=str(bucket["key"]),
+            label=str(bucket["label"]),
+            deal_count=int(bucket["deal_count"]),
+            amount=round(float(bucket["amount"]), 2),
+            weighted_amount=round(float(bucket["weighted_amount"]), 2),
+        )
+        for bucket in sorted(forecast_by_bucket.values(), key=lambda value: str(value["key"]))
+    ]
+
     leads_count = sum(1 for row in contact_rows if row.created_at >= window_start)
     meeting_stage_contacts = sum(1 for row in contact_rows if _contact_meeting_signal(row))
     meetings_count = sum(
@@ -1192,6 +1235,8 @@ async def sales_dashboard(
         pipeline_by_owner=owner_rows,
         velocity_by_stage=velocity_rows,
         forecast_by_month=forecast_rows,
+        forecast_buckets=forecast_bucket_rows,
+        forecast_granularity=forecast_granularity,
         conversion_funnel=funnel_rows,
         monthly_unique_funnel=monthly_unique_funnel,
         quota=QuotaState(

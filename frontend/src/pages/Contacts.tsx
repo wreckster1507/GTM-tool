@@ -245,6 +245,21 @@ function formatTimezoneLabel(value?: string | null): string {
   return TIMEZONE_LABELS[value] ?? value.replace(/^.*\//, "").replace(/_/g, " ").toUpperCase();
 }
 
+// Expand short labels (e.g. "IST") into the matching IANA names
+// (e.g. "Asia/Kolkata", "Asia/Calcutta") plus the label itself, so the
+// backend's case-insensitive IN check matches contacts however their
+// timezone happens to be stored.
+function expandTimezoneFilter(labels: string[]): string[] {
+  const set = new Set<string>();
+  for (const label of labels) {
+    set.add(label);
+    for (const [iana, mapped] of Object.entries(TIMEZONE_LABELS)) {
+      if (mapped === label) set.add(iana);
+    }
+  }
+  return Array.from(set);
+}
+
 function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey[] {
   if (!raw) return DEFAULT_CONTACT_TABLE_COLUMNS;
   try {
@@ -280,6 +295,10 @@ export default function Contacts() {
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
+  // Timezone filter — values are short labels (IST, PST, etc.). When sent to
+  // the backend they're expanded to include matching IANA names from
+  // TIMEZONE_LABELS so a contact stored as "Asia/Kolkata" matches "IST".
+  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tz")));
   // Company filter — optional narrowing to a single company's prospects.
   // Backend's contacts list already accepts `company_id`; this just wires a
   // dropdown to it. Value is a single company UUID (or "" for all).
@@ -442,6 +461,7 @@ export default function Contacts() {
       callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
       aeId: aeFilter.length ? aeFilter : undefined,
       sdrId: sdrFilter.length ? sdrFilter : undefined,
+      timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
       prospectOnly: true,
     }).then((result) => {
       setContacts(result.items);
@@ -596,11 +616,12 @@ export default function Contacts() {
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
+      timezoneFilter.length ? next.set("tz", timezoneFilter.join(",")) : next.delete("tz");
       companyFilter ? next.set("co", companyFilter) : next.delete("co");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, companyFilter, ownerScope, page, sdrFilter, search, sequenceFilter, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, companyFilter, ownerScope, page, sdrFilter, search, sequenceFilter, timezoneFilter, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -611,12 +632,12 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, sdrFilter, sequenceFilter]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, sdrFilter, sequenceFilter, timezoneFilter]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, page, sdrFilter, sequenceFilter, tab, user?.id]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
   // one batch call. Gives each row a progress bar (●━●━◉━○━○) and "Day 7 ·
@@ -1274,6 +1295,7 @@ export default function Contacts() {
                 callDispositionFilter.length ||
                 aeFilter.length ||
                 sdrFilter.length ||
+                timezoneFilter.length ||
                 companyFilter ||
                 search
               );
@@ -1368,6 +1390,14 @@ export default function Contacts() {
                       />
                     </>
                   )}
+                  <MultiSelectFilter
+                    label="Timezone"
+                    values={timezoneFilter}
+                    onChange={setTimezoneFilter}
+                    options={TIMEZONE_OPTIONS.map((tz) => ({ value: tz, label: tz }))}
+                    allLabel="All timezones"
+                    minWidth={170}
+                  />
 
                   {/* Divider */}
                   <div style={{ flex: 1 }} />
@@ -1467,6 +1497,7 @@ export default function Contacts() {
                         setOwnerScope("all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setAeFilter([]); setSdrFilter([]);
+                        setTimezoneFilter([]);
                         setCompanyFilter("");
                       }}
                       style={{

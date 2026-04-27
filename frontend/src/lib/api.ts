@@ -170,6 +170,7 @@ export const contactsApi = {
     ownerId?: string;
     scopeAnyMatch?: boolean;
     prospectOnly?: boolean;
+    timezone?: string[];
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -186,6 +187,7 @@ export const contactsApi = {
     if (params.ownerId) search.set("owner_id", params.ownerId);
     if (params.scopeAnyMatch) search.set("scope_any_match", "true");
     if (params.prospectOnly) search.set("prospect_only", "true");
+    if (params.timezone?.length) search.set("timezone", params.timezone.join(","));
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),
@@ -1454,18 +1456,28 @@ export type SalesDashboard = {
   pipeline_by_owner: SalesPipelineOwnerRow[];
   velocity_by_stage: SalesVelocityRow[];
   forecast_by_month: SalesForecastRow[];
+  forecast_buckets?: SalesForecastRow[];
+  forecast_granularity?: "week" | "month";
   conversion_funnel: SalesFunnelStep[];
   monthly_unique_funnel: MonthlyUniqueFunnelRow[];
   quota: SalesQuotaState;
 };
 
 export const analyticsApi = {
-  salesDashboard: (windowDays = 90, repIds: string[] = [], geographies: string[] = [], fromDate?: string, toDate?: string) => {
+  salesDashboard: (
+    windowDays = 90,
+    repIds: string[] = [],
+    geographies: string[] = [],
+    fromDate?: string,
+    toDate?: string,
+    forecastGranularity?: "week" | "month",
+  ) => {
     const params = new URLSearchParams({ window_days: String(windowDays) });
     for (const id of repIds) params.append("rep_id", id);
     for (const g of geographies) params.append("geography", g);
     if (fromDate) params.set("from_date", fromDate);
     if (toDate) params.set("to_date", toDate);
+    if (forecastGranularity) params.set("forecast_granularity", forecastGranularity);
     return request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?${params.toString()}`);
   },
   monthlyFunnelSummary: (months = 12) =>

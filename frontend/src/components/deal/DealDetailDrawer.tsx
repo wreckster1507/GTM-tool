@@ -650,16 +650,42 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 }}
               />
             ) : (
-              <h2
-                onClick={() => { setEditingName(true); setNameVal(deal.name); }}
-                style={{
-                  fontSize: 20, fontWeight: 700, color: "#1f2d3d", cursor: "pointer",
-                  flex: 1, lineHeight: 1.3,
-                }}
-                title="Click to edit"
-              >
-                {deal.name}
-              </h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+                <h2
+                  onClick={() => { setEditingName(true); setNameVal(deal.name); }}
+                  style={{
+                    fontSize: 20, fontWeight: 700, color: "#1f2d3d", cursor: "pointer",
+                    lineHeight: 1.3, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}
+                  title="Click to edit"
+                >
+                  {deal.name}
+                </h2>
+                {deal.company_id && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/account-sourcing/${deal.company_id}`)}
+                    title={`Open ${selectedCompanyName} account`}
+                    style={{
+                      border: "1px solid #c8daf0",
+                      background: "#f0f6ff",
+                      color: "#175089",
+                      borderRadius: 8,
+                      padding: "3px 8px",
+                      fontSize: 11,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      flexShrink: 0,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <Building2 size={11} />
+                    Open
+                  </button>
+                )}
+              </div>
             )}
             <button onClick={onClose} style={{ color: "#7a96b0", cursor: "pointer", background: "none", border: "none", marginLeft: 12 }}>
               <X size={20} />

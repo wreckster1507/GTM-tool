@@ -504,9 +504,9 @@ async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSess
         for index, delay in enumerate(body.step_delays, start=1)
     ]
 
-    if len(raw_steps) < 1 or len(raw_steps) > 10:
+    if len(raw_steps) < 1 or len(raw_steps) > 20:
         from fastapi import HTTPException
-        raise HTTPException(status_code=422, detail="steps must have 1–10 entries")
+        raise HTTPException(status_code=422, detail="steps must have 1–20 entries")
 
     normalized_steps: list[OutreachTimingStep] = []
     last_day = -1
@@ -601,8 +601,8 @@ async def update_outreach_content_settings(
     session: DBSession,
     _user: CurrentUser,
 ):
-    if len(body.step_templates) < 1 or len(body.step_templates) > 10:
-        raise HTTPException(status_code=422, detail="step_templates must have 1–10 entries")
+    if len(body.step_templates) < 1 or len(body.step_templates) > 20:
+        raise HTTPException(status_code=422, detail="step_templates must have 1–20 entries")
 
     seen_numbers: set[int] = set()
     normalized_steps = []

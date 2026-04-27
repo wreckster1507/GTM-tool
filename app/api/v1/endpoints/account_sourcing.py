@@ -671,6 +671,8 @@ async def _process_uploaded_rows(
                 company = await repo.get_by_domain(domain)
             if not company:
                 company = await repo.get_by_name(name)
+            if not company:
+                company = await repo.get_by_normalized_name(name)
 
             if company:
                 already_in_batch = company.sourcing_batch_id == batch_id
@@ -1289,6 +1291,15 @@ async def create_manual_company(
         existing = await repo.get_by_domain(fields["domain"])
     if not existing:
         existing = await repo.get_by_name(fields["name"])
+    if not existing:
+        # Looser dedupe: catches the "added 'zywave', then added 'zywave.com'"
+        # case where the first row has a placeholder *.unknown domain and the
+        # second row's name (or domain) wouldn't otherwise match.
+        existing = await repo.get_by_normalized_name(fields["name"])
+    # Also try the raw domain root as a name match (handles "added zywave.com
+    # as a name" by stripping ".com" and looking for "zywave").
+    if not existing and normalized_domain:
+        existing = await repo.get_by_normalized_name(normalized_domain)
 
     if existing:
         company = merge_company_from_upload(existing, fields)

@@ -1007,29 +1007,90 @@ function VelocityView({
 }
 
 function ForecastView({ rows }: { rows: SalesForecastRow[] }) {
-  const maxWeighted = useMemo(() => Math.max(...rows.map((row) => row.weighted_amount), 1), [rows]);
+  // One scale per chart — derived from the larger of raw/weighted across all
+  // buckets so both bars share a comparable visual base. Avoids the bug where
+  // a single huge "weighted" bucket flattens every "raw" bar to nothing.
+  const maxValue = useMemo(
+    () => Math.max(...rows.flatMap((row) => [row.amount, row.weighted_amount]), 1),
+    [rows],
+  );
+  const totalRaw = useMemo(() => rows.reduce((sum, row) => sum + row.amount, 0), [rows]);
+  const totalWeighted = useMemo(() => rows.reduce((sum, row) => sum + row.weighted_amount, 0), [rows]);
+  const totalDeals = useMemo(() => rows.reduce((sum, row) => sum + row.deal_count, 0), [rows]);
 
   if (rows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>No dated pipeline yet. Add close dates to unlock forecast timing.</p>;
   }
 
+  // Each bucket gets a fixed minimum width; the wrapper scrolls horizontally
+  // when there are too many to fit. Cleaner than squashing 26 weekly buckets
+  // into a 6-column grid.
+  const minColWidth = 110;
+  const chartHeight = 200;
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(rows.length, 1), 6)}, minmax(90px, 1fr))`, gap: 14, alignItems: "end" }}>
-      {rows.map((row) => (
-        <div key={row.key} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ height: 180, display: "flex", alignItems: "flex-end" }}>
-            <div style={{ width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 8 }}>
-              <div style={{ height: `${Math.max((row.amount / Math.max(...rows.map((item) => item.amount), 1)) * 140, row.amount > 0 ? 18 : 0)}px`, borderRadius: 14, background: "#dbe7ff" }} />
-              <div style={{ height: `${Math.max((row.weighted_amount / maxWeighted) * 140, row.weighted_amount > 0 ? 18 : 0)}px`, borderRadius: 14, background: "#4e6be6" }} />
-            </div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#223547" }}>{row.label}</p>
-            <p style={{ margin: 0, fontSize: 11, color: "#6d7f93" }}>{formatShortCurrency(row.amount)} raw</p>
-            <p style={{ margin: 0, fontSize: 11, color: "#4e6be6", fontWeight: 700 }}>{formatShortCurrency(row.weighted_amount)} weighted</p>
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Totals bar — quick read at the top of the chart */}
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", padding: "10px 14px", borderRadius: 12, background: "#f5f7fb", border: "1px solid #e3e9f3" }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Total Raw</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color: "#223547" }}>{formatShortCurrency(totalRaw)}</span>
         </div>
-      ))}
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Total Weighted</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color: "#4e6be6" }}>{formatShortCurrency(totalWeighted)}</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Deals</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color: "#223547" }}>{totalDeals}</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Buckets</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color: "#223547" }}>{rows.length}</span>
+        </div>
+      </div>
+
+      {/* Chart — scrolls when buckets exceed available width */}
+      <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, minWidth: rows.length * minColWidth }}>
+          {rows.map((row) => {
+            const rawHeight = row.amount > 0 ? Math.max((row.amount / maxValue) * chartHeight, 6) : 0;
+            const weightedHeight = row.weighted_amount > 0 ? Math.max((row.weighted_amount / maxValue) * chartHeight, 6) : 0;
+            return (
+              <div key={row.key} style={{ flex: 1, minWidth: minColWidth, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ height: chartHeight, display: "flex", alignItems: "flex-end", gap: 6 }}>
+                  <div
+                    title={`Raw: ${formatShortCurrency(row.amount)}`}
+                    style={{
+                      flex: 1,
+                      height: `${rawHeight}px`,
+                      borderRadius: "6px 6px 0 0",
+                      background: "#dbe7ff",
+                      transition: "height 200ms ease",
+                    }}
+                  />
+                  <div
+                    title={`Weighted: ${formatShortCurrency(row.weighted_amount)}`}
+                    style={{
+                      flex: 1,
+                      height: `${weightedHeight}px`,
+                      borderRadius: "6px 6px 0 0",
+                      background: "#4e6be6",
+                      transition: "height 200ms ease",
+                    }}
+                  />
+                </div>
+                <div style={{ borderTop: "1px solid #e3e9f3", paddingTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 800, color: "#223547", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={row.label}>{row.label}</p>
+                  <p style={{ margin: 0, fontSize: 10, color: "#6d7f93" }}>{formatShortCurrency(row.amount)}</p>
+                  <p style={{ margin: 0, fontSize: 10, color: "#4e6be6", fontWeight: 700 }}>{formatShortCurrency(row.weighted_amount)}</p>
+                  <p style={{ margin: 0, fontSize: 10, color: "#9aa9bd" }}>{row.deal_count} {row.deal_count === 1 ? "deal" : "deals"}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1357,6 +1418,7 @@ export default function SalesAnalytics() {
   const [geographyFilter, setGeographyFilter] = useState<string[]>([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [forecastGranularity, setForecastGranularity] = useState<"week" | "month">("month");
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1405,7 +1467,7 @@ export default function SalesAnalytics() {
     setError(null);
 
     analyticsApi
-      .salesDashboard(windowDays, repFilter, geographyFilter, fromDate || undefined, toDate || undefined)
+      .salesDashboard(windowDays, repFilter, geographyFilter, fromDate || undefined, toDate || undefined, forecastGranularity)
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -1419,7 +1481,7 @@ export default function SalesAnalytics() {
     return () => {
       cancelled = true;
     };
-  }, [windowDays, repFilter, geographyFilter, fromDate, toDate]);
+  }, [windowDays, repFilter, geographyFilter, fromDate, toDate, forecastGranularity]);
 
   const metricCards: Array<{
     label: string;
@@ -1898,13 +1960,44 @@ export default function SalesAnalytics() {
 
           <SectionCard
             title="Forecast View"
-            subtitle="Raw versus weighted pipeline by expected close month so the team can separate ambition from statistically healthier forecast coverage."
+            subtitle="Raw versus weighted pipeline by expected close date. Switch between weekly and monthly buckets, or set a custom date range above to scope the chart."
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
+                {usingCustomRange && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#4e6be6", fontWeight: 700 }}>
+                    Custom range: {fromDate} → {toDate}
+                  </span>
+                )}
+              </div>
+              <div role="group" aria-label="Forecast granularity" style={{ display: "inline-flex", borderRadius: 10, overflow: "hidden", border: "1px solid #d8e0ec" }}>
+                {(["week", "month"] as const).map((option) => {
+                  const active = forecastGranularity === option;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setForecastGranularity(option)}
+                      style={{
+                        padding: "6px 14px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        background: active ? "#4e6be6" : "#fff",
+                        color: active ? "#fff" : "#3f5066",
+                        border: "none",
+                        cursor: "pointer",
+                        textTransform: "capitalize",
+                      }}
+                    >
+                      {option === "week" ? "Weekly" : "Monthly"}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <ForecastView rows={data.forecast_by_month} />
+            <ForecastView rows={data.forecast_buckets && data.forecast_buckets.length > 0 ? data.forecast_buckets : data.forecast_by_month} />
           </SectionCard>
 
           <SectionCard

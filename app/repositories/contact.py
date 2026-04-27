@@ -87,6 +87,7 @@ class ContactRepository(BaseRepository[Contact]):
         owner_id: Optional[str] = None,
         scope_any_match: bool = False,
         prospect_only: bool = False,
+        timezone: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ContactRead], int]:
@@ -251,6 +252,15 @@ class ContactRepository(BaseRepository[Contact]):
                 sdr_filter = Contact.sdr_id.in_(sdr_ids)
                 base_stmt = base_stmt.where(sdr_filter)
                 count_stmt = count_stmt.where(sdr_filter)
+
+        # Timezone filter: comma-separated list. Each value is matched
+        # case-insensitively against Contact.timezone (e.g. "Asia/Kolkata").
+        if timezone:
+            tz_values = [tz.strip().lower() for tz in timezone.split(",") if tz.strip()]
+            if tz_values:
+                tz_filter = func.lower(Contact.timezone).in_(tz_values)
+                base_stmt = base_stmt.where(tz_filter)
+                count_stmt = count_stmt.where(tz_filter)
 
         total = (await self.session.execute(count_stmt)).scalar_one()
 

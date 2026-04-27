@@ -50,6 +50,8 @@ class ProspectImportResponse(SQLModel):
 
 
 async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> Company | None:
+    from app.repositories.company import CompanyRepository
+
     company_fields = row_to_company_fields(row)
     domain = (company_fields.get("domain") or "").strip().lower()
     name = (company_fields.get("name") or "").strip()
@@ -65,6 +67,10 @@ async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> 
                 select(Company).where(func.lower(Company.name) == name.lower()).limit(1)
             )
         ).scalars().first()
+    if not company and name:
+        # Looser dedupe so "OpenGov Inc." matches "OpenGov" and prevents
+        # the placeholder-domain fallback from creating a shadow record.
+        company = await CompanyRepository(session).get_by_normalized_name(name)
     return company
 
 
@@ -102,6 +108,7 @@ async def list_contacts(
     owner_id: Optional[str] = Query(default=None, description="Filter by one or more user IDs across AE or SDR ownership"),
     scope_any_match: bool = Query(default=False, description="When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter"),
     prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches"),
+    timezone: Optional[str] = Query(default=None, description="Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York')"),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
@@ -126,6 +133,7 @@ async def list_contacts(
         owner_id=owner_id,
         scope_any_match=scope_any_match,
         prospect_only=prospect_only,
+        timezone=timezone,
         skip=pagination.skip,
         limit=pagination.limit,
     )
