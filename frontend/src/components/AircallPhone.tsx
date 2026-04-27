@@ -32,6 +32,7 @@ export default function AircallPhonePanel() {
   const [open, setOpen] = useState(false);
   const [minimised, setMinimised] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
+  const [sdkUnavailable, setSdkUnavailable] = useState(false);
   const [verticalOffset, setVerticalOffset] = useState(0);
   const [callState, setCallState] = useState<CallState>({
     active: false,
@@ -55,75 +56,82 @@ export default function AircallPhonePanel() {
   useEffect(() => {
     if (phoneRef.current) return; // already initialised
 
-    const phone = new AircallPhone({
-      domToLoadWorkspace: "#aircall-workspace",
-      onLogin: () => {
-        setSdkReady(true);
-        console.log("[Aircall] Agent logged in");
-      },
-      onLogout: () => {
-        setSdkReady(false);
-        console.log("[Aircall] Agent logged out");
-      },
-      size: "big",
-      debug: false,
-    });
-
-    // ── Call lifecycle events ────────────────────────────────────────────────
-    phone.on("incoming_call", (info: any) => {
-      setCallState({
-        active: true,
-        phoneNumber: info.from,
-        contactName: info.contact?.name,
-        duration: 0,
-        status: "ringing",
+    try {
+      const phone = new AircallPhone({
+        domToLoadWorkspace: "#aircall-workspace",
+        onLogin: () => {
+          setSdkReady(true);
+          setSdkUnavailable(false);
+          console.log("[Aircall] Agent logged in");
+        },
+        onLogout: () => {
+          setSdkReady(false);
+          console.log("[Aircall] Agent logged out");
+        },
+        size: "big",
+        debug: false,
       });
-      setOpen(true);
-      setMinimised(false);
-    });
 
-    phone.on("outgoing_call", (info: any) => {
-      setCallState(prev => ({
-        ...prev,
-        active: true,
-        phoneNumber: info.to,
-        duration: 0,
-        status: "ringing",
-      }));
-    });
+      // ── Call lifecycle events ────────────────────────────────────────────────
+      phone.on("incoming_call", (info: any) => {
+        setCallState({
+          active: true,
+          phoneNumber: info.from,
+          contactName: info.contact?.name,
+          duration: 0,
+          status: "ringing",
+        });
+        setOpen(true);
+        setMinimised(false);
+      });
 
-    phone.on("outgoing_answered", () => {
-      setCallState(prev => ({ ...prev, status: "answered" }));
-      // Start duration timer
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(() => {
-        setCallState(prev => ({ ...prev, duration: prev.duration + 1 }));
-      }, 1000);
-    });
+      phone.on("outgoing_call", (info: any) => {
+        setCallState(prev => ({
+          ...prev,
+          active: true,
+          phoneNumber: info.to,
+          duration: 0,
+          status: "ringing",
+        }));
+      });
 
-    phone.on("call_end_ringtone", ({ answer_status }: any) => {
-      if (answer_status === "no_answer" || answer_status === "busy") {
-        setCallState(prev => ({ ...prev, status: "ended", active: false }));
+      phone.on("outgoing_answered", () => {
+        setCallState(prev => ({ ...prev, status: "answered" }));
+        // Start duration timer
         if (timerRef.current) clearInterval(timerRef.current);
-      }
-    });
+        timerRef.current = setInterval(() => {
+          setCallState(prev => ({ ...prev, duration: prev.duration + 1 }));
+        }, 1000);
+      });
 
-    phone.on("call_ended", ({ duration }: any) => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      setCallState(prev => ({
-        ...prev,
-        active: false,
-        duration: duration || prev.duration,
-        status: "ended",
-      }));
-      // Auto-collapse after 3 seconds
-      setTimeout(() => {
-        setCallState({ active: false, duration: 0, status: "idle" });
-        setMinimised(true);
-      }, 3000);
-    });
+      phone.on("call_end_ringtone", ({ answer_status }: any) => {
+        if (answer_status === "no_answer" || answer_status === "busy") {
+          setCallState(prev => ({ ...prev, status: "ended", active: false }));
+          if (timerRef.current) clearInterval(timerRef.current);
+        }
+      });
 
-    phoneRef.current = phone;
+      phone.on("call_ended", ({ duration }: any) => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        setCallState(prev => ({
+          ...prev,
+          active: false,
+          duration: duration || prev.duration,
+          status: "ended",
+        }));
+        // Auto-collapse after 3 seconds
+        setTimeout(() => {
+          setCallState({ active: false, duration: 0, status: "idle" });
+          setMinimised(true);
+        }, 3000);
+      });
+
+      phoneRef.current = phone;
+    } catch (error) {
+      console.warn("[Aircall] SDK unavailable; CRM will continue without the phone widget.", error);
+      setSdkReady(false);
+      setSdkUnavailable(true);
+    }
   }, []);
 
   // ── Global dial trigger — called from any component ────────────────────────
@@ -246,9 +254,13 @@ export default function AircallPhonePanel() {
       : callState.status === "ringing"
         ? "Ringing..."
         : "Call ended"
+    : sdkUnavailable
+      ? "Unavailable"
     : sdkReady
       ? "Ready for calls"
       : "Loading workspace...";
+
+  if (sdkUnavailable) return null;
 
   return (
     <>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
+import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
@@ -17,6 +17,7 @@ type FunnelKey = "active" | "inactive" | "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
 type SummaryCardKey = "active" | "inactive" | "tofu" | "mofu" | "bofu" | "total";
 type PipelineSummarySectionConfig = PipelineSummarySettings["deal"];
+type CsvRow = Record<string, string | number | boolean | null | undefined>;
 
 const DEFAULT_DEAL_STAGES: StageMeta[] = [
   { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
@@ -106,6 +107,36 @@ function normalizePipelineSummarySettings(value?: Partial<PipelineSummarySetting
       visible_cards: normalizeVisibleCards(value?.prospect?.visible_cards),
     },
   };
+}
+
+function csvCell(value: CsvRow[string]): string {
+  const raw = value == null ? "" : String(value);
+  return /[",\r\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
+}
+
+function csvFromRows(rows: CsvRow[]): string {
+  if (!rows.length) return "";
+  const headers = Object.keys(rows[0]);
+  return [
+    headers.map(csvCell).join(","),
+    ...rows.map((row) => headers.map((header) => csvCell(row[header])).join(",")),
+  ].join("\r\n");
+}
+
+function downloadCsv(filename: string, rows: CsvRow[]) {
+  const csv = csvFromRows(rows);
+  if (!csv) return;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function fileSafeSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "pipeline";
 }
 
 function relativeTime(timestamp?: string): string {
@@ -1036,7 +1067,7 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
   );
 }
 
-function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; dropActive: boolean; onAdd?: () => void; onDrop: () => void; children: ReactNode }) {
+function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onExport, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; dropActive: boolean; onAdd?: () => void; onExport?: () => void; onDrop: () => void; children: ReactNode }) {
   return (
     <div style={{ width: 286, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10, padding: "0 4px" }}>
@@ -1047,6 +1078,17 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onDrop, chil
             <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#ecf1f7", color: "#48607b", flexShrink: 0 }}>{count}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            {onExport && (
+              <button
+                type="button"
+                onClick={onExport}
+                disabled={count === 0}
+                style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #dbe6f2", background: count === 0 ? "#f8fafc" : "#fff", cursor: count === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: count === 0 ? "#cbd5e1" : "#5e738b" }}
+                title={`Export ${stage.label}`}
+              >
+                <Download size={12} />
+              </button>
+            )}
             {onAdd && <button onClick={onAdd} style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #dbe6f2", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#7a96b0" }}><Plus size={12} /></button>}
           </div>
         </div>
@@ -1916,6 +1958,69 @@ export default function Pipeline() {
       : "Choose which prospect lanes count toward ToFU, MoFU, and BoFU in the shared summary cards.";
   const funnelModalStages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
 
+  const dealExportRows = (items: Deal[], stage: StageMeta): CsvRow[] => items.map((deal) => {
+    const company = deal.company_id ? companyMap.get(deal.company_id) : undefined;
+    const lastTouch = deal.last_activity_at || deal.seller_engagement_at || deal.client_engagement_at;
+    return {
+      "Deal Name": deal.name,
+      "Company": deal.company_name || company?.name || "",
+      "Stage": stage.label,
+      "Value": deal.value ?? "",
+      "Owner": deal.assigned_rep_name || "",
+      "Geography": deal.geography || normalizeGeo(company?.region) || "",
+      "Health": deal.health || "",
+      "Health Score": deal.health_score ?? "",
+      "Priority": company?.priority_tag || "",
+      "Commit": deal.commit_to_deal ? "Yes" : "No",
+      "Close Date": deal.close_date_est ? formatDate(deal.close_date_est) : "",
+      "Days In Stage": deal.days_in_stage ?? "",
+      "Last Activity": lastTouch ? formatDate(lastTouch) : "",
+      "Contacts": deal.contact_count ?? deal.stakeholder_count ?? 0,
+      "Tags": (deal.tags ?? []).join("; "),
+      "Next Step": deal.next_step || "",
+      "Source": deal.source || "",
+      "Deal ID": deal.id,
+      "Company ID": deal.company_id || "",
+    };
+  });
+
+  const prospectExportRows = (items: Contact[], stage: StageMeta): CsvRow[] => items.map((contact) => {
+    const company = contact.company_id ? companyMap.get(contact.company_id) : undefined;
+    return {
+      "Prospect Name": contactName(contact),
+      "Company": contact.company_name || company?.name || "",
+      "Stage": stage.label,
+      "Title": contact.title || "",
+      "Persona": contact.persona || "",
+      "Email": contact.email || "",
+      "Phone": contact.phone || "",
+      "LinkedIn": contact.linkedin_url || "",
+      "AE": contact.assigned_to_name || "",
+      "SDR": contact.sdr_name || "",
+      "Geography": normalizeGeo(company?.region) || "",
+      "Sequence Status": contact.sequence_status || "",
+      "Instantly Status": contact.instantly_status || "",
+      "Tracking Label": contact.tracking_label || "",
+      "Tracking Score": contact.tracking_score ?? "",
+      "Tracking Summary": contact.tracking_summary || "",
+      "Last Activity": contact.tracking_last_activity_at ? formatDate(contact.tracking_last_activity_at) : "",
+      "Contact ID": contact.id,
+      "Company ID": contact.company_id || "",
+    };
+  });
+
+  const exportPipelineCsv = (scope?: { stage: StageMeta }) => {
+    const date = new Date().toISOString().slice(0, 10);
+    const targetStages = scope?.stage ? [scope.stage] : stages;
+    const rows = targetStages.flatMap((stage) => {
+      if (tab === "deal") return dealExportRows(filteredDealBoard[stage.id] ?? [], stage);
+      return prospectExportRows(filteredProspects[stage.id as ProspectStageId] ?? [], stage);
+    });
+    if (!rows.length) return;
+    const scopeName = scope?.stage ? fileSafeSegment(scope.stage.label) : "visible";
+    downloadCsv(`${tab === "deal" ? "pipeline-deals" : "pipeline-prospects"}-${scopeName}-${date}.csv`, rows);
+  };
+
 
   const resetFilters = () => {
     setSearch("");
@@ -2347,6 +2452,29 @@ export default function Pipeline() {
               <SummaryCard key={card.key} label={card.label} value={card.value} tone={card.tone ?? "default"} />
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => exportPipelineCsv()}
+            disabled={currentBoardLoading || summary.total === 0}
+            style={{
+              height: 36,
+              borderRadius: 10,
+              border: summary.total > 0 ? `1.5px solid ${accentBorder}` : "1px solid #e2eaf2",
+              background: summary.total > 0 ? accentBg : "#f8fafc",
+              color: summary.total > 0 ? accentColor : "#9badbf",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: currentBoardLoading || summary.total === 0 ? "not-allowed" : "pointer",
+            }}
+            title={stageFilters.length ? "Export the currently filtered stages" : "Export all visible stages"}
+          >
+            <Download size={14} />
+            Export visible list
+          </button>
 
           <div style={{ height: 1, background: "#e8eef5" }} />
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2469,7 +2597,7 @@ export default function Pipeline() {
                 return (
                   <div key={stage.id} style={{ display: "flex", gap: 12, height: "100%" }}>
                     {divider && <div style={{ width: 1, background: "linear-gradient(180deg, #dbe6f2 0%, transparent 100%)", margin: "28px 2px 0", alignSelf: "stretch" }} />}
-                    <BoardColumn stage={stage} count={currentBoardLoading ? 0 : tab === "deal" ? dealItems.length : prospectItems.length} totalValue={currentBoardLoading || tab !== "deal" ? undefined : dealItems.reduce((sum, deal) => { const n = Number(deal.value); return sum + (Number.isFinite(n) ? n : 0); }, 0)} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
+                    <BoardColumn stage={stage} count={currentBoardLoading ? 0 : tab === "deal" ? dealItems.length : prospectItems.length} totalValue={currentBoardLoading || tab !== "deal" ? undefined : dealItems.reduce((sum, deal) => { const n = Number(deal.value); return sum + (Number.isFinite(n) ? n : 0); }, 0)} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onExport={currentBoardLoading ? undefined : () => exportPipelineCsv({ stage })} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
                       {currentBoardLoading ? (
                         Array.from({ length: stage.group === "active" ? 3 : 1 }).map((_, skeletonIndex) => (
                           <LoadingCard key={`${stage.id}-skeleton-${skeletonIndex}`} kind={tab === "deal" ? "deal" : "prospect"} />
