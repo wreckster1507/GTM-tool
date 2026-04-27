@@ -8,7 +8,7 @@ import {
   Globe, Target, Mail, UserPlus, FileText, Crosshair, Trash2,
   Link2, Link2Off, Plus, X, Save,
 } from "lucide-react";
-import { companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
+import { accountSourcingApi, companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
 import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
 import { formatCurrency, formatDate, formatOptionalDate, avatarColor, getInitials, isValidDateValue } from "../lib/utils";
@@ -269,6 +269,107 @@ function Section({ title, icon, children, defaultOpen = true, badge }: {
   );
 }
 
+function SearchSelect<T extends { id: string }>({
+  label,
+  placeholder,
+  value,
+  query,
+  options,
+  getLabel,
+  getMeta,
+  onQueryChange,
+  onSelect,
+  onClear,
+  loading = false,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  query: string;
+  options: T[];
+  getLabel: (item: T) => string;
+  getMeta?: (item: T) => string | undefined;
+  onQueryChange: (value: string) => void;
+  onSelect: (item: T) => void;
+  onClear: () => void;
+  loading?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((item) => item.id === value);
+  const visibleOptions = options.slice(0, 8);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <label style={{ fontSize: 11, fontWeight: 700, color: "#546679", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5 }}>
+        {label}
+      </label>
+      <div style={{ position: "relative" }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#7890aa" }} />
+        <input
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            onQueryChange(e.target.value);
+            setOpen(true);
+          }}
+          placeholder={selected ? getLabel(selected) : placeholder}
+          style={{ width: "100%", height: 38, borderRadius: 9, border: "1px solid #c8d8ee", padding: "0 34px 0 32px", fontSize: 13, color: "#24364b", background: "#fff", boxSizing: "border-box", outline: "none" }}
+        />
+        {(value || query) && (
+          <button
+            type="button"
+            onClick={() => {
+              onClear();
+              onQueryChange("");
+              setOpen(false);
+            }}
+            aria-label={`Clear ${label}`}
+            style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "transparent", color: "#7890aa", cursor: "pointer", padding: 2 }}
+          >
+            <X size={13} />
+          </button>
+        )}
+      </div>
+      {open && (
+        <div style={{ position: "absolute", zIndex: 30, left: 0, right: 0, top: "calc(100% + 4px)", border: "1px solid #d8e5f5", borderRadius: 12, background: "#fff", boxShadow: "0 16px 34px rgba(15,23,42,0.13)", overflow: "hidden" }}>
+          <button
+            type="button"
+            onClick={() => {
+              onClear();
+              onQueryChange("");
+              setOpen(false);
+            }}
+            style={{ width: "100%", border: "none", background: value ? "#f8fbff" : "#eef4ff", color: "#315a9e", padding: "9px 12px", textAlign: "left", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+          >
+            — No {label.toLowerCase()} —
+          </button>
+          {loading ? (
+            <div style={{ padding: "10px 12px", color: "#7890aa", fontSize: 12 }}>Searching...</div>
+          ) : visibleOptions.length === 0 ? (
+            <div style={{ padding: "10px 12px", color: "#7890aa", fontSize: 12 }}>
+              Type to search {label.toLowerCase()}.
+            </div>
+          ) : visibleOptions.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                onSelect(item);
+                onQueryChange(getLabel(item));
+                setOpen(false);
+              }}
+              style={{ width: "100%", border: "none", background: item.id === value ? "#eef4ff" : "#fff", color: "#24364b", padding: "10px 12px", textAlign: "left", cursor: "pointer", display: "grid", gap: 2 }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 800 }}>{getLabel(item)}</span>
+              {getMeta?.(item) ? <span style={{ fontSize: 11, color: "#7890aa" }}>{getMeta(item)}</span> : null}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function MeetingDetail() {
@@ -300,6 +401,9 @@ export default function MeetingDetail() {
   const [linkCompanyId, setLinkCompanyId]   = useState<string>("");
   const [linkDealId, setLinkDealId]         = useState<string>("");
   const [linkSaving, setLinkSaving]         = useState(false);
+  const [companySearchQuery, setCompanySearchQuery] = useState("");
+  const [dealSearchQuery, setDealSearchQuery] = useState("");
+  const [companySearching, setCompanySearching] = useState(false);
   // attendee editor
   const [editingAttendees, setEditingAttendees] = useState(false);
   const [attendeeList, setAttendeeList]         = useState<Array<{ contact_id: string; name: string; title?: string; email?: string; role?: string }>>([]);
@@ -469,13 +573,59 @@ export default function MeetingDetail() {
   const handleOpenLinkPanel = async () => {
     setLinkCompanyId(meeting?.company_id ?? "");
     setLinkDealId(meeting?.deal_id ?? "");
-    if (allCompanies.length === 0) {
-      const [cs, ds] = await Promise.all([companiesApi.list(), dealsApi.list(0, 300)]);
-      setAllCompanies(cs);
-      setAllDeals(ds);
-    }
+    setCompanySearchQuery(company?.name ?? "");
+    const selectedDeal = allDeals.find((deal) => deal.id === meeting?.deal_id);
+    setDealSearchQuery(selectedDeal?.name ?? "");
+    const [companyPage, ds] = await Promise.all([
+      accountSourcingApi.listCompaniesPaginated({ skip: 0, limit: 50 }),
+      dealsApi.list(0, 500),
+    ]);
+    const companies = company && !companyPage.items.some((item) => item.id === company.id)
+      ? [company, ...companyPage.items]
+      : companyPage.items;
+    setAllCompanies(companies);
+    setAllDeals(ds);
     setShowLinkPanel(true);
   };
+
+  useEffect(() => {
+    if (!showLinkPanel) return;
+    let cancelled = false;
+    const handle = window.setTimeout(async () => {
+      setCompanySearching(true);
+      try {
+        const page = await accountSourcingApi.listCompaniesPaginated({
+          skip: 0,
+          limit: 50,
+          q: companySearchQuery.trim() || undefined,
+        });
+        const selected = company?.id === linkCompanyId ? company : undefined;
+        const next = selected && !page.items.some((item) => item.id === selected.id)
+          ? [selected, ...page.items]
+          : page.items;
+        if (!cancelled) setAllCompanies(next);
+      } catch {
+        if (!cancelled) setAllCompanies((current) => current);
+      } finally {
+        if (!cancelled) setCompanySearching(false);
+      }
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [company, companySearchQuery, linkCompanyId, showLinkPanel]);
+
+  const linkDealOptions = useMemo(() => {
+    const needle = dealSearchQuery.trim().toLowerCase();
+    return allDeals
+      .filter((deal) => !linkCompanyId || deal.company_id === linkCompanyId)
+      .filter((deal) => {
+        if (!needle) return true;
+        return `${deal.name} ${deal.company_name ?? ""} ${deal.stage ?? ""}`.toLowerCase().includes(needle);
+      })
+      .slice(0, 50);
+  }, [allDeals, dealSearchQuery, linkCompanyId]);
 
   const handleSaveLink = async () => {
     if (!id) return;
@@ -752,28 +902,48 @@ export default function MeetingDetail() {
               </button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: "#546679", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5 }}>Company</label>
-                <select
-                  value={linkCompanyId}
-                  onChange={(e) => setLinkCompanyId(e.target.value)}
-                  style={{ width: "100%", height: 36, borderRadius: 9, border: "1px solid #c8d8ee", padding: "0 10px", fontSize: 13, color: "#24364b", background: "#fff" }}
-                >
-                  <option value="">— No company —</option>
-                  {allCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: "#546679", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5 }}>Deal</label>
-                <select
-                  value={linkDealId}
-                  onChange={(e) => setLinkDealId(e.target.value)}
-                  style={{ width: "100%", height: 36, borderRadius: 9, border: "1px solid #c8d8ee", padding: "0 10px", fontSize: 13, color: "#24364b", background: "#fff" }}
-                >
-                  <option value="">— No deal —</option>
-                  {allDeals.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-              </div>
+              <SearchSelect
+                label="Company"
+                placeholder="Search accounts by name or domain"
+                value={linkCompanyId}
+                query={companySearchQuery}
+                options={allCompanies}
+                loading={companySearching}
+                getLabel={(item) => item.name}
+                getMeta={(item) => item.domain || item.industry || undefined}
+                onQueryChange={setCompanySearchQuery}
+                onClear={() => {
+                  setLinkCompanyId("");
+                  setLinkDealId("");
+                  setDealSearchQuery("");
+                }}
+                onSelect={(item) => {
+                  setLinkCompanyId(item.id);
+                  if (linkDealId && !allDeals.some((deal) => deal.id === linkDealId && deal.company_id === item.id)) {
+                    setLinkDealId("");
+                    setDealSearchQuery("");
+                  }
+                }}
+              />
+              <SearchSelect
+                label="Deal"
+                placeholder={linkCompanyId ? "Search deals for selected company" : "Search deals"}
+                value={linkDealId}
+                query={dealSearchQuery}
+                options={linkDealOptions}
+                getLabel={(item) => item.name}
+                getMeta={(item) => `${item.company_name || "No company"} · ${item.stage?.replace(/_/g, " ") || "No stage"}`}
+                onQueryChange={setDealSearchQuery}
+                onClear={() => setLinkDealId("")}
+                onSelect={(item) => {
+                  setLinkDealId(item.id);
+                  if (item.company_id) {
+                    setLinkCompanyId(item.company_id);
+                    const dealCompany = allCompanies.find((company) => company.id === item.company_id);
+                    if (dealCompany) setCompanySearchQuery(dealCompany.name);
+                  }
+                }}
+              />
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
               <button
