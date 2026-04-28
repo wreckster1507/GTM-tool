@@ -1418,7 +1418,11 @@ export default function SalesAnalytics() {
   const [geographyFilter, setGeographyFilter] = useState<string[]>([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [forecastGranularity, setForecastGranularity] = useState<"week" | "month">("month");
+  const [forecastGranularity, setForecastGranularity] = useState<"week" | "month" | "custom">("month");
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastRows, setForecastRows] = useState<SalesForecastRow[]>([]);
+  const [forecastCustomFrom, setForecastCustomFrom] = useState("");
+  const [forecastCustomTo, setForecastCustomTo] = useState("");
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1467,9 +1471,12 @@ export default function SalesAnalytics() {
     setError(null);
 
     analyticsApi
-      .salesDashboard(windowDays, repFilter, geographyFilter, fromDate || undefined, toDate || undefined, forecastGranularity)
+      .salesDashboard(windowDays, repFilter, geographyFilter, fromDate || undefined, toDate || undefined, forecastGranularity === "custom" ? undefined : forecastGranularity)
       .then((payload) => {
-        if (!cancelled) setData(payload);
+        if (!cancelled) {
+          setData(payload);
+          setForecastRows(payload.forecast_buckets && payload.forecast_buckets.length > 0 ? payload.forecast_buckets : payload.forecast_by_month);
+        }
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message || "Failed to load sales analytics");
@@ -1481,7 +1488,35 @@ export default function SalesAnalytics() {
     return () => {
       cancelled = true;
     };
-  }, [windowDays, repFilter, geographyFilter, fromDate, toDate, forecastGranularity]);
+  }, [windowDays, repFilter, geographyFilter, fromDate, toDate]);
+
+  const forecastInitRef = useRef(true);
+  useEffect(() => {
+    if (forecastInitRef.current) {
+      forecastInitRef.current = false;
+      return;
+    }
+    let cancelled = false;
+    setForecastLoading(true);
+
+    const gran = forecastGranularity === "custom" ? undefined : forecastGranularity;
+    const fd = forecastGranularity === "custom" ? forecastCustomFrom : (fromDate || undefined);
+    const td = forecastGranularity === "custom" ? forecastCustomTo : (toDate || undefined);
+
+    analyticsApi
+      .salesDashboard(windowDays, repFilter, geographyFilter, fd, td, gran)
+      .then((payload) => {
+        if (!cancelled) {
+          setForecastRows(payload.forecast_buckets && payload.forecast_buckets.length > 0 ? payload.forecast_buckets : payload.forecast_by_month);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setForecastLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [forecastGranularity, forecastCustomFrom, forecastCustomTo, windowDays, repFilter, geographyFilter, fromDate, toDate]);
 
   const metricCards: Array<{
     label: string;
@@ -1958,46 +1993,80 @@ export default function SalesAnalytics() {
             </SectionCard>
           </div>
 
-          <SectionCard
+           <SectionCard
             title="Forecast View"
-            subtitle="Raw versus weighted pipeline by expected close date. Switch between weekly and monthly buckets, or set a custom date range above to scope the chart."
+            subtitle="Raw versus weighted pipeline by expected close date. Switch between weekly and monthly buckets, or set a custom date range below to scope the chart."
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
-                {usingCustomRange && (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#4e6be6", fontWeight: 700 }}>
-                    Custom range: {fromDate} → {toDate}
-                  </span>
-                )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
+                  {forecastGranularity === "custom" && forecastCustomFrom && forecastCustomTo && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#4e6be6", fontWeight: 700 }}>
+                      {forecastCustomFrom} → {forecastCustomTo}
+                    </span>
+                  )}
+                </div>
+                <div role="group" aria-label="Forecast granularity" style={{ display: "inline-flex", borderRadius: 10, overflow: "hidden", border: "1px solid #d8e0ec" }}>
+                  {(["week", "month", "custom"] as const).map((option) => {
+                    const active = forecastGranularity === option;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setForecastGranularity(option)}
+                        style={{
+                          padding: "6px 14px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          background: active ? "#4e6be6" : "#fff",
+                          color: active ? "#fff" : "#3f5066",
+                          border: "none",
+                          cursor: "pointer",
+                          textTransform: "capitalize",
+                        }}
+                      >
+                        {option === "week" ? "Weekly" : option === "month" ? "Monthly" : "Custom"}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div role="group" aria-label="Forecast granularity" style={{ display: "inline-flex", borderRadius: 10, overflow: "hidden", border: "1px solid #d8e0ec" }}>
-                {(["week", "month"] as const).map((option) => {
-                  const active = forecastGranularity === option;
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setForecastGranularity(option)}
-                      style={{
-                        padding: "6px 14px",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        background: active ? "#4e6be6" : "#fff",
-                        color: active ? "#fff" : "#3f5066",
-                        border: "none",
-                        cursor: "pointer",
-                        textTransform: "capitalize",
-                      }}
-                    >
-                      {option === "week" ? "Weekly" : "Monthly"}
-                    </button>
-                  );
-                })}
-              </div>
+              {forecastGranularity === "custom" && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 12, border: "1.5px solid #a5b4fc", background: "#eef2ff" }}>
+                    <CalendarRange size={13} style={{ color: "#4f46e5", flexShrink: 0 }} />
+                    <input
+                      type="date"
+                      value={forecastCustomFrom}
+                      onChange={(e) => setForecastCustomFrom(e.target.value)}
+                      style={{ border: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#374151", outline: "none", width: 120 }}
+                      placeholder="From"
+                    />
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>→</span>
+                    <input
+                      type="date"
+                      value={forecastCustomTo}
+                      onChange={(e) => setForecastCustomTo(e.target.value)}
+                      style={{ border: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#374151", outline: "none", width: 120 }}
+                      placeholder="To"
+                    />
+                    {(forecastCustomFrom || forecastCustomTo) && (
+                      <button type="button" onClick={() => { setForecastCustomFrom(""); setForecastCustomTo(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1 }}>✕</button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-            <ForecastView rows={data.forecast_buckets && data.forecast_buckets.length > 0 ? data.forecast_buckets : data.forecast_by_month} />
+            {forecastLoading ? (
+              <div style={{ display: "grid", placeItems: "center", padding: "40px 20px", color: "#6f8095", gap: 8 }}>
+                <LoaderCircle size={20} className="spin" />
+                <span style={{ fontSize: 12 }}>Loading forecast...</span>
+              </div>
+            ) : (
+              <ForecastView rows={forecastRows} />
+            )}
           </SectionCard>
 
           <SectionCard
