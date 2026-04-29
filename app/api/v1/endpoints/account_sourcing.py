@@ -35,6 +35,7 @@ from app.models.user import User
 from app.repositories.company import CompanyRepository
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
+    _clean_company_name,
     account_priority_snapshot,
     append_company_activity_log,
     is_priority_stakeholder_candidate,
@@ -1242,7 +1243,7 @@ async def create_manual_company(
     current_user: CurrentUser,
     session: DBSession = None,
 ):
-    name = (payload.name or "").strip()
+    name = _clean_company_name(payload.name or "")
     if not name:
         raise HTTPException(status_code=400, detail="Company name is required")
 

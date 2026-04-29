@@ -167,7 +167,7 @@ export const contactsApi = {
     emailState?: string[];
     aeId?: string[];
     sdrId?: string[];
-    ownerId?: string;
+    ownerId?: string | string[];
     scopeAnyMatch?: boolean;
     prospectOnly?: boolean;
     timezone?: string[];
@@ -184,7 +184,10 @@ export const contactsApi = {
     if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
     if (params.aeId?.length) search.set("ae_id", params.aeId.join(","));
     if (params.sdrId?.length) search.set("sdr_id", params.sdrId.join(","));
-    if (params.ownerId) search.set("owner_id", params.ownerId);
+    if (params.ownerId) {
+      const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
+      if (ownerValue) search.set("owner_id", ownerValue);
+    }
     if (params.scopeAnyMatch) search.set("scope_any_match", "true");
     if (params.prospectOnly) search.set("prospect_only", "true");
     if (params.timezone?.length) search.set("timezone", params.timezone.join(","));

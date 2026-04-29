@@ -1872,9 +1872,35 @@ def _should_run_hunter(
     return False, "low_priority_contact_gap"
 
 
+def _clean_company_name(raw: str) -> str:
+    """
+    Sanitize a company name from any external source (xlsx/csv import,
+    manual create). Strips embedded newlines, tabs, trailing URLs, and
+    parenthesized URL fragments — the kinds of garbage analysts paste
+    by accident. Preserves legitimate aliases like "Plex (Rockwell)".
+    """
+    if not raw:
+        return ""
+    s = str(raw)
+    # Collapse newlines/tabs/multiple spaces.
+    s = re.sub(r"[\r\n\t]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    # Remove a trailing parenthesized URL: " (https://example.com/)" or " (www.x.com)".
+    s = re.sub(r"\s*\(\s*(?:https?://|www\.)[^)]*\)\s*$", "", s, flags=re.IGNORECASE).strip()
+    # Remove a trailing standalone URL with optional leading dash/em-dash.
+    s = re.sub(r"\s*[-–—|]?\s*(?:https?://|www\.)\S+\s*$", "", s, flags=re.IGNORECASE).strip()
+    # Drop dangling separator characters left behind after URL stripping.
+    s = s.rstrip(" -–—|/.,")
+    # Cap length at 200 chars — names beyond that are descriptions, not names.
+    if len(s) > 200:
+        s = s[:200].rstrip()
+    return s
+
+
 def row_to_company_fields(row: dict[str, str]) -> dict:
     """Map a CSV row to Company field dict."""
-    name = _find(row, "name") or "Unknown Company"
+    raw_name = _find(row, "name") or ""
+    name = _clean_company_name(raw_name) or "Unknown Company"
     domain_raw = _find(row, "domain")
     domain = _clean_domain(domain_raw)
     if not domain:

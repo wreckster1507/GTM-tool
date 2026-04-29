@@ -295,6 +295,12 @@ export default function Contacts() {
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
+  // Owner filter — multi-select that matches AE OR SDR ownership for any
+  // selected user. Different from ownerScope (binary "mine vs all") and from
+  // aeFilter/sdrFilter (role-specific). Sent to backend via owner_id +
+  // scope_any_match=true so a single user_id matches contacts they own as
+  // either AE or SDR.
+  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("own")));
   // Timezone filter — values are short labels (IST, PST, etc.). When sent to
   // the backend they're expanded to include matching IANA names from
   // TIMEZONE_LABELS so a contact stored as "Asia/Kolkata" matches "IST".
@@ -455,12 +461,16 @@ export default function Contacts() {
       limit: pageSize,
       q: debouncedSearch || undefined,
       companyId: companyFilter || undefined,
-      ownerId: ownerScope === "mine" ? user?.id : undefined,
       persona: personaFilter.length ? personaFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
       callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
       aeId: aeFilter.length ? aeFilter : undefined,
       sdrId: sdrFilter.length ? sdrFilter : undefined,
+      // Owner filter: any selected user matches contacts they own as AE OR SDR.
+      // ownerScope === "mine" still wins when set; otherwise the multi-select drives.
+      ownerId: ownerScope === "mine"
+        ? user?.id
+        : (ownerFilter.length ? ownerFilter : undefined),
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
       prospectOnly: true,
     }).then((result) => {
@@ -616,12 +626,13 @@ export default function Contacts() {
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
+      ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
       timezoneFilter.length ? next.set("tz", timezoneFilter.join(",")) : next.delete("tz");
       companyFilter ? next.set("co", companyFilter) : next.delete("co");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, companyFilter, ownerScope, page, sdrFilter, search, sequenceFilter, timezoneFilter, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, sequenceFilter, timezoneFilter, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -632,12 +643,12 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, sdrFilter, sequenceFilter, timezoneFilter]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
   // one batch call. Gives each row a progress bar (●━●━◉━○━○) and "Day 7 ·
@@ -1295,6 +1306,7 @@ export default function Contacts() {
                 callDispositionFilter.length ||
                 aeFilter.length ||
                 sdrFilter.length ||
+                ownerFilter.length ||
                 timezoneFilter.length ||
                 companyFilter ||
                 search
@@ -1372,6 +1384,14 @@ export default function Contacts() {
                   {/* Owner filters */}
                   {teamUsers.length > 0 && (
                     <>
+                      <MultiSelectFilter
+                        label="Owner"
+                        values={ownerFilter}
+                        onChange={setOwnerFilter}
+                        options={teamUserOptions}
+                        allLabel="Owner: All"
+                        minWidth={170}
+                      />
                       <MultiSelectFilter
                         label="AE"
                         values={aeFilter}
@@ -1497,6 +1517,7 @@ export default function Contacts() {
                         setOwnerScope("all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setAeFilter([]); setSdrFilter([]);
+                        setOwnerFilter([]);
                         setTimezoneFilter([]);
                         setCompanyFilter("");
                       }}
