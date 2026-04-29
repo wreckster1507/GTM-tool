@@ -65,10 +65,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "inspect_mom_template",
         "description": (
-            "Open Beacon's official MOM template from Drive and return every "
-            "{{TOKEN}} placeholder with a hint of what belongs there. "
-            "ALWAYS call this FIRST before `generate_mom` so you know exactly "
-            "which sections the template has. Do NOT search other docs."
+            "Open Beacon's official MOM template from Drive and report how "
+            "many rewritable content sections it contains. ALWAYS call this "
+            "FIRST before `generate_mom` to confirm the template is reachable. "
+            "Do NOT search other docs for MOM content."
         ),
         "input_schema": {
             "type": "object",
@@ -79,9 +79,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "generate_mom",
         "description": (
-            "Fill Beacon's official MOM template with content structured from the "
-            "user's transcript and produce a .docx file. ONLY call this after "
-            "`inspect_mom_template`. Never add sections not in the template."
+            "Rewrite Beacon's official MOM template in place using the user's "
+            "transcript and produce a .docx file. The tool extracts every "
+            "paragraph from the template and has Claude rewrite the non-"
+            "structural content — there are no placeholders to fill. ONLY call "
+            "this after `inspect_mom_template`. Never add sections not in the "
+            "template."
         ),
         "input_schema": {
             "type": "object",
@@ -107,6 +110,23 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "anything to include if no transcript is available."
                     ),
                 },
+                "format_type": {
+                    "type": "string",
+                    "enum": ["long", "short"],
+                    "description": (
+                        "'long' = detailed MOM with all sub-sections (default). "
+                        "'short' = key highlights only, concise."
+                    ),
+                },
+                "collateral": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Collateral items to include, each as "
+                        "'Label : Name | url'. You determine these from the "
+                        "collateral selection rules in your system prompt."
+                    ),
+                },
             },
             "required": ["client_name"],
         },
@@ -114,12 +134,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "inspect_nda_template",
         "description": (
-            "Open Beacon's official NDA template from Drive and return every "
-            "blank (underscore/dash runs) in document order with a short "
-            "surrounding-context snippet and a hint of what likely belongs "
-            "there. ALWAYS call this FIRST before `generate_nda` so you can "
-            "ask the user to fill each specific blank. Do not search other "
-            "docs or invent clauses — use ONLY this template."
+            "Open Beacon's official NDA template for the given jurisdiction "
+            "and report how many rewritable content sections it contains. "
+            "ALWAYS call this FIRST before `generate_nda` to confirm the "
+            "template is reachable. Do not search other docs or invent "
+            "clauses — use ONLY this template."
         ),
         "input_schema": {
             "type": "object",
@@ -135,16 +154,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "generate_nda",
         "description": (
-            "Draft a Non-Disclosure Agreement by filling Beacon's official NDA "
-            "template (stored in the workspace Drive folder) with the counterparty "
-            "name and jurisdiction-specific details. The template itself is never "
-            "rewritten — only placeholder tokens are replaced, so the output is "
-            "byte-identical to Legal's template except for the filled fields. "
+            "Draft a Non-Disclosure Agreement by rewriting Beacon's official NDA "
+            "template (stored in the workspace Drive folder) with the "
+            "counterparty name and jurisdiction-specific details. The template "
+            "is rewritten in place — structural headings are preserved, "
+            "content blocks are rewritten from the user's inputs. "
             "Only `jurisdiction` is REQUIRED (it picks which template to load). "
             "Every other field is OPTIONAL — pass ONLY the values the user "
-            "explicitly supplied. Do NOT invent or default any value. Any field "
-            "you omit will remain as a visible `{{TOKEN}}` in the output doc, "
-            "so reviewers can see at a glance what still needs filling."
+            "explicitly supplied. Do NOT invent or default any value. Missing "
+            "fields are left blank by the rewriter so reviewers can see what "
+            "still needs filling."
         ),
         "input_schema": {
             "type": "object",
@@ -156,12 +175,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "fills": {
                     "type": "object",
                     "description": (
-                        "Mapping of blank-index (as returned by "
-                        "`inspect_nda_template`) → the exact text the user "
-                        "gave for that blank. Keys are the stringified index "
-                        "numbers (e.g. \"1\", \"2\", \"3\"). Include ONLY "
-                        "indices the user explicitly answered — skipped "
-                        "blanks stay as-is in the output."
+                        "Free-form dict of extra details to pass to the "
+                        "rewriter (e.g. registered office, PAN, authorised "
+                        "signatory). The rewriter will use these verbatim "
+                        "where appropriate. Optional."
                     ),
                     "additionalProperties": {"type": "string"},
                 },
@@ -212,6 +229,65 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
             },
             "required": ["jurisdiction"],
+        },
+    },
+    {
+        "name": "inspect_roi_template",
+        "description": (
+            "Check that the Beacon ROI Excel template is available in Drive "
+            "and return the list of survey questions it expects. Call FIRST "
+            "before generate_roi."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "generate_roi",
+        "description": (
+            "Fill the Beacon ROI Analysis template with client survey "
+            "response data and produce a live Google Sheet. The tool fills "
+            "the Survey Input and Inputs sheets — all ROI calculations are "
+            "formula-driven and auto-update when the Sheet is opened. Call "
+            "after collecting Q2-Q14 answers from the AE."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_name": {"type": "string"},
+                "prepared_by": {"type": "string", "description": "AE name"},
+                "report_date": {
+                    "type": "string",
+                    "description": "e.g. 'April 2026'",
+                },
+                "q1_reason": {"type": "string"},
+                "q2_impls_per_year": {
+                    "type": "string",
+                    "description": (
+                        "Raw answer e.g. '700 total, 400 full module'"
+                    ),
+                },
+                "q3_team_size": {"type": "string", "description": "e.g. '24'"},
+                "q4_ftes_per_impl": {"type": "string", "description": "e.g. '3'"},
+                "q5_duration_range": {"type": "string"},
+                "q6_inception_weeks": {
+                    "type": "string",
+                    "description": "e.g. '1-4 weeks'",
+                },
+                "q7_solutioning_weeks": {"type": "string"},
+                "q8_config_weeks": {"type": "string"},
+                "q9_data_migration_weeks": {"type": "string"},
+                "q10_testing_weeks": {"type": "string"},
+                "q11_cutover_weeks": {"type": "string"},
+                "q12_fte_cost_usd": {
+                    "type": "string",
+                    "description": "e.g. '$40,000'",
+                },
+                "q13_ramp_up": {"type": "string"},
+                "q14_new_headcount": {
+                    "type": "string",
+                    "description": "e.g. 'Net 0' or '+3'",
+                },
+            },
+            "required": ["client_name"],
         },
     },
     {
@@ -266,11 +342,15 @@ async def execute_tool(
         if name == "generate_mom":
             return await _execute_mom(args, user_id=user_id)
         if name == "inspect_nda_template":
-            return await _execute_inspect_nda(args)
+            return await _execute_inspect_nda(args, user_id=user_id)
         if name == "generate_nda":
-            return await _execute_nda(args)
+            return await _execute_nda(args, user_id=user_id)
+        if name == "inspect_roi_template":
+            return await _execute_inspect_roi(user_id=user_id)
+        if name == "generate_roi":
+            return await _execute_roi(args, user_id=user_id)
         if name == "generate_document":
-            return await _execute_generic(args)
+            return await _execute_generic(args, user_id=user_id)
     except Exception as exc:
         logger.exception("Tool %s failed", name)
         return ToolOutcome(
@@ -331,19 +411,48 @@ async def _execute_search(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome
 
 
 def _doc_to_artifact(doc: GeneratedDocument) -> dict:
-    return {
+    artifact = {
         "type": doc.kind,
         "filename": doc.filename,
         "url": doc.url,
         "summary": doc.summary,
         "created_at": doc.created_at.isoformat(),
     }
+    if doc.drive_url:
+        artifact["drive_url"] = doc.drive_url
+        artifact["drive_file_id"] = doc.drive_file_id
+    return artifact
+
+
+def _doc_link_text(doc: GeneratedDocument) -> str:
+    """Return the best available link for the user — Google Docs if uploaded, else local download.
+
+    When a Google Doc exists we present it as the canonical artifact. Editing
+    happens in the browser, changes autosave in Drive, so the user never has
+    to download-edit-reupload. The raw .docx download is only surfaced as a
+    fallback when Drive upload failed.
+    """
+    if doc.drive_url:
+        return f"Edit in Google Docs: {doc.drive_url}"
+    return f"Download .docx: {doc.url}"
 
 
 async def _execute_inspect_mom(*, user_id: Optional[UUID]) -> ToolOutcome:
-    import json as _json
     result = await inspect_mom_template(user_id=user_id)
-    return ToolOutcome(result_text=_json.dumps(result, ensure_ascii=False))
+    if not result.get("found"):
+        return ToolOutcome(
+            result_text=(
+                f"MOM template not available: {result.get('error', 'unknown error')}. "
+                "You can still call `generate_mom` — it will produce a fallback draft."
+            ),
+        )
+    return ToolOutcome(
+        result_text=(
+            f"Template found: {result['template_name']}. "
+            f"Has {result['section_count']} content sections. "
+            "Ready to generate MOM once transcript is provided."
+        ),
+    )
 
 
 async def _execute_mom(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome:
@@ -353,12 +462,14 @@ async def _execute_mom(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome:
         attendees=args.get("attendees"),
         transcript=args.get("transcript"),
         context_notes=args.get("context_notes"),
+        format_type=args.get("format_type", "long"),
+        collateral=args.get("collateral") or [],
     )
     try:
         doc = await generate_mom(data, user_id=user_id)
     except MOMTemplateUnavailable as exc:
-        # Surface a clean error so the agent tells the user instead of
-        # silently fabricating a MOM. No fallback — refusal is by design.
+        # Kept for back-compat — the new generator falls back internally and
+        # shouldn't raise this, but some callers may still import the class.
         return ToolOutcome(
             result_text=(
                 f"Cannot generate MOM: {exc}. "
@@ -369,46 +480,36 @@ async def _execute_mom(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome:
         )
     return ToolOutcome(
         result_text=(
-            f"MOM generated → {doc.filename}. Download URL: {doc.url}. "
+            f"MOM generated as an editable Google Doc. {_doc_link_text(doc)}. "
             f"Summary: {doc.summary}"
         ),
         artifacts=[_doc_to_artifact(doc)],
     )
 
 
-async def _execute_inspect_nda(args: dict) -> ToolOutcome:
-    result = await inspect_nda_template(args["jurisdiction"])
+async def _execute_inspect_nda(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:
+    result = await inspect_nda_template(
+        args["jurisdiction"],
+        user_id=str(user_id) if user_id else None,
+    )
     if not result.get("found"):
         return ToolOutcome(
-            result_text=result.get("error") or "NDA template not available.",
-            is_error=True,
-        )
-    blanks = result["blanks"]
-    if not blanks:
-        return ToolOutcome(
             result_text=(
-                f"Template loaded but no blanks (___ / ——) were detected. "
-                f"You can call `generate_nda` directly with no fills, or the "
-                f"user can tell you what to change."
+                f"{result.get('error') or 'NDA template not available.'} "
+                "You can still call `generate_nda` — it will produce a "
+                "fallback draft from the user-provided details."
             ),
         )
-    lines = [
-        f"Template has {len(blanks)} blank(s). Ask the user to fill each by index:",
-        "",
-    ]
-    for b in blanks:
-        lines.append(f"[{b['index']}] {b['hint']}")
-        lines.append(f"    context: {b['context']}")
-    lines.append("")
-    lines.append(
-        "When calling `generate_nda`, pass `fills` as a dict {\"1\": \"…\", \"2\": \"…\"} "
-        "for ONLY the blanks the user answered. Do NOT search other documents "
-        "and do NOT invent values."
+    return ToolOutcome(
+        result_text=(
+            f"NDA template found for {result['jurisdiction']}. "
+            f"Has {result['section_count']} content sections. "
+            "Ask the user for party details."
+        ),
     )
-    return ToolOutcome(result_text="\n".join(lines))
 
 
-async def _execute_nda(args: dict) -> ToolOutcome:
+async def _execute_nda(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:
     data = NDAInput(
         jurisdiction=args["jurisdiction"],
         fills={str(k): str(v) for k, v in (args.get("fills") or {}).items()},
@@ -421,26 +522,80 @@ async def _execute_nda(args: dict) -> ToolOutcome:
         governing_city=args.get("governing_city"),
         extra_clauses=list(args.get("extra_clauses") or []),
     )
-    doc = await generate_nda(data)
+    doc = await generate_nda(data, user_id=str(user_id) if user_id else None)
     return ToolOutcome(
         result_text=(
-            f"NDA generated → {doc.filename}. Download URL: {doc.url}. "
+            f"NDA generated as an editable Google Doc. {_doc_link_text(doc)}. "
             f"Summary: {doc.summary}"
         ),
         artifacts=[_doc_to_artifact(doc)],
     )
 
 
-async def _execute_generic(args: dict) -> ToolOutcome:
+async def _execute_inspect_roi(*, user_id: Optional[UUID] = None) -> ToolOutcome:
+    from app.services.zippy_docs.roi import inspect_roi_template
+    result = await inspect_roi_template(
+        user_id=str(user_id) if user_id else None
+    )
+    if not result.get("found"):
+        return ToolOutcome(
+            result_text=(
+                f"ROI template not found: {result.get('error')}. "
+                "Proceeding with generate_roi will produce a basic "
+                "fallback sheet."
+            )
+        )
+    fields = "\n".join(f"  - {f}" for f in result.get("input_fields", []))
+    return ToolOutcome(
+        result_text=(
+            f"ROI template found: {result['template_name']}.\n"
+            f"Input fields needed from the AE's form response:\n{fields}\n"
+            f"{result.get('note', '')}"
+        )
+    )
+
+
+async def _execute_roi(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:
+    from app.services.zippy_docs.roi import ROIInput, generate as generate_roi
+    data = ROIInput(
+        client_name=args.get("client_name", "Client"),
+        prepared_by=args.get("prepared_by", "Beacon"),
+        report_date=args.get("report_date"),
+        q1_reason=args.get("q1_reason"),
+        q2_impls_per_year=args.get("q2_impls_per_year"),
+        q3_team_size=args.get("q3_team_size"),
+        q4_ftes_per_impl=args.get("q4_ftes_per_impl"),
+        q5_duration_range=args.get("q5_duration_range"),
+        q6_inception_weeks=args.get("q6_inception_weeks"),
+        q7_solutioning_weeks=args.get("q7_solutioning_weeks"),
+        q8_config_weeks=args.get("q8_config_weeks"),
+        q9_data_migration_weeks=args.get("q9_data_migration_weeks"),
+        q10_testing_weeks=args.get("q10_testing_weeks"),
+        q11_cutover_weeks=args.get("q11_cutover_weeks"),
+        q12_fte_cost_usd=args.get("q12_fte_cost_usd"),
+        q13_ramp_up=args.get("q13_ramp_up"),
+        q14_new_headcount=args.get("q14_new_headcount"),
+    )
+    doc = await generate_roi(data, user_id=str(user_id) if user_id else None)
+    return ToolOutcome(
+        result_text=(
+            f"ROI Analysis generated for {data.client_name}. "
+            f"{_doc_link_text(doc)}. {doc.summary}"
+        ),
+        artifacts=[_doc_to_artifact(doc)],
+    )
+
+
+async def _execute_generic(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:
     data = GenericDocInput(
         title=args.get("title", "Draft"),
         markdown=args.get("markdown", ""),
         client_name=args.get("client_name"),
     )
-    doc = await generate_generic(data)
+    doc = await generate_generic(data, user_id=str(user_id) if user_id else None)
     return ToolOutcome(
         result_text=(
-            f"Document generated → {doc.filename}. Download URL: {doc.url}."
+            f"Document generated as an editable Google Doc. {_doc_link_text(doc)}."
         ),
         artifacts=[_doc_to_artifact(doc)],
     )

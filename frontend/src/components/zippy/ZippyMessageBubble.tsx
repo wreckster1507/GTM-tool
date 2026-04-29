@@ -50,16 +50,16 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
         <AssistantContent content={message.content} />
 
         {message.artifacts && message.artifacts.length > 0 && (
-          <div className="mt-3 flex flex-col gap-2 border-t border-stone-100 pt-3">
+          <div className="mt-3 flex w-full min-w-0 flex-col gap-2 border-t border-stone-100 pt-3">
             {message.artifacts.map((artifact) => (
               <a
                 key={artifact.url}
                 href={`${API_BASE}${artifact.url}`}
                 target="_blank"
                 rel="noreferrer"
-                className="group flex items-start gap-2.5 rounded-lg border border-violet-200 bg-violet-50/60 px-3 py-2 transition hover:border-violet-400 hover:bg-violet-50"
+                className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-violet-200 bg-violet-50/60 px-3.5 py-2.5 transition hover:border-violet-400 hover:bg-violet-50"
               >
-                <span className="mt-0.5 text-violet-600">
+                <span className="mt-0.5 flex-shrink-0 text-violet-600">
                   <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
                     <path d="M4 4a2 2 0 012-2h5.586A2 2 0 0113 2.586L16.414 6A2 2 0 0117 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm7 0v3a1 1 0 001 1h3" />
                   </svg>
@@ -79,7 +79,7 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
                   </div>
                 </div>
                 <span
-                  className="font-medium text-violet-600 group-hover:underline"
+                  className="flex-shrink-0 font-medium text-violet-600 group-hover:underline"
                   style={{ fontSize: 13 }}
                 >
                   Open
@@ -90,7 +90,7 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
         )}
 
         {message.citations && message.citations.length > 0 && (
-          <div className="mt-3 border-t border-stone-100 pt-2">
+          <div className="mt-5 border-t border-stone-100 pt-3">
             <div
               className="font-semibold uppercase tracking-wide text-stone-500"
               style={{ fontSize: 12, marginBottom: 6, letterSpacing: 0.4 }}

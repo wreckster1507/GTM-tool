@@ -15,6 +15,9 @@ from typing import Optional
 from docx import Document
 from docx.shared import Pt, RGBColor
 
+from app.clients.google_drive import upload_as_google_doc
+from app.config import settings
+from app.database import AsyncSessionLocal as async_session
 from app.services.zippy_docs.base import (
     GeneratedDocument,
     build_output_path,
@@ -80,11 +83,11 @@ def _render(data: GenericDocInput, path) -> None:
     doc.save(str(path))
 
 
-async def generate(data: GenericDocInput) -> GeneratedDocument:
+async def generate(data: GenericDocInput, user_id: Optional[str] = None) -> GeneratedDocument:
     safe_slug = data.client_name or data.title or "draft"
     path, url = build_output_path("draft", safe_slug)
     _render(data, path)
-    return GeneratedDocument(
+    result = GeneratedDocument(
         filename=path.name,
         path=str(path),
         url=url,
@@ -92,3 +95,64 @@ async def generate(data: GenericDocInput) -> GeneratedDocument:
         summary=f"Draft created: {data.title or path.name}",
         created_at=datetime.utcnow(),
     )
+
+    # Upload to Google Drive as an editable Google Doc.
+    await _try_upload_to_drive(result, path, data.title or safe_slug, user_id=user_id)
+    return result
+
+
+async def _try_upload_to_drive(
+    doc: GeneratedDocument,
+    path,
+    label: str,
+    *,
+    user_id: Optional[str],
+) -> None:
+    """Upload the generated .docx to the user's Drive folder as a Google Doc."""
+    try:
+        from sqlalchemy import or_
+        from sqlalchemy import case as sa_case
+        from app.models.user_email_connection import UserEmailConnection
+        from sqlmodel import select as sm_select
+
+        async with async_session() as session:
+            stmt = sm_select(UserEmailConnection).where(
+                UserEmailConnection.is_active == True,  # noqa: E712
+            )
+            if user_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        UserEmailConnection.user_id == user_id,
+                        UserEmailConnection.is_admin_folder == True,  # noqa: E712
+                    )
+                )
+                priority = sa_case(
+                    (UserEmailConnection.user_id == user_id, 0), else_=1
+                )
+                stmt = stmt.order_by(priority)
+            result = await session.execute(stmt.limit(1))
+            connection = result.scalar_one_or_none()
+
+        if not connection:
+            logger.info("No active Drive connection — skipping Google Docs upload for generic doc")
+            return
+
+        docx_bytes = path.read_bytes()
+        gdoc_name = f"{label} — {doc.created_at.strftime('%d %b %Y')}"
+        folder_id = connection.selected_drive_folder_id or None
+
+        file_id, web_view_link = await upload_as_google_doc(
+            filename=gdoc_name,
+            docx_bytes=docx_bytes,
+            token_data=connection.token_data,
+            client_id=settings.gmail_client_id,
+            client_secret=settings.gmail_client_secret,
+            parent_folder_id=folder_id,
+        )
+        doc.drive_file_id = file_id
+        doc.drive_url = web_view_link
+        logger.info("Generic doc uploaded to Google Docs: %s", web_view_link)
+    except PermissionError as exc:
+        logger.info("drive.file scope not yet granted — skipping upload: %s", exc)
+    except Exception as exc:
+        logger.warning("Google Docs upload failed (non-fatal): %s", exc)

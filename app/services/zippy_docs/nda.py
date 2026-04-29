@@ -1,30 +1,23 @@
-"""
-NDA generator — fills blanks in the *user's own* Drive NDA template.
+"""NDA generator — rewrites Beacon's Drive NDA template using user inputs.
 
-The real template doesn't use ``{{TOKEN}}`` placeholders — it uses visible
-blanks (runs of underscores ``______`` or em-dashes ``——``) that a human
-would fill by hand. So we do two things:
+The previous version scanned the template for ``______`` blanks and asked the
+agent to fill them by index. That broke the moment a template was re-styled
+or a blank was merged/split. The new flow is template-structure agnostic:
 
-1. ``inspect_template(jurisdiction)`` downloads the template and scans every
-   paragraph / table cell / header / footer for blank runs, returning them
-   numbered with surrounding sentence context. Zippy shows these to the user
-   one by one so they know what needs to be filled.
+  1. ``inspect_template(jurisdiction)`` downloads the jurisdiction's template
+     and reports how many content sections it contains, so the agent can
+     confirm the template is reachable before collecting party details.
 
-2. ``generate(data)`` downloads the same template and replaces each blank
-   (in document order) with the value the user provided for that index.
-   Blanks the user skipped are left as-is so they remain visible for review.
-   We also still support ``{{TOKEN}}`` replacement in case a template is
-   tokenised later — both mechanisms coexist.
-
-Fallback: if the configured Drive template can't be fetched (no admin
-connection, missing file id, Drive error), we render a minimal synthetic
-draft so Zippy never hard-fails. A banner marks the fallback clearly.
+  2. ``generate(data)`` downloads the template, extracts every paragraph as a
+     structured block, asks Claude to rewrite only the non-structural content
+     from the user's inputs (parties, dates, jurisdiction, purpose, term),
+     and patches the rewrites back preserving formatting. If Drive is
+     unavailable, we fall back to a synthetic draft with a visible banner.
 """
 from __future__ import annotations
 
 import io
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Optional
@@ -32,38 +25,37 @@ from typing import Literal, Optional
 from docx import Document
 from sqlmodel import select as sm_select
 
+from app.clients.anthropic_client import get_anthropic_client
+from app.clients.google_drive import upload_as_google_doc
 from app.config import settings
 from app.database import AsyncSessionLocal as async_session
 from app.models.user_email_connection import UserEmailConnection
+from app.models.zippy import IndexedDriveFile
 from app.services.zippy_docs.base import (
     GeneratedDocument,
     build_output_path,
-    human_today,
+)
+from app.services.zippy_docs.claude_rewriter import rewrite_with_claude
+from app.services.zippy_docs.doc_rewriter import (
+    extract_docx_structure,
+    rewrite_docx_content,
 )
 
 logger = logging.getLogger(__name__)
 
 Jurisdiction = Literal["india", "us", "singapore"]
 
-# A "blank" is 3+ consecutive underscore/dash/em-dash characters. Three is the
-# shortest human-drawn blank that isn't just a hyphenated word.
-_BLANK_RE = re.compile(r"[_\-\u2013\u2014]{3,}")
-
 
 @dataclass
 class NDAInput:
-    """
-    Inputs for the NDA generator. Everything except ``jurisdiction`` is
-    optional and has *no* hidden default. ``fills`` is a mapping of
-    blank-index (as returned by ``inspect_template``) → the text the user
-    wants inserted at that blank. Legacy ``{{TOKEN}}`` fields are still
-    supported but the real template uses blanks, so ``fills`` is the primary
-    channel.
+    """Inputs for the NDA generator.
+
+    ``fills`` is kept for backwards compatibility with older callers, but it
+    is no longer interpreted positionally. It's now just a free-form dict
+    passed through to Claude alongside the named fields — useful when the
+    agent wants to forward extra details (e.g. registered office address).
     """
     jurisdiction: Jurisdiction
-    fills: dict[str, str] = field(default_factory=dict)  # "1" → "ACME Pvt Ltd"
-
-    # Legacy token fields — still replaced if the template happens to use them.
     receiving_party: Optional[str] = None
     disclosing_party: Optional[str] = None
     mutual: Optional[bool] = None
@@ -72,6 +64,7 @@ class NDAInput:
     effective_date: Optional[str] = None
     governing_city: Optional[str] = None
     extra_clauses: list[str] = field(default_factory=list)
+    fills: dict[str, str] = field(default_factory=dict)
 
 
 _JURISDICTION_LABEL = {
@@ -89,35 +82,187 @@ def _template_drive_id(jurisdiction: Jurisdiction) -> str:
     }[jurisdiction]
 
 
-def _build_token_mapping(data: NDAInput) -> dict[str, str]:
-    mapping: dict[str, str] = {
-        "{{JURISDICTION}}": _JURISDICTION_LABEL[data.jurisdiction],
-    }
-    if data.receiving_party:
-        mapping["{{RECEIVING_PARTY}}"] = data.receiving_party
-    if data.disclosing_party:
-        mapping["{{DISCLOSING_PARTY}}"] = data.disclosing_party
-    if data.effective_date:
-        mapping["{{EFFECTIVE_DATE}}"] = data.effective_date
-    if data.governing_city:
-        mapping["{{GOVERNING_CITY}}"] = data.governing_city
-    if data.term_years is not None:
-        mapping["{{TERM_YEARS}}"] = str(data.term_years)
-    if data.purpose:
-        mapping["{{PURPOSE}}"] = data.purpose
-    return mapping
-
-
 # ── Drive template fetch ─────────────────────────────────────────────────────
+#
+# Auto-discovery first (mirrors mom._find_mom_template_row): scan
+# IndexedDriveFile for filename matches, preferring the user's own file then
+# admin-shared. Only falls back to env-var file_id if nothing is indexed.
+
+# General keywords tried for every jurisdiction. Order matters — most specific
+# first so "Template of Beacon NDA" beats a generic "NDA" hit.
+_NDA_GENERAL_KEYWORDS = [
+    "template of beacon nda",
+    "beacon nda",
+    "nda template",
+    "nda",
+]
+
+_NDA_JURISDICTION_KEYWORDS: dict[str, list[str]] = {
+    "india": ["nda india", "nda - india", "india nda"],
+    "us": ["nda us", "nda - us", "us nda"],
+    "singapore": ["nda singapore", "nda - singapore", "singapore nda"],
+}
 
 
-async def _fetch_template_bytes(jurisdiction: Jurisdiction) -> Optional[bytes]:
+async def _find_nda_template_row(
+    jurisdiction: Jurisdiction,
+    user_id: Optional[str] = None,
+) -> Optional[IndexedDriveFile]:
+    """Locate the indexed NDA template row, preferring user's own then admin.
+
+    Scope rules: prefer the user's own synced file, fall back to admin/shared,
+    never leak another user's private file. Tries general "NDA"-flavoured
+    keywords first; falls back to jurisdiction-specific phrasing only if the
+    general search misses (covers users who file templates under e.g.
+    "NDA - India.docx").
+    """
+    from sqlalchemy import or_
+
+    keywords: list[str] = list(_NDA_GENERAL_KEYWORDS) + list(
+        _NDA_JURISDICTION_KEYWORDS.get(jurisdiction, [])
+    )
+
+    async with async_session() as session:
+        for keyword in keywords:
+            stmt = sm_select(IndexedDriveFile).where(
+                IndexedDriveFile.name.ilike(f"%{keyword}%"),
+            )
+            if user_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        IndexedDriveFile.owner_user_id == user_id,
+                        IndexedDriveFile.is_admin == True,  # noqa: E712
+                    )
+                )
+            else:
+                stmt = stmt.where(IndexedDriveFile.is_admin == True)  # noqa: E712
+
+            if user_id is not None:
+                from sqlalchemy import case
+                user_priority = case(
+                    (IndexedDriveFile.owner_user_id == user_id, 0),
+                    else_=1,
+                )
+                stmt = stmt.order_by(
+                    user_priority,
+                    IndexedDriveFile.last_indexed_at.desc(),
+                )
+            else:
+                stmt = stmt.order_by(IndexedDriveFile.last_indexed_at.desc())
+
+            row = (await session.execute(stmt.limit(1))).scalar_one_or_none()
+            if row:
+                logger.info(
+                    "NDA template found via keyword=%r jurisdiction=%s: "
+                    "name=%s file_id=%s mime=%s owner=%s is_admin=%s",
+                    keyword, jurisdiction, row.name, row.drive_file_id,
+                    row.mime_type, row.owner_user_id, row.is_admin,
+                )
+                return row
+    logger.info(
+        "No NDA template matched for jurisdiction=%s user_id=%s",
+        jurisdiction, user_id,
+    )
+    return None
+
+
+async def _fetch_template_bytes(
+    jurisdiction: Jurisdiction,
+    user_id: Optional[str] = None,
+) -> Optional[bytes]:
+    """Download the NDA template, auto-discovering via IndexedDriveFile first.
+
+    Order of attempts:
+      1. Look up the file in IndexedDriveFile by keyword (user-scoped then
+         admin-scoped). If found, fetch via the file owner's OAuth token and
+         export Google Docs to .docx as needed.
+      2. Fall back to the env-var-configured file_id and the admin connection.
+
+    Returns None on any failure so the caller can decide whether to error out
+    or render the fallback draft.
+    """
+    from app.clients import google_drive
+
+    # --- 1. Auto-discovery via IndexedDriveFile -----------------------------
+    row = await _find_nda_template_row(jurisdiction, user_id=user_id)
+    if row:
+        async with async_session() as session:
+            result = await session.execute(
+                sm_select(UserEmailConnection).where(
+                    UserEmailConnection.user_id == row.owner_user_id,
+                    UserEmailConnection.is_active == True,  # noqa: E712
+                )
+            )
+            connection = result.scalar_one_or_none()
+
+        if connection:
+            try:
+                if row.mime_type == "application/vnd.google-apps.document":
+                    # Google Doc — export to .docx via Drive's export endpoint.
+                    import httpx
+                    from app.clients.google_drive import _ensure_token, DRIVE_API_BASE
+                    access_token, _updated = await _ensure_token(
+                        connection.token_data,
+                        settings.gmail_client_id,
+                        settings.gmail_client_secret,
+                    )
+                    docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    async with httpx.AsyncClient(timeout=60) as http:
+                        resp = await http.get(
+                            f"{DRIVE_API_BASE}/files/{row.drive_file_id}/export",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            params={"mimeType": docx_mime},
+                        )
+                    if resp.status_code == 200:
+                        data = resp.content
+                    else:
+                        logger.warning(
+                            "NDA template Drive export failed (status %s): %s",
+                            resp.status_code, resp.text[:300],
+                        )
+                        data = None
+                else:
+                    data, _mime, _updated = await google_drive.download_file_bytes(
+                        file_id=row.drive_file_id,
+                        mime_type=row.mime_type,
+                        token_data=connection.token_data,
+                        client_id=settings.gmail_client_id,
+                        client_secret=settings.gmail_client_secret,
+                    )
+
+                if data and data.startswith(b"PK"):
+                    logger.info(
+                        "NDA template fetched via auto-discovery: %d bytes",
+                        len(data),
+                    )
+                    return data
+                if data:
+                    logger.warning(
+                        "NDA template '%s' didn't return a valid .docx "
+                        "(first bytes: %r) — falling back to env-var template.",
+                        row.name, data[:8],
+                    )
+            except Exception as exc:
+                logger.exception(
+                    "Auto-discovery fetch failed for NDA template '%s': %s",
+                    row.name, exc,
+                )
+        else:
+            logger.warning(
+                "No active Drive connection for owner of NDA template '%s' — "
+                "falling back to env-var template.",
+                row.name,
+            )
+
+    # --- 2. Env-var fallback ------------------------------------------------
     file_id = _template_drive_id(jurisdiction)
     if not file_id:
-        logger.info("No Drive template configured for jurisdiction=%s", jurisdiction)
+        logger.info(
+            "No Drive template configured for jurisdiction=%s and "
+            "auto-discovery missed — caller will use synthetic fallback.",
+            jurisdiction,
+        )
         return None
-
-    from app.clients import google_drive
 
     async with async_session() as session:
         result = await session.execute(
@@ -152,172 +297,45 @@ async def _fetch_template_bytes(jurisdiction: Jurisdiction) -> Optional[bytes]:
             return None
 
 
-# ── Paragraph walker ─────────────────────────────────────────────────────────
+# ── Inspection ───────────────────────────────────────────────────────────────
 
 
-def _iter_paragraphs(doc: Document):
-    """Yield every paragraph in body, tables (incl. nested), headers, footers."""
-    for p in doc.paragraphs:
-        yield p
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    yield p
-                for nested in cell.tables:
-                    for nrow in nested.rows:
-                        for ncell in nrow.cells:
-                            for np in ncell.paragraphs:
-                                yield np
-    for section in doc.sections:
-        for container in (section.header, section.footer):
-            for p in container.paragraphs:
-                yield p
+async def inspect_template(
+    jurisdiction: Jurisdiction,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Report template availability + a section summary for the given jurisdiction.
 
-
-# ── Inspection: surface blanks with context ──────────────────────────────────
-
-
-@dataclass
-class TemplateBlank:
-    index: int                  # 1-based position in doc order
-    context: str                # surrounding sentence snippet
-    hint: str                   # a short guess of what belongs here
-
-    def as_dict(self) -> dict:
-        return {"index": self.index, "context": self.context, "hint": self.hint}
-
-
-def _guess_hint(context: str) -> str:
-    """Best-effort label based on nearby keywords — purely to help Zippy/the user."""
-    c = context.lower()
-    pairs = [
-        ("receiving party", "Receiving party (counterparty) legal name"),
-        ("disclosing party", "Disclosing party legal name"),
-        ("effective date", "Effective date"),
-        ("dated", "Effective date"),
-        ("this day of", "Effective date"),
-        ("day of", "Day / date"),
-        ("governing", "Governing-law city / jurisdiction"),
-        ("jurisdiction", "Governing-law jurisdiction"),
-        ("city of", "City"),
-        ("mumbai", "City"),
-        ("term of", "Term in years"),
-        ("period of", "Term in years"),
-        ("years", "Term in years"),
-        ("purpose", "Purpose of the exchange"),
-        ("address", "Party address"),
-        ("registered office", "Registered office address"),
-        ("cin", "Corporate identification number"),
-        ("pan", "PAN"),
-        ("gst", "GST number"),
-        ("authorised signatory", "Authorised signatory"),
-        ("signed by", "Signatory name"),
-        ("name:", "Name"),
-        ("title:", "Title"),
-        ("company", "Company name"),
-    ]
-    for needle, label in pairs:
-        if needle in c:
-            return label
-    return "Unlabeled blank — ask the user what belongs here"
-
-
-def _extract_context(text: str, match: re.Match) -> str:
-    start, end = match.span()
-    left = text[max(0, start - 60): start].strip()
-    right = text[end: end + 60].strip()
-    return f"…{left} ____ {right}…"
-
-
-async def inspect_template(jurisdiction: Jurisdiction) -> dict:
-    """Return every fillable blank in the template with context + a hint."""
-    template_bytes = await _fetch_template_bytes(jurisdiction)
+    The old version returned indexed blanks for the agent to fill; the new one
+    simply tells the agent "template exists, it has N rewritable sections,
+    go collect the party details." The rewrite engine handles the rest.
+    """
+    template_bytes = await _fetch_template_bytes(jurisdiction, user_id=user_id)
     if not template_bytes:
         return {
             "found": False,
+            "jurisdiction": jurisdiction,
             "error": (
-                "Couldn't fetch the NDA template from Drive — check "
-                f"NDA_TEMPLATE_DRIVE_ID_{jurisdiction.upper()} and that an "
-                "active Drive connection exists."
+                "No NDA template found. Upload a file named 'Template of "
+                "Beacon NDA.docx' (or any name containing 'NDA') to your "
+                "indexed Drive folder and re-sync."
             ),
-            "blanks": [],
+            "section_count": 0,
+            "sections": [],
         }
-    doc = Document(io.BytesIO(template_bytes))
-    blanks: list[TemplateBlank] = []
-    idx = 0
-    for p in _iter_paragraphs(doc):
-        text = "".join(run.text for run in p.runs)
-        if not text:
-            continue
-        for m in _BLANK_RE.finditer(text):
-            idx += 1
-            blanks.append(
-                TemplateBlank(
-                    index=idx,
-                    context=_extract_context(text, m),
-                    hint=_guess_hint(text),
-                )
-            )
+
+    structure = extract_docx_structure(template_bytes)
+    content_blocks = [b for b in structure if not b["is_structural"] and b.get("text", "").strip()]
+    preview = [
+        {"index": b["block_index"], "text": (b.get("text") or "")[:120]}
+        for b in content_blocks[:10]
+    ]
     return {
         "found": True,
         "jurisdiction": jurisdiction,
-        "blank_count": len(blanks),
-        "blanks": [b.as_dict() for b in blanks],
+        "section_count": len(content_blocks),
+        "sections": preview,
     }
-
-
-# ── Replacement ──────────────────────────────────────────────────────────────
-
-
-def _replace_tokens_in_paragraph(paragraph, mapping: dict[str, str]) -> None:
-    if not paragraph.runs or not mapping:
-        return
-    full = "".join(run.text for run in paragraph.runs)
-    if not any(token in full for token in mapping):
-        return
-    replaced = full
-    for token, value in mapping.items():
-        replaced = replaced.replace(token, value)
-    paragraph.runs[0].text = replaced
-    for run in paragraph.runs[1:]:
-        run.text = ""
-
-
-def _replace_blanks_in_paragraph(
-    paragraph,
-    fills: dict[str, str],
-    counter: list[int],
-) -> None:
-    """Replace the Nth blank across the doc with ``fills[str(N)]`` if present.
-
-    ``counter`` is a one-element list used as a mutable int (doc-wide).
-    """
-    if not paragraph.runs:
-        return
-    full = "".join(run.text for run in paragraph.runs)
-    if not _BLANK_RE.search(full):
-        return
-
-    def _sub(match: re.Match) -> str:
-        counter[0] += 1
-        key = str(counter[0])
-        return fills.get(key, match.group(0))
-
-    new_text = _BLANK_RE.sub(_sub, full)
-    if new_text == full:
-        return
-    paragraph.runs[0].text = new_text
-    for run in paragraph.runs[1:]:
-        run.text = ""
-
-
-def _apply_replacements(doc: Document, data: NDAInput) -> None:
-    token_map = _build_token_mapping(data)
-    counter = [0]
-    for p in _iter_paragraphs(doc):
-        _replace_tokens_in_paragraph(p, token_map)
-        _replace_blanks_in_paragraph(p, data.fills, counter)
 
 
 # ── Fallback draft (only if template unavailable) ────────────────────────────
@@ -326,9 +344,8 @@ def _apply_replacements(doc: Document, data: NDAInput) -> None:
 def _render_fallback(data: NDAInput, path) -> None:
     """Produce a fully-filled NDA .docx from the user-provided values.
 
-    Used only when the Drive template can't be fetched. We still want the
-    user to get a real, finished document with their details inserted —
-    never a "go fill it yourself" placeholder.
+    Used only when the Drive template can't be fetched. A visible banner makes
+    clear that this is *not* the canonical template and needs counsel review.
     """
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Pt, RGBColor
@@ -346,9 +363,10 @@ def _render_fallback(data: NDAInput, path) -> None:
     banner = doc.add_paragraph()
     banner.alignment = WD_ALIGN_PARAGRAPH.CENTER
     br = banner.add_run(
-        "DRAFT — generated from user-provided details. Beacon's official "
-        "Drive template was not reachable; please have counsel review "
-        "against the canonical template before execution."
+        "DRAFT — No NDA template found in Drive. Upload a file named "
+        "'Template of Beacon NDA.docx' (or any name containing 'NDA') to "
+        "your indexed Drive folder and re-sync. Have counsel review before "
+        "execution."
     )
     br.italic = True
     br.font.size = Pt(9)
@@ -425,13 +443,14 @@ def _render_fallback(data: NDAInput, path) -> None:
 # ── Public entry ─────────────────────────────────────────────────────────────
 
 
-async def generate(data: NDAInput) -> GeneratedDocument:
+async def generate(data: NDAInput, user_id: Optional[str] = None) -> GeneratedDocument:
+    """Generate an NDA by rewriting the Drive template with the user's inputs."""
     if data.jurisdiction not in _JURISDICTION_LABEL:
         raise ValueError(
             f"Unsupported NDA jurisdiction: {data.jurisdiction}. "
             "Supported: india, us, singapore."
         )
-    template_bytes = await _fetch_template_bytes(data.jurisdiction)
+
     slug_left = data.disclosing_party or "Beacon"
     slug_right = data.receiving_party or "counterparty"
     path, url = build_output_path(
@@ -439,30 +458,112 @@ async def generate(data: NDAInput) -> GeneratedDocument:
         f"{slug_left}_x_{slug_right}",
     )
 
-    if template_bytes:
-        doc = Document(io.BytesIO(template_bytes))
-        _apply_replacements(doc, data)
-        doc.save(str(path))
-        source = "template"
-    else:
+    template_bytes = await _fetch_template_bytes(data.jurisdiction, user_id=user_id)
+    source = "template"
+
+    if not template_bytes:
+        logger.warning(
+            "NDA template for %s unreachable — rendering fallback draft.",
+            data.jurisdiction,
+        )
         _render_fallback(data, path)
         source = "fallback"
+    else:
+        structure = extract_docx_structure(template_bytes)
 
-    filled_count = len(data.fills or {})
-    summary_tail = (
-        f"{filled_count} blank(s) filled from user input."
-        if filled_count
-        else "No blanks filled — the generated doc still shows every original blank."
-    )
-    return GeneratedDocument(
+        user_inputs = {
+            "jurisdiction": _JURISDICTION_LABEL[data.jurisdiction],
+            "disclosing_party": data.disclosing_party or "",
+            "receiving_party": data.receiving_party or "",
+            "effective_date": data.effective_date or "",
+            "governing_city": data.governing_city or "",
+            "term_years": data.term_years if data.term_years is not None else "",
+            "purpose": data.purpose or "",
+            "mutual": bool(data.mutual) if data.mutual is not None else None,
+            "extra_clauses": data.extra_clauses or [],
+            # Pass legacy ``fills`` through verbatim — Claude can use any
+            # extra context the agent collected (registered office, PAN, etc.).
+            "additional_details": data.fills or {},
+        }
+
+        client = get_anthropic_client()
+        rewritten = await rewrite_with_claude(
+            structure=structure,
+            user_inputs=user_inputs,
+            doc_type="nda",
+            client=client,
+            model=settings.CLAUDE_MODEL_STANDARD,
+        )
+
+        out_bytes = rewrite_docx_content(template_bytes, rewritten)
+        path.write_bytes(out_bytes)
+
+    result = GeneratedDocument(
         filename=path.name,
         path=str(path),
         url=url,
         kind=f"nda_{data.jurisdiction}",
         summary=(
-            f"NDA drafted from {source} template — "
-            f"{slug_left} ↔ {slug_right}, {data.jurisdiction.upper()} jurisdiction. "
-            f"{summary_tail}"
+            f"NDA drafted from {source} — {slug_left} ↔ {slug_right}, "
+            f"{data.jurisdiction.upper()} jurisdiction."
         ),
         created_at=datetime.utcnow(),
     )
+
+    await _try_upload_to_drive(result, path, f"{slug_left} x {slug_right}", user_id=user_id)
+    return result
+
+
+async def _try_upload_to_drive(
+    doc: GeneratedDocument,
+    path,
+    label: str,
+    *,
+    user_id: Optional[str],
+) -> None:
+    """Upload the filled NDA .docx to the user's Drive folder as a Google Doc."""
+    try:
+        async with async_session() as session:
+            from sqlalchemy import or_
+            stmt = sm_select(UserEmailConnection).where(
+                UserEmailConnection.is_active == True,  # noqa: E712
+            )
+            if user_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        UserEmailConnection.user_id == user_id,
+                        UserEmailConnection.is_admin_folder == True,  # noqa: E712
+                    )
+                )
+            from sqlalchemy import case as sa_case
+            if user_id is not None:
+                priority = sa_case(
+                    (UserEmailConnection.user_id == user_id, 0), else_=1
+                )
+                stmt = stmt.order_by(priority)
+            result = await session.execute(stmt.limit(1))
+            connection = result.scalar_one_or_none()
+
+        if not connection:
+            logger.info("No active Drive connection — skipping Google Docs upload for NDA")
+            return
+
+        docx_bytes = path.read_bytes()
+        gdoc_name = f"NDA — {label} — {doc.created_at.strftime('%d %b %Y')}"
+        folder_id = connection.selected_drive_folder_id or None
+
+        file_id, web_view_link = await upload_as_google_doc(
+            filename=gdoc_name,
+            docx_bytes=docx_bytes,
+            token_data=connection.token_data,
+            client_id=settings.gmail_client_id,
+            client_secret=settings.gmail_client_secret,
+            parent_folder_id=folder_id,
+        )
+        doc.drive_file_id = file_id
+        doc.drive_url = web_view_link
+        logger.info("NDA uploaded to Google Docs: %s", web_view_link)
+    except PermissionError as exc:
+        logger.info("drive.file scope not yet granted — skipping NDA upload: %s", exc)
+    except Exception as exc:
+        logger.warning("Google Docs upload failed for NDA (non-fatal): %s", exc)

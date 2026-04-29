@@ -23,12 +23,14 @@ ZIPPY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 class GeneratedDocument:
     """What every generator returns to the agent."""
 
-    filename: str           # user-facing filename e.g. "MOM - Acme - 19 Apr 2026.docx"
-    path: str               # absolute path on disk
-    url: str                # relative URL the frontend can link to
-    kind: str               # "mom" | "nda_in" | "nda_us" | "nda_sg" | "generic_docx"
-    summary: str            # one-liner shown in chat
+    filename: str                    # user-facing filename e.g. "MOM - Acme - 19 Apr 2026.docx"
+    path: str                        # absolute path on disk
+    url: str                         # relative URL the frontend can link to (.docx fallback)
+    kind: str                        # "mom" | "nda_in" | "nda_us" | "nda_sg" | "generic_docx"
+    summary: str                     # one-liner shown in chat
     created_at: datetime
+    drive_file_id: str = ""          # Google Drive file ID (set after upload)
+    drive_url: str = ""              # Google Docs webViewLink (preferred link for user)
 
 
 def _slug(value: str, max_len: int = 48) -> str:
