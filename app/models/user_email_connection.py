@@ -77,6 +77,7 @@ class UserEmailConnectionStatus(SQLModel):
     backfill_completed: bool = False
     last_error: Optional[str] = None
     has_calendar_scope: bool = False
+    has_drive_scope: bool = False
     selected_drive_folder_id: Optional[str] = None
     selected_drive_folder_name: Optional[str] = None
     is_admin_folder: bool = False

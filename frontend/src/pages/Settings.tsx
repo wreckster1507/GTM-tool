@@ -1177,6 +1177,7 @@ export default function SettingsPage() {
               userFolder={userDriveFolder}
               adminFolder={adminDriveFolder}
               driveMessage={driveMessage}
+              needsDriveReconnect={!!personalEmail?.connected && personalEmail.has_drive_scope === false}
               onOpenPicker={(scope) => setDrivePickerMode(scope)}
               onClearUser={handleClearUserFolder}
             />

@@ -1884,6 +1884,7 @@ export interface PersonalEmailStatus {
   backfill_completed: boolean;
   last_error?: string;
   has_calendar_scope?: boolean;
+  has_drive_scope?: boolean;
 }
 
 export interface PersonalEmailThread {

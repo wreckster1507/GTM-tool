@@ -29,6 +29,8 @@ from app.models.activity import Activity, ActivityRead
 from app.models.user_email_connection import UserEmailConnection, UserEmailConnectionRead, UserEmailConnectionStatus
 from app.services.gmail_oauth import (
     CALENDAR_SCOPE,
+    DRIVE_FILE_SCOPE,
+    DRIVE_SCOPE,
     build_gmail_connect_url,
     create_gmail_oauth_state,
     decode_gmail_oauth_state,
@@ -52,8 +54,13 @@ async def get_personal_email_status(session: DBSession, current_user: CurrentUse
     scopes = connection.token_data.get("scopes") if isinstance(connection.token_data, dict) else []
     if isinstance(scopes, str):
         has_calendar_scope = CALENDAR_SCOPE in scopes
+        has_drive_scope = DRIVE_SCOPE in scopes and DRIVE_FILE_SCOPE in scopes
     else:
         has_calendar_scope = any(CALENDAR_SCOPE in str(scope) for scope in (scopes or []))
+        has_drive_scope = all(
+            any(required in str(scope) for scope in (scopes or []))
+            for required in (DRIVE_SCOPE, DRIVE_FILE_SCOPE)
+        )
 
     return UserEmailConnectionStatus(
         connected=True,
@@ -62,6 +69,10 @@ async def get_personal_email_status(session: DBSession, current_user: CurrentUse
         backfill_completed=connection.backfill_completed,
         last_error=connection.last_error,
         has_calendar_scope=has_calendar_scope,
+        has_drive_scope=has_drive_scope,
+        selected_drive_folder_id=connection.selected_drive_folder_id,
+        selected_drive_folder_name=connection.selected_drive_folder_name,
+        is_admin_folder=connection.is_admin_folder,
     )
 
 
