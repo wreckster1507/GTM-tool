@@ -21,9 +21,9 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi } from "../lib/api";
+import { accountSourcingApi, authApi } from "../lib/api";
 import { getAccountPrioritySnapshot } from "../lib/utils";
-import type { AccountSourcingSummary, Company, SourcingBatch } from "../types";
+import type { AccountSourcingSummary, Company, SourcingBatch, User } from "../types";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 import {
@@ -317,6 +317,10 @@ export default function AccountSourcing() {
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
+  // Multi-select Owner filter: matches assigned_to_id OR sdr_id for any
+  // selected user. Different from ownerScope (binary mine vs all).
+  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("own")));
+  const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
   const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
   const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
@@ -360,18 +364,25 @@ export default function AccountSourcing() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // ownerScope === "mine" wins over the multi-select; otherwise the
+      // multi-select drives. Both ultimately collapse to a single owner_id
+      // string param the backend parses as comma-separated UUIDs.
+      const effectiveOwnerId =
+        ownerScope === "mine"
+          ? user?.id
+          : (ownerFilter.length ? ownerFilter : undefined);
       const [companyPage, companySummary, b] = await Promise.all([
         accountSourcingApi.listCompaniesPaginated({
           skip: (page - 1) * pageSize,
           limit: pageSize,
           q: debouncedSearch || undefined,
-          ownerId: ownerScope === "mine" ? user?.id : undefined,
+          ownerId: effectiveOwnerId,
           icpTier: tierFilter.length ? tierFilter : undefined,
           disposition: dispositionFilter.length ? dispositionFilter : undefined,
           recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
         }),
         accountSourcingApi.summary({
-          ownerId: ownerScope === "mine" ? user?.id : undefined,
+          ownerId: effectiveOwnerId,
         }),
         accountSourcingApi.listBatches(),
       ]);
@@ -383,7 +394,14 @@ export default function AccountSourcing() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, dispositionFilter, laneFilter, ownerScope, page, tierFilter, user?.id]);
+  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, page, tierFilter, user?.id]);
+
+  // Load team users once for the Owner multi-select.
+  useEffect(() => {
+    authApi.listAllUsers()
+      .then((users) => setTeamUsers(users.filter((u) => u.is_active)))
+      .catch(() => setTeamUsers([]));
+  }, []);
 
   useEffect(() => {
     load();
@@ -405,6 +423,7 @@ export default function AccountSourcing() {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
       ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
+      ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
       tierFilter.length ? next.set("tier", tierFilter.join(",")) : next.delete("tier");
       dispositionFilter.length ? next.set("disp", dispositionFilter.join(",")) : next.delete("disp");
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
@@ -412,7 +431,7 @@ export default function AccountSourcing() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [laneFilter, dispositionFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter]);
+  }, [laneFilter, dispositionFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -423,7 +442,7 @@ export default function AccountSourcing() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, dispositionFilter, laneFilter, ownerScope, tierFilter]);
+  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, tierFilter]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -467,7 +486,7 @@ export default function AccountSourcing() {
     return withIndex.map((item) => item.company);
   }, [companies, sortBy]);
 
-  const hasFilters = !!(search || ownerScope === "mine" || tierFilter.length || dispositionFilter.length || laneFilter.length);
+  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || tierFilter.length || dispositionFilter.length || laneFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -882,6 +901,7 @@ export default function AccountSourcing() {
           const clearAllFilters = () => {
             setSearch("");
             setOwnerScope("all");
+            setOwnerFilter([]);
             setTierFilter([]);
             setDispositionFilter([]);
             setLaneFilter([]);
@@ -1252,6 +1272,16 @@ export default function AccountSourcing() {
                   <option value="mine">My accounts</option>
                 </select>
               </div>
+              {teamUsers.length > 0 && (
+                <MultiSelectFilter
+                  values={ownerFilter}
+                  onChange={setOwnerFilter}
+                  options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                  label="Owner"
+                  allLabel="Owner: All"
+                  minWidth={170}
+                />
+              )}
               <MultiSelectFilter
                 values={dispositionFilter}
                 onChange={setDispositionFilter}
@@ -1301,6 +1331,7 @@ export default function AccountSourcing() {
                   onClick={() => {
                     setSearch("");
                     setOwnerScope("all");
+                    setOwnerFilter([]);
                     setTierFilter([]);
                     setDispositionFilter([]);
                     setLaneFilter([]);

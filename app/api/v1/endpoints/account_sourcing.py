@@ -1125,7 +1125,7 @@ async def list_sourced_companies(
     disposition: str | None = Query(default=None),
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
-    owner_id: UUID | None = Query(default=None),
+    owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
 ):
     """List sourced companies plus lightweight ClickUp-imported accounts."""
     stmt = select(Company).where(_account_sourcing_visibility_filter())
@@ -1149,7 +1149,17 @@ async def list_sourced_companies(
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
-        stmt = stmt.where(or_(Company.assigned_to_id == owner_id, Company.sdr_id == owner_id))
+        owner_uuids: list[UUID] = []
+        for raw in str(owner_id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                owner_uuids.append(UUID(raw))
+            except ValueError:
+                continue
+        if owner_uuids:
+            stmt = stmt.where(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
 
     total = (
         await session.execute(
@@ -1171,13 +1181,23 @@ async def get_sourced_company_summary(
     _user: CurrentUser,
     session: DBSession = None,
     assigned_rep_email: str | None = Query(default=None),
-    owner_id: UUID | None = Query(default=None),
+    owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
 ):
     stmt = select(Company).where(_account_sourcing_visibility_filter())
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
-        stmt = stmt.where(or_(Company.assigned_to_id == owner_id, Company.sdr_id == owner_id))
+        owner_uuids: list[UUID] = []
+        for raw in str(owner_id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                owner_uuids.append(UUID(raw))
+            except ValueError:
+                continue
+        if owner_uuids:
+            stmt = stmt.where(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
 
     companies = (await session.execute(stmt)).scalars().all()
 

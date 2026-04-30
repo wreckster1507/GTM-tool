@@ -1163,7 +1163,7 @@ export const accountSourcingApi = {
     disposition?: string[];
     recommendedOutreachLane?: string[];
     assignedRepEmail?: string;
-    ownerId?: string;
+    ownerId?: string | string[];
   }) => {
     const search = new URLSearchParams({
       skip: String(params?.skip ?? 0),
@@ -1174,14 +1174,20 @@ export const accountSourcingApi = {
     if (params?.disposition?.length) search.set("disposition", params.disposition.join(","));
     if (params?.recommendedOutreachLane?.length) search.set("recommended_outreach_lane", params.recommendedOutreachLane.join(","));
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
-    if (params?.ownerId) search.set("owner_id", params.ownerId);
+    if (params?.ownerId) {
+      const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
+      if (ownerValue) search.set("owner_id", ownerValue);
+    }
     return requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
   },
 
-  summary: (params?: { assignedRepEmail?: string; ownerId?: string }) => {
+  summary: (params?: { assignedRepEmail?: string; ownerId?: string | string[] }) => {
     const search = new URLSearchParams();
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
-    if (params?.ownerId) search.set("owner_id", params.ownerId);
+    if (params?.ownerId) {
+      const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
+      if (ownerValue) search.set("owner_id", ownerValue);
+    }
     return request<AccountSourcingSummary>(
       `/api/v1/account-sourcing/summary${search.toString() ? `?${search.toString()}` : ""}`
     );
