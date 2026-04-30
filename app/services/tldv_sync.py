@@ -23,6 +23,18 @@ from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.tasks import refresh_system_tasks_for_entity
 
 
+FREE_EMAIL_PROVIDERS = {
+    "gmail.com",
+    "yahoo.com",
+    "outlook.com",
+    "hotmail.com",
+    "icloud.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+}
+
+
 @dataclass
 class TldvSyncStats:
     meetings_created: int = 0
@@ -251,8 +263,14 @@ async def _match_deal_from_contacts(session: AsyncSession, contact_ids: list[UUI
 
 
 async def _match_company_from_domains(session: AsyncSession, domains: list[str]) -> Company | None:
-    normalized = [_normalize_domain(domain) for domain in domains if _normalize_domain(domain)]
-    if not normalized:
+    normalized = list(
+        dict.fromkeys(
+            domain
+            for domain in (_normalize_domain(domain) for domain in domains)
+            if domain and domain not in FREE_EMAIL_PROVIDERS
+        )
+    )
+    if len(normalized) != 1:
         return None
     result = await session.execute(
         select(Company)
@@ -261,6 +279,25 @@ async def _match_company_from_domains(session: AsyncSession, domains: list[str])
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _match_single_deal_for_company(session: AsyncSession, company_id: UUID | None) -> Deal | None:
+    if not company_id:
+        return None
+    result = await session.execute(
+        select(Deal)
+        .where(Deal.company_id == company_id)
+        .order_by(
+            Deal.stage.not_in(["closed_won", "closed_lost"]).desc(),
+            Deal.last_activity_at.desc().nullslast(),
+            Deal.updated_at.desc(),
+        )
+        .limit(2)
+    )
+    candidates = list(result.scalars().all())
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 async def _match_company_from_title(session: AsyncSession, title: str) -> Company | None:
@@ -814,6 +851,12 @@ async def sync_tldv_meeting(
             deal = None
         if deal and not company and deal.company_id:
             company = await session.get(Company, deal.company_id)
+        if company and not deal:
+            # If the attendee domain identifies exactly one account and that
+            # account has exactly one deal/prospect record, linking is safe.
+            # Avoid title/name guessing here because meeting titles often carry
+            # shorthand and can collide.
+            deal = await _match_single_deal_for_company(session, company.id)
     mapped_via_gmail = False
 
     transcript_text = _transcript_text(transcript_payload)
