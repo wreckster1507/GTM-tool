@@ -61,13 +61,31 @@ def _normalize_domain(value: str | None) -> str:
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    raw = str(value).strip()
+    candidates = [raw]
+    gmt_match = re.match(r"^(?P<prefix>.+?)\s+GMT(?P<offset>[+-]\d{4})(?:\s+\(.+\))?$", raw)
+    if gmt_match:
+        offset = gmt_match.group("offset")
+        candidates.append(f"{gmt_match.group('prefix')} {offset[:3]}:{offset[3:]}")
+
+    for candidate in candidates:
+        try:
+            dt = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        except Exception:
+            dt = None
+        if dt is None:
+            for fmt in ("%a %b %d %Y %H:%M:%S %z", "%a %b %d %Y %H:%M:%S"):
+                try:
+                    dt = datetime.strptime(candidate, fmt)
+                    break
+                except Exception:
+                    continue
+        if dt is None:
+            continue
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt
-    except Exception:
-        return None
+    return None
 
 
 async def _ensure_deal_contact(session: AsyncSession, deal_id: UUID, contact_id: UUID) -> None:
