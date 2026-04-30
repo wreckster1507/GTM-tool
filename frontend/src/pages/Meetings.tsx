@@ -397,7 +397,7 @@ export default function Meetings() {
         linkState: linkFilter,
         q: debouncedSearch || undefined,
         syncedAfter: syncedAfterIso,
-        includeInternal: showInternal,
+        internalScope: showInternal ? "only" : "exclude",
       });
 
       const ms = pageResp.items;
@@ -613,7 +613,7 @@ export default function Meetings() {
           <button
             type="button"
             onClick={() => setShowInternal((v) => !v)}
-            title={showInternal ? "Currently showing internal meetings; click to hide" : "Click to also show internal (all-beacon.li) meetings"}
+            title={showInternal ? "Showing only internal meetings; click to return to customer meetings" : "Show only internal meetings"}
             style={{
               height: 36,
               padding: "0 12px",
@@ -630,7 +630,7 @@ export default function Meetings() {
             }}
           >
             <span style={{ width: 8, height: 8, borderRadius: 999, background: showInternal ? "#7c3aed" : "#b8c4d4" }} />
-            {showInternal ? "Internal on" : "Show internal"}
+            {showInternal ? "Internal only" : "Internal"}
           </button>
 
           <div style={{ flex: 1 }} />
