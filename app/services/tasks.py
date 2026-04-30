@@ -38,6 +38,7 @@ AI_TASK_REFRESH_TTL = timedelta(minutes=10)
 AI_TASK_REFRESH_DEBOUNCE = timedelta(seconds=45)
 AI_TASK_SIGNAL_WINDOW = 25
 AI_TASK_POLICY_VERSION = "2026-04-21-contextual-v2"
+SYSTEM_TASK_DISMISSAL_SNOOZE = timedelta(days=14)
 STAGE_OWNER_MATRIX: dict[str, tuple[str, str, str]] = {
     "reprospect": ("SDR", "AE shadow; Marketing for trigger content", "sdr"),
     "demo_scheduled": ("AE", "SDR for rescheduling; Rakesh for strategic accounts", "ae"),
@@ -326,6 +327,27 @@ async def _recent_system_task_exists(
     return result.first() is not None
 
 
+async def _recently_dismissed_system_task_exists(
+    session: AsyncSession,
+    *,
+    entity_type: str,
+    entity_id: UUID,
+    system_key: str,
+) -> bool:
+    cutoff = datetime.utcnow() - SYSTEM_TASK_DISMISSAL_SNOOZE
+    result = await session.execute(
+        select(Task.id).where(
+            Task.entity_type == entity_type,
+            Task.entity_id == entity_id,
+            Task.system_key == system_key,
+            Task.task_type == "system",
+            Task.status == "dismissed",
+            Task.updated_at >= cutoff,
+        )
+    )
+    return result.first() is not None
+
+
 async def _resolve_task_assignee(
     session: AsyncSession,
     *,
@@ -371,7 +393,7 @@ async def _upsert_system_task(
     assigned_role: str | None = None,
     task_track: str = "hygiene",
     due_at: datetime | None = None,
-) -> Task:
+) -> Task | None:
     deal_stage: str | None = None
     if entity_type == "deal":
         deal = await session.get(Deal, entity_id)
@@ -423,6 +445,20 @@ async def _upsert_system_task(
         existing.updated_at = datetime.utcnow()
         session.add(existing)
         return existing
+
+    if await _recently_dismissed_system_task_exists(
+        session,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        system_key=system_key,
+    ):
+        logger.info(
+            "suppressing recently dismissed system task: entity_type=%s entity_id=%s system_key=%s",
+            entity_type,
+            entity_id,
+            system_key,
+        )
+        return None
 
     task = Task(
         entity_type=entity_type,
