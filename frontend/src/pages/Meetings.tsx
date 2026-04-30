@@ -760,7 +760,7 @@ export default function Meetings() {
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {m.is_internal && (
                             <span
-                              title="Every attendee is from an internal domain. Internal meetings are hidden by default; the 'Show internal' toggle includes them."
+                              title="Every attendee is from an internal domain. Internal meetings are hidden by default; the Internal filter shows only them."
                               style={{
                                 display: "inline-flex",
                                 alignItems: "center",

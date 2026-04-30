@@ -13,6 +13,7 @@ from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.models.user import User
 from app.repositories.meeting import MeetingRepository
+from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.permissions import require_workspace_permission
 from app.schemas.common import PaginatedResponse
 
@@ -162,7 +163,11 @@ async def list_meetings(
         stmt = stmt.where(q_clause)
         count_stmt = count_stmt.where(q_clause)
 
-    order_by = Meeting.scheduled_at.asc() if order == "asc" else Meeting.scheduled_at.desc()
+    order_by = (
+        Meeting.scheduled_at.asc().nulls_last()
+        if order == "asc"
+        else Meeting.scheduled_at.desc().nulls_last()
+    )
     stmt = stmt.order_by(order_by).offset(pagination.skip).limit(pagination.limit)
 
     total = (await session.execute(count_stmt)).scalar_one()
@@ -181,6 +186,13 @@ def _attendees_key(attendees) -> frozenset:
             if isinstance(a, dict) and a.get("email")
         )
     return frozenset()
+
+
+async def _classify_internal_from_attendees(session: DBSession, attendees) -> Optional[bool]:
+    if not isinstance(attendees, list) or not attendees:
+        return None
+    internal_domains = await get_internal_domains(session)
+    return is_internal_only(attendees, internal_domains)
 
 
 @router.post("/", response_model=MeetingRead, status_code=201)
@@ -212,11 +224,14 @@ async def create_meeting(payload: MeetingCreate, session: DBSession, current_use
     data.setdefault("synced_by_user_id", str(current_user.id))
     data.setdefault("synced_at", datetime.utcnow().isoformat())
     data.setdefault("external_source", "manual")
+    internal_flag = await _classify_internal_from_attendees(session, data.get("attendees"))
+    if internal_flag is not None:
+        data["is_internal"] = internal_flag
     return await MeetingRepository(session).create(data)
 
 
 @router.get("/{meeting_id}", response_model=MeetingRead)
-async def get_meeting(meeting_id: UUID, session: DBSession):
+async def get_meeting(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     return await MeetingRepository(session).get_or_raise(meeting_id)
 
 
@@ -261,7 +276,7 @@ async def get_meeting_recording_url(
 
 
 @router.put("/{meeting_id}", response_model=MeetingRead)
-async def update_meeting(meeting_id: UUID, payload: MeetingUpdate, session: DBSession):
+async def update_meeting(meeting_id: UUID, payload: MeetingUpdate, session: DBSession, current_user: CurrentUser):
     repo = MeetingRepository(session)
     meeting = await repo.get_or_raise(meeting_id)
     update_data = payload.model_dump(exclude_unset=True)
@@ -271,12 +286,16 @@ async def update_meeting(meeting_id: UUID, payload: MeetingUpdate, session: DBSe
     touches_link = "company_id" in update_data or "deal_id" in update_data
     if touches_link and "manually_linked" not in update_data:
         update_data["manually_linked"] = True
+    if "attendees" in update_data:
+        internal_flag = await _classify_internal_from_attendees(session, update_data.get("attendees"))
+        if internal_flag is not None:
+            update_data["is_internal"] = internal_flag
     update_data["updated_at"] = datetime.utcnow()
     return await repo.update(meeting, update_data)
 
 
 @router.delete("/{meeting_id}", status_code=204)
-async def delete_meeting(meeting_id: UUID, session: DBSession):
+async def delete_meeting(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     repo = MeetingRepository(session)
     meeting = await repo.get_or_raise(meeting_id)
     await repo.delete(meeting)
@@ -479,7 +498,7 @@ async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: 
 
 
 @router.post("/{meeting_id}/post-score")
-async def generate_post_score(meeting_id: UUID, payload: dict, session: DBSession):
+async def generate_post_score(meeting_id: UUID, payload: dict, session: DBSession, current_user: CurrentUser):
     """Score a meeting from raw notes and generate MoM draft."""
     repo = MeetingRepository(session)
     meeting = await repo.get_or_raise(meeting_id)
