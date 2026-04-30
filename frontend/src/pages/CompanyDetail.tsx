@@ -24,6 +24,13 @@ import {
   Users,
   X,
 } from "lucide-react";
+import {
+  getProspectTrackingScore,
+  getProspectTrackingStage,
+  getProspectTrackingSummary,
+  getProspectTrackingTone,
+} from "../lib/prospectTracking";
+import { useAuth } from "../lib/AuthContext";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 
@@ -101,6 +108,7 @@ function CompanySection({
 }
 
 export default function CompanyDetail() {
+  const { isAdmin } = useAuth();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [company, setCompany] = useState<Company | null>(null);
@@ -288,9 +296,9 @@ export default function CompanyDetail() {
     <>
       <div className="crm-page company-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="flex flex-wrap items-center justify-between gap-3 company-detail-top-actions">
-          <button onClick={() => navigate("/companies")} className="crm-button soft">
+          <button onClick={() => navigate(-1)} className="crm-button soft">
             <ArrowLeft className="h-3.5 w-3.5" />
-            Back to Companies
+            Back
           </button>
           <div className="flex flex-wrap items-center gap-2">
             {enrichMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{enrichMsg}</span>}
@@ -298,18 +306,20 @@ export default function CompanyDetail() {
               <RefreshCw className={`h-3.5 w-3.5 ${enriching ? "animate-spin" : ""}`} />
               {enriching ? "Enriching..." : "Re-enrich"}
             </button>
-            <button
-              className="crm-button soft text-[#c0392b] border-[#fcc] hover:bg-[#fff5f5]"
-              onClick={async () => {
-                if (!company) return;
-                if (!window.confirm(`Delete "${company.name}"? This will remove all associated contacts and deals.`)) return;
-                await companiesApi.delete(company.id);
-                navigate("/companies");
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </button>
+            {isAdmin ? (
+              <button
+                className="crm-button soft text-[#c0392b] border-[#fcc] hover:bg-[#fff5f5]"
+                onClick={async () => {
+                  if (!company) return;
+                  if (!window.confirm(`Delete "${company.name}"? This will remove all associated contacts and deals.`)) return;
+                  await companiesApi.delete(company.id);
+                  navigate("/companies");
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -451,6 +461,7 @@ export default function CompanyDetail() {
                 <div className="grid gap-4">
                   {contacts.map((c) => {
                     const persona = canonicalPersona(c.persona, c.persona_type);
+                    const trackingTone = getProspectTrackingTone(c);
                     return (
                       <div key={c.id} className="rounded-2xl border border-[#e0e8f1] bg-white p-5">
                         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -473,6 +484,12 @@ export default function CompanyDetail() {
                           </div>
 
                           <div className="flex flex-wrap items-center justify-end gap-2">
+                            <span
+                              className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold"
+                              style={{ background: trackingTone.background, color: trackingTone.color, border: `1px solid ${trackingTone.border}` }}
+                            >
+                              {getProspectTrackingStage(c)}
+                            </span>
                             <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold" style={PERSONA_STYLE[persona]}>
                               {PERSONA_SHORT[persona]}
                             </span>
@@ -496,6 +513,21 @@ export default function CompanyDetail() {
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>
+                        </div>
+
+                        <div
+                          className="mt-4 rounded-xl px-4 py-3"
+                          style={{ background: trackingTone.soft, border: `1px solid ${trackingTone.border}` }}
+                        >
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <span style={{ color: trackingTone.color }} className="text-[12px] font-bold">
+                              Automated progress
+                            </span>
+                            <span style={{ color: trackingTone.color }} className="text-[12px] font-extrabold">
+                              {getProspectTrackingScore(c)}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 text-[13px] leading-6 text-[#2d4258]">{getProspectTrackingSummary(c)}</p>
                         </div>
 
                         {contactBriefs[c.id] && (
@@ -617,7 +649,7 @@ export default function CompanyDetail() {
                   {companyDeals.map((d) => (
                     <div key={d.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3 flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <Link to={`/deals/${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
+                        <Link to={`/pipeline?deal=${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
                           {d.name}
                         </Link>
                         <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDate(d.close_date_est)}</p>

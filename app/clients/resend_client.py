@@ -43,9 +43,8 @@ async def send_email(
     Returns dict with 'id' on success or 'error' on failure.
     """
     if not settings.RESEND_API_KEY:
-        logger.info(f"[MOCK EMAIL] To: {to} | Subject: {subject}")
-        logger.info(f"[MOCK EMAIL] Body:\n{body}")
-        return {"id": "mock-email-id", "status": "mock_sent"}
+        logger.warning("Resend API key not configured — cannot send email to %s", to)
+        return {"error": "Resend API key not configured", "status": "not_configured"}
 
     try:
         import resend

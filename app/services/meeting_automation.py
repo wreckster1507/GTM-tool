@@ -1,0 +1,270 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.clients.resend_client import send_email
+from app.config import settings
+from app.database import AsyncSessionLocal
+from app.models.activity import Activity
+from app.models.company import Company
+from app.models.contact import Contact
+from app.models.deal import Deal
+from app.models.meeting import Meeting
+from app.models.settings import WorkspaceSettings
+from app.models.user import User
+from app.services.pre_meeting_intelligence import generate_meeting_demo_strategy, run_pre_meeting_intelligence
+
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS = {
+    "enabled": True,
+    "send_hours_before": 12,
+    "auto_generate_if_missing": True,
+}
+
+
+def normalize_pre_meeting_settings(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    send_hours_before = int(raw.get("send_hours_before", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_hours_before"]))
+    return {
+        "enabled": bool(raw.get("enabled", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["enabled"])),
+        "send_hours_before": max(1, min(send_hours_before, 168)),
+        "auto_generate_if_missing": bool(
+            raw.get(
+                "auto_generate_if_missing",
+                DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["auto_generate_if_missing"],
+            )
+        ),
+    }
+
+
+async def _get_or_create_settings(session: AsyncSession) -> WorkspaceSettings:
+    row = await session.get(WorkspaceSettings, 1)
+    if row is None:
+        row = WorkspaceSettings(id=1)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> list[UUID]:
+    """
+    Only the deal's assigned person receives pre-meeting intel.
+    If no deal, fall back to company assigned rep.
+    This ensures reps only see intel for their own meetings.
+    """
+    recipient_ids: list[UUID] = []
+    seen: set[UUID] = set()
+
+    def push(value: UUID | None) -> None:
+        if value and value not in seen:
+            seen.add(value)
+            recipient_ids.append(value)
+
+    deal = await session.get(Deal, meeting.deal_id) if meeting.deal_id else None
+
+    if deal and deal.assigned_to_id:
+        # Primary: the AE/rep assigned to this specific deal
+        push(deal.assigned_to_id)
+    elif meeting.company_id:
+        # Fallback: company assigned rep (only if no deal assigned)
+        company = await session.get(Company, meeting.company_id)
+        if company:
+            push(company.assigned_to_id)
+
+    return recipient_ids
+
+
+def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str]:
+    """
+    Build a focused pre-meeting intel email.
+    Sends the full executive briefing as the body so the rep has everything
+    they need without having to open the CRM.
+    """
+    research = meeting.research_data if isinstance(meeting.research_data, dict) else {}
+    executive_briefing = str(research.get("executive_briefing") or meeting.pre_brief or "").strip()
+    recommendations = research.get("meeting_recommendations") if isinstance(research.get("meeting_recommendations"), list) else []
+    why_now_signals = research.get("why_now_signals") if isinstance(research.get("why_now_signals"), list) else []
+    crm_signals = research.get("crm_signals") if isinstance(research.get("crm_signals"), dict) else {}
+    attendee_cards = (
+        ((research.get("attendee_intelligence") or {}).get("stakeholder_cards"))
+        if isinstance(research.get("attendee_intelligence"), dict)
+        else []
+    ) or []
+    company_profile = research.get("company_profile") or {}
+
+    frontend_base = (settings.FRONTEND_URL or "http://localhost:8080").rstrip("/")
+    meeting_link = f"{frontend_base}/meetings/{meeting.id}"
+    scheduled_label = meeting.scheduled_at.strftime("%b %d, %Y at %I:%M %p UTC") if meeting.scheduled_at else "TBD"
+    meeting_number = crm_signals.get("meeting_number", 1)
+
+    subject = f"Meeting #{meeting_number} prep: {meeting.title} — {scheduled_label}"
+
+    # ── Plain text body ───────────────────────────────────────────────────────
+    lines = [
+        f"PRE-MEETING INTEL — {meeting.title}",
+        f"Scheduled: {scheduled_label} | Meeting #{meeting_number}",
+        f"Type: {meeting.meeting_type.upper() if meeting.meeting_type else 'Meeting'}",
+        "",
+    ]
+
+    if company_profile:
+        lines += [
+            "ACCOUNT",
+            f"  {company_profile.get('name', '')} | {company_profile.get('domain', '')}",
+            f"  {company_profile.get('industry', '')} | {company_profile.get('employee_count', '?')} employees | {company_profile.get('funding_stage', '')}",
+            f"  ICP: {company_profile.get('icp_tier', '?')} (score {company_profile.get('icp_score', '?')})",
+            "",
+        ]
+
+    if executive_briefing:
+        lines += [
+            "─" * 60,
+            "FULL INTEL BRIEF",
+            "─" * 60,
+            executive_briefing,
+            "",
+        ]
+    else:
+        # Fallback sections when briefing wasn't generated
+        if why_now_signals:
+            lines += ["WHY NOW"]
+            for item in why_now_signals[:3]:
+                detail = str((item or {}).get("detail") or "").strip()
+                if detail:
+                    lines.append(f"  • {detail}")
+            lines.append("")
+
+        if attendee_cards:
+            lines += ["KEY PEOPLE IN THIS MEETING"]
+            for card in attendee_cards[:4]:
+                name = str(card.get("name") or "Stakeholder").strip()
+                title = str(card.get("title") or card.get("role_label") or "").strip()
+                focus = str(card.get("likely_focus") or "").strip()
+                line = f"  • {name}"
+                if title:
+                    line += f" | {title}"
+                if focus:
+                    line += f"\n    Focus: {focus}"
+                lines.append(line)
+            lines.append("")
+
+        if recommendations:
+            lines += ["RECOMMENDED APPROACH"]
+            for item in recommendations[:4]:
+                if isinstance(item, str) and item.strip():
+                    lines.append(f"  • {item.strip()}")
+            lines.append("")
+
+    lines += [
+        "─" * 60,
+        f"Full prep page: {meeting_link}",
+        "",
+        "Beacon generated this from account data, prior meetings, email threads, and call history.",
+    ]
+
+    return subject, "\n".join(lines).strip()
+
+
+async def run_due_pre_meeting_intel_once() -> dict[str, int]:
+    async with AsyncSessionLocal() as session:
+        settings_row = await _get_or_create_settings(session)
+        config = normalize_pre_meeting_settings(settings_row.pre_meeting_automation_settings)
+        if not config["enabled"]:
+            return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
+
+        now = datetime.utcnow()
+        window_end = now + timedelta(hours=config["send_hours_before"])
+        meetings = (
+            await session.execute(
+                select(Meeting).where(
+                    Meeting.status == "scheduled",
+                    Meeting.scheduled_at.is_not(None),
+                    Meeting.scheduled_at > now,
+                    Meeting.scheduled_at <= window_end,
+                    Meeting.intel_email_sent_at.is_(None),
+                )
+            )
+        ).scalars().all()
+
+        checked = len(meetings)
+        generated = 0
+        emailed = 0
+        skipped = 0
+
+        for meeting in meetings:
+            try:
+                if config["auto_generate_if_missing"] and not meeting.research_data:
+                    await run_pre_meeting_intelligence(meeting.id, session)
+                    generated += 1
+                    meeting = await session.get(Meeting, meeting.id)
+
+                if config["auto_generate_if_missing"] and meeting and not meeting.demo_strategy:
+                    await generate_meeting_demo_strategy(meeting.id, session)
+                    meeting = await session.get(Meeting, meeting.id)
+
+                if not meeting:
+                    skipped += 1
+                    continue
+
+                recipient_ids = await _collect_recipient_ids(session, meeting)
+                if not recipient_ids:
+                    skipped += 1
+                    continue
+
+                users = (
+                    await session.execute(select(User).where(User.id.in_(recipient_ids)))
+                ).scalars().all()
+                recipients = [user for user in users if user.is_active and user.email]
+                if not recipients:
+                    skipped += 1
+                    continue
+
+                subject, body = _build_meeting_intel_email(meeting)
+                sent_any = False
+                for recipient in recipients:
+                    result = await send_email(
+                        recipient.email,
+                        subject,
+                        body,
+                        from_name="Beacon Meeting Intel",
+                    )
+                    if result.get("status") == "sent":
+                        sent_any = True
+
+                if not sent_any:
+                    skipped += 1
+                    continue
+
+                meeting.intel_email_sent_at = datetime.utcnow()
+                meeting.updated_at = datetime.utcnow()
+                session.add(meeting)
+                if meeting.deal_id:
+                    session.add(
+                        Activity(
+                            deal_id=meeting.deal_id,
+                            type="note",
+                            source="pre_meeting_automation",
+                            content=f"Pre-meeting intel email sent for '{meeting.title}'",
+                        )
+                    )
+                emailed += 1
+            except Exception:
+                logger.exception("Pre-meeting automation failed for meeting %s", meeting.id)
+                skipped += 1
+
+        await session.commit()
+        return {
+            "checked": checked,
+            "generated": generated,
+            "emailed": emailed,
+            "skipped": skipped,
+        }

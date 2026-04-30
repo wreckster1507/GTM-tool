@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Sparkles, Linkedin, Mail, Phone, UserCircle2 } from "lucide-react";
 import { activitiesApi, companiesApi, contactsApi, outreachApi } from "../lib/api";
+import {
+  getProspectTrackingScore,
+  getProspectTrackingStage,
+  getProspectTrackingSummary,
+  getProspectTrackingTone,
+} from "../lib/prospectTracking";
 import type { Activity, Company, Contact, OutreachSequence } from "../types";
 import { avatarColor, formatDate, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
@@ -82,13 +88,18 @@ export default function ContactDetail() {
     return <div className="crm-panel p-14 text-center crm-muted">Contact not found.</div>;
   }
 
+  const trackingTone = getProspectTrackingTone(contact);
+
   const isSourcedContact = Boolean(
-    company?.sourcing_batch_id
+    contact.company_id
+    || company?.sourcing_batch_id
     || (contact.enrichment_data && typeof contact.enrichment_data === "object" && (
       (contact.enrichment_data as Record<string, unknown>).raw_row
       || (contact.enrichment_data as Record<string, unknown>).sequence_plan
     ))
     || contact.outreach_lane
+    || contact.sequence_status
+    || contact.instantly_status
     || contact.warm_intro_path
   );
 
@@ -100,9 +111,9 @@ export default function ContactDetail() {
     <>
       <div className="contact-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="flex items-center justify-between gap-3">
-          <button className="crm-button soft" onClick={() => navigate("/contacts")}>
+          <button className="crm-button soft" onClick={() => navigate(-1)}>
             <ArrowLeft size={14} />
-            Back to Contacts
+            Back
           </button>
         </div>
 
@@ -114,9 +125,32 @@ export default function ContactDetail() {
             <div className="min-w-0">
               <h2 className="text-[30px] font-extrabold tracking-tight text-[#1f2d3d]">{contact.first_name} {contact.last_name}</h2>
               <p className="text-[14px] text-[#6f8399] mt-1">{contact.title ?? "-"}</p>
+              <div
+                className="mt-3"
+                style={{
+                  marginTop: 14,
+                  padding: "12px 14px",
+                  borderRadius: 14,
+                  border: `1px solid ${trackingTone.border}`,
+                  background: trackingTone.soft,
+                  maxWidth: 760,
+                }}
+              >
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <span style={{ color: trackingTone.color, fontWeight: 800, fontSize: 13 }}>
+                    {getProspectTrackingStage(contact)}
+                  </span>
+                  <span style={{ color: trackingTone.color, fontWeight: 900, fontSize: 13 }}>
+                    {getProspectTrackingScore(contact)}
+                  </span>
+                </div>
+                <div className="text-[13px] text-[#4d6178] mt-1.5" style={{ lineHeight: 1.55 }}>
+                  {getProspectTrackingSummary(contact)}
+                </div>
+              </div>
               <div className="flex items-center gap-3 mt-3 text-[13px] text-[#4d6178] flex-wrap" style={{ marginTop: 14, rowGap: 10, columnGap: 12 }}>
                 {company && (
-                  <Link to={`/companies/${company.id}`} className="hover:text-[#ff6b35] font-semibold">
+                  <Link to={`/account-sourcing/${company.id}`} className="hover:text-[#ff6b35] font-semibold">
                     {company.name}
                   </Link>
                 )}
@@ -124,7 +158,14 @@ export default function ContactDetail() {
                   <span className="inline-flex items-center gap-1"><Mail size={13} />{contact.email}</span>
                 )}
                 {contact.phone && (
-                  <span className="inline-flex items-center gap-1"><Phone size={13} />{contact.phone}</span>
+                  <button
+                    onClick={() => window.__aircallDial?.(contact.phone!, `${contact.first_name} ${contact.last_name}`)}
+                    className="inline-flex items-center gap-1 hover:text-[#16a34a] transition-colors cursor-pointer"
+                    title={`Call ${contact.phone}`}
+                    style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit" }}
+                  >
+                    <Phone size={13} />{contact.phone}
+                  </button>
                 )}
                 {contact.linkedin_url && (
                   <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#2a5f8c] hover:text-[#ff6b35]">

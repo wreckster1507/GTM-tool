@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { companiesApi, prospectingApi, type ProspectingBatch } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 
 async function confirmDelete(name: string, onDelete: () => Promise<void>, onRemove: () => void) {
   if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
@@ -19,6 +20,7 @@ const TIER_STYLE: Record<string, CSSProperties> = {
 };
 
 export default function Companies() {
+  const { isAdmin } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [search, setSearch] = useState("");
   const [sortByScore, setSortByScore] = useState(true);
@@ -201,12 +203,17 @@ export default function Companies() {
   return (
     <div className="crm-page companies-page space-y-6">
       <div className="crm-panel px-8 py-6 crm-toolbar companies-toolbar">
-        <div className="flex items-center gap-2">
-          <span className="crm-chip">
-            <span className="font-bold tabular">{companies.length}</span>
-            Accounts
-          </span>
-          <span className="crm-chip">Sorted by ICP fit</span>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="crm-chip">
+              <span className="font-bold tabular">{companies.length}</span>
+              Accounts
+            </span>
+            <span className="crm-chip">Sorted by ICP fit</span>
+          </div>
+          <p className="text-[12px] text-[#7a96b0] mt-1">
+            Each account is scored and ranked by ICP fit. Click an account to view enrichment, deals, and prospects. Use Bulk Import to add accounts from a CSV.
+          </p>
         </div>
         <div className="crm-toolbar-actions">
           <button
@@ -246,7 +253,7 @@ export default function Companies() {
               <FileSpreadsheet className="h-4 w-4 text-[#ff6b35]" />
               <h3 className="text-[15px] font-bold text-[#2b3f55]">Bulk Prospecting Import</h3>
             </div>
-            <p className="text-[12px] text-[#6f8399] mt-1">Upload CSV, review rows, then trigger enrichment and prospecting.</p>
+            <p className="text-[12px] text-[#6f8399] mt-1">Upload a CSV with a <strong>company name</strong> or <strong>domain</strong> column. Beacon will enrich each row with ICP score, industry, employee count, and funding stage — then kick off prospecting in the background.</p>
           </div>
 
           <div className="companies-importer-controls">
@@ -340,7 +347,12 @@ export default function Companies() {
       ) : filtered.length === 0 ? (
         <div className="crm-panel p-14 text-center text-[#6f8297]">
           <Building2 className="h-12 w-12 mx-auto mb-4 opacity-30" />
-          No companies found for this query.
+          <div className="font-bold text-[#25384d] text-[14px] mb-2">No accounts found</div>
+          <div className="text-[12px] text-[#7a96b0] max-w-sm mx-auto">
+            {companies.length === 0
+              ? "Add your first account using Bulk Import CSV above, or have Beacon enrich a company from the Pipeline or Account Sourcing pages."
+              : "Try a different search term or clear your filters."}
+          </div>
         </div>
       ) : (
         <div className="crm-panel overflow-hidden companies-table-panel">
@@ -366,7 +378,7 @@ export default function Companies() {
                           {getInitials(c.name)}
                         </div>
                         <div className="min-w-0">
-                          <Link to={`/companies/${c.id}`} className="font-bold text-[#24364b] hover:text-[#ff6b35] transition-colors">
+                          <Link to={`/account-sourcing/${c.id}`} className="font-bold text-[#24364b] hover:text-[#ff6b35] transition-colors">
                             {c.name}
                           </Link>
                           <p className="text-[13px] text-[#7a8ea4] truncate mt-0.5">{c.domain}</p>
@@ -404,18 +416,20 @@ export default function Companies() {
                       )}
                     </td>
                     <td>
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          confirmDelete(c.name, () => companiesApi.delete(c.id), () =>
-                            setCompanies((prev) => prev.filter((x) => x.id !== c.id))
-                          );
-                        }}
-                        className="flex items-center justify-center h-8 w-8 rounded-lg text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
-                        title="Delete company"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {isAdmin ? (
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            confirmDelete(c.name, () => companiesApi.delete(c.id), () =>
+                              setCompanies((prev) => prev.filter((x) => x.id !== c.id))
+                            );
+                          }}
+                          className="flex items-center justify-center h-8 w-8 rounded-lg text-[#9eb0c3] hover:text-[#c0392b] hover:bg-[#fff0f0] transition-colors"
+                          title="Delete company"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

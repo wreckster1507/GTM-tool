@@ -1,31 +1,31 @@
-import { CSSProperties, ReactNode, useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { CSSProperties, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useAuth } from "../lib/AuthContext";
 import {
   AlertCircle,
+  Brain,
   Building2,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Download,
-  ExternalLink,
   Flame,
   Loader2,
-  Mail,
-  Phone,
-  Linkedin,
+  Plus,
   RefreshCw,
   Search,
-  Send,
   Sparkles,
   Target,
   TrendingUp,
   Upload,
   Users,
+  X,
 } from "lucide-react";
 
 import { accountSourcingApi } from "../lib/api";
-import { formatDate, getAccountPrioritySnapshot } from "../lib/utils";
-import type { Company, Contact, SourcingBatch } from "../types";
+import { getAccountPrioritySnapshot } from "../lib/utils";
+import type { AccountSourcingSummary, Company, SourcingBatch } from "../types";
+import AssignDropdown from "../components/AssignDropdown";
+import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 
 const colors = {
   bg: "#f4f7fb",
@@ -53,35 +53,21 @@ const ICP_STYLE: Record<string, CSSProperties> = {
   cold: { background: "#eef2f7", color: "#5e6d83", border: "1px solid #d9e1ec" },
 };
 
-const PERSONA_STYLE: Record<string, CSSProperties> = {
-  champion: { background: colors.greenSoft, color: colors.green },
-  buyer: { background: "#eaf2ff", color: "#2556c4" },
-  evaluator: { background: colors.amberSoft, color: colors.amber },
-  blocker: { background: colors.redSoft, color: colors.red },
-};
-
-const PERSONA_LABEL: Record<string, string> = {
-  buyer: "Buyer",
-  champion: "Champion",
-  evaluator: "Evaluator",
-  blocker: "Blocker",
-  unknown: "Unknown",
-};
-
 const PRIORITY_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
   high: { background: "#e8f8f0", color: "#1f8f5f" },
   medium: { background: "#fff4df", color: "#b56d00" },
   low: { background: "#eef2f7", color: "#5e6d83" },
 };
 
-const INTEREST_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
-  high: { background: "#eef5ff", color: "#1f6feb" },
-  medium: { background: "#f3eaff", color: "#7a2dd9" },
-  low: { background: "#ffecef", color: "#b42336" },
-};
+const TIER_OPTIONS = [
+  { value: "hot", label: "Hot" },
+  { value: "warm", label: "Warm" },
+  { value: "monitor", label: "Monitor" },
+  { value: "cold", label: "Cold" },
+];
 
 const DISPOSITION_OPTIONS = [
-  { value: "", label: "Unreviewed" },
+  { value: "__empty__", label: "Unreviewed" },
   { value: "working", label: "Working" },
   { value: "interested", label: "Interested" },
   { value: "nurture", label: "Nurture" },
@@ -90,21 +76,18 @@ const DISPOSITION_OPTIONS = [
   { value: "do_not_target", label: "Do Not Target" },
 ];
 
-const OUTREACH_STATUS_OPTIONS = [
-  { value: "", label: "Unknown" },
-  { value: "not_started", label: "Not Started" },
-  { value: "contacted", label: "Contacted" },
-  { value: "replied", label: "Replied" },
-  { value: "meeting_booked", label: "Meeting Booked" },
-];
-
 const OUTREACH_LANE_OPTIONS = [
-  { value: "", label: "Auto / Unset" },
+  { value: "__empty__", label: "Auto / Unset" },
   { value: "warm_intro", label: "Warm Intro" },
   { value: "event_follow_up", label: "Event Follow-up" },
   { value: "cold_operator", label: "Cold Operator" },
   { value: "cold_strategic", label: "Cold Strategic" },
 ];
+
+function parseSearchParamList(value: string | null): string[] {
+  if (!value) return [];
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
 
 const pageStyle: CSSProperties = {
   background: colors.bg,
@@ -136,34 +119,71 @@ function ts(date?: string) {
   });
 }
 
-function canonicalPersona(persona?: string | null, personaType?: string | null): keyof typeof PERSONA_STYLE | "unknown" {
-  const normalized = (personaType || persona || "").toLowerCase();
-  if (normalized === "economic_buyer" || normalized === "buyer") return "buyer";
-  if (normalized === "technical_evaluator" || normalized === "evaluator") return "evaluator";
-  if (normalized === "champion") return "champion";
-  if (normalized === "blocker") return "blocker";
-  return "unknown";
+function formatBatchStage(stage?: string, status?: string): string {
+  const key = (stage || status || "").toLowerCase();
+  const labels: Record<string, string> = {
+    upload_received: "Upload Received",
+    tal_review: "Awaiting TAL Approval",
+    queued: "Queued",
+    research_running: "Research Running",
+    processing: "Research Running",
+    pending: "Queued",
+    completed: "Completed",
+    failed: "Failed",
+    cancelled: "Cancelled",
+  };
+  return labels[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) || "Unknown";
 }
 
-function getImportAnalyst(company: Company): Record<string, unknown> | undefined {
-  const importBlock = company.enrichment_sources?.import;
-  if (!importBlock || typeof importBlock !== "object") return undefined;
-  const analyst = (importBlock as Record<string, unknown>).analyst;
-  return analyst && typeof analyst === "object" ? (analyst as Record<string, unknown>) : undefined;
+function getIcpAnalysis(company: Company): Record<string, unknown> | undefined {
+  const cache = company.enrichment_cache;
+  if (!cache || typeof cache !== "object") return undefined;
+  const entry = (cache as Record<string, unknown>).icp_analysis;
+  if (!entry || typeof entry !== "object") return undefined;
+  const data = (entry as Record<string, unknown>).data;
+  return data && typeof data === "object" ? (data as Record<string, unknown>) : (entry as Record<string, unknown>);
 }
 
-function getImportSignals(company: Company): { positive: number; negative: number } {
-  const importBlock = company.enrichment_sources?.import;
-  if (!importBlock || typeof importBlock !== "object") return { positive: 0, negative: 0 };
-  const uploadedSignals = (importBlock as Record<string, unknown>).uploaded_signals;
-  if (!uploadedSignals || typeof uploadedSignals !== "object") return { positive: 0, negative: 0 };
-  const positive = Array.isArray((uploadedSignals as Record<string, unknown>).positive)
-    ? ((uploadedSignals as Record<string, unknown>).positive as unknown[]).length
-    : 0;
-  const negative = Array.isArray((uploadedSignals as Record<string, unknown>).negative)
-    ? ((uploadedSignals as Record<string, unknown>).negative as unknown[]).length
-    : 0;
-  return { positive, negative };
+function getSalesPlay(company: Company): Record<string, unknown> | undefined {
+  const profile = company.prospecting_profile;
+  if (profile && typeof profile === "object") {
+    const salesPlay = (profile as Record<string, unknown>).sales_play;
+    if (salesPlay && typeof salesPlay === "object") return salesPlay as Record<string, unknown>;
+  }
+  const cache = company.enrichment_cache;
+  if (!cache || typeof cache !== "object") return undefined;
+  const icpEntry = (cache as Record<string, unknown>).icp_analysis;
+  if (!icpEntry || typeof icpEntry !== "object") return undefined;
+  const salesPlay = (icpEntry as Record<string, unknown>).sales_play;
+  return salesPlay && typeof salesPlay === "object" ? (salesPlay as Record<string, unknown>) : undefined;
+}
+
+function asText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value
+    .replace(/\s+/g, " ")
+    .replace(/\s*\/\s*/g, " / ")
+    .trim();
+  return cleaned || undefined;
+}
+
+function parseManualCompanyLines(input: string): Array<{ name: string; domain?: string }> {
+  return input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line
+        .split(/[|,]/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const [name, domain] = parts;
+      return {
+        name: name || "",
+        domain: domain || undefined,
+      };
+    })
+    .filter((entry) => entry.name);
 }
 
 function SummaryCard({
@@ -172,12 +192,14 @@ function SummaryCard({
   value,
   hint,
   tone = "neutral",
+  onClick,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   hint: string;
   tone?: "neutral" | "primary" | "warm" | "green";
+  onClick?: () => void;
 }) {
   const toneStyle = {
     neutral: { bg: "#f8fbff", border: colors.border, accent: colors.sub },
@@ -193,7 +215,9 @@ function SummaryCard({
         padding: "18px 18px 16px",
         background: toneStyle.bg,
         borderColor: toneStyle.border,
+        cursor: onClick ? "pointer" : "default",
       }}
+      onClick={onClick}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div style={{ color: toneStyle.accent }}>{icon}</div>
@@ -205,7 +229,13 @@ function SummaryCard({
   );
 }
 
-function UploadPanel({ onUploaded }: { onUploaded: (batch: SourcingBatch) => void }) {
+function UploadPanel({
+  onUploaded,
+  onDownloadTemplate,
+}: {
+  onUploaded: (batch: SourcingBatch) => void;
+  onDownloadTemplate: () => void;
+}) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -272,12 +302,33 @@ function UploadPanel({ onUploaded }: { onUploaded: (batch: SourcingBatch) => voi
           >
             <Upload size={32} color="#ffffff" />
           </div>
-          <div style={{ fontWeight: 800, color: colors.text, fontSize: 32 }}>Import Target Accounts</div>
+          <div style={{ fontWeight: 800, color: colors.text, fontSize: 32 }}>Migrate Accounts Workbook</div>
           <div style={{ color: colors.sub, marginTop: 10, lineHeight: 1.6, fontSize: 15, maxWidth: 760, marginInline: "auto" }}>
-            Start with a CSV or workbook, then let Beacon preserve analyst research, score fit, widen stakeholder coverage, and surface the best next people to prospect.
+            Use this for account-led spreadsheets like your master ICP or target-account workbook. Beacon will import the companies first without forcing enrichment, then reps can enrich only the accounts they want to work.
+          </div>
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={onDownloadTemplate}
+              style={{
+                border: `1px solid ${colors.border}`,
+                background: "#fff",
+                color: colors.text,
+                borderRadius: 10,
+                padding: "9px 14px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Download Example Template
+            </button>
+            <span style={{ color: colors.faint, fontSize: 12, alignSelf: "center" }}>
+              Best for account-led files with columns like `Accounts`, `Region`, `AE`, `SDR`, `Headquarters`, `Classification`, and `Remarks`
+            </span>
           </div>
           <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
-            {["CSV/XLSX upload", "Committee coverage", "Intent signals", "Prospecting priorities"].map((item) => (
+            {["CSV/XLSX upload", "TAL verdicts", "Why now signals", "Outreach guidance"].map((item) => (
               <span
                 key={item}
                 style={{
@@ -343,546 +394,195 @@ function UploadPanel({ onUploaded }: { onUploaded: (batch: SourcingBatch) => voi
   );
 }
 
-function BatchBar({ batch }: { batch: SourcingBatch }) {
-  const pct = batch.total_rows ? Math.round((batch.processed_rows / batch.total_rows) * 100) : 0;
-  return (
-    <div style={{ ...cardStyle, padding: "16px 18px", background: "linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 700 }}>
-          {batch.status === "completed" ? (
-            <CheckCircle2 size={16} color={colors.green} />
-          ) : (
-            <Loader2 size={16} color={colors.primary} className="animate-spin" />
-          )}
-          {batch.filename}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span
-            style={{
-              borderRadius: 999,
-              padding: "4px 8px",
-              background: batch.status === "completed" ? colors.greenSoft : colors.primarySoft,
-              color: batch.status === "completed" ? colors.green : colors.primary,
-              fontSize: 11,
-              fontWeight: 800,
-            }}
-          >
-            {batch.status.toUpperCase()}
-          </span>
-          <div style={{ color: colors.faint, fontSize: 13 }}>
-            {batch.processed_rows}/{batch.total_rows} processed
-          </div>
-        </div>
-      </div>
-      <div style={{ height: 8, background: "#edf2f7", borderRadius: 999, overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: colors.primary }} />
-      </div>
-      <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", color: colors.faint, fontSize: 12 }}>
-        <span>{pct}% complete</span>
-        <span>{batch.created_companies} created</span>
-      </div>
-    </div>
-  );
-}
-
-function ContactRow({ contact }: { contact: Contact }) {
-  const [re, setRe] = useState(false);
-  const persona = canonicalPersona(contact.persona, contact.persona_type);
-
-  return (
-    <tr>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, color: colors.text, verticalAlign: "top" }}>
-        <Link to={`/account-sourcing/contacts/${contact.id}`} style={{ color: colors.text, textDecoration: "none", fontWeight: 700 }}>
-          {contact.first_name} {contact.last_name}
-        </Link>
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, color: colors.sub, verticalAlign: "top" }}>{contact.title || "-"}</td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, verticalAlign: "top" }}>
-        <div style={{ display: "inline-flex", gap: 10 }}>
-          {contact.email ? <a href={`mailto:${contact.email}`}><Mail size={14} /></a> : null}
-          {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer"><Linkedin size={14} /></a> : null}
-          {contact.phone ? <a href={`tel:${contact.phone}`}><Phone size={14} /></a> : null}
-        </div>
-        {(contact.outreach_lane || contact.sequence_status) ? (
-          <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {contact.outreach_lane ? (
-              <span style={{ background: "#eef5ff", color: colors.primary, borderRadius: 999, fontSize: 11, padding: "3px 8px", fontWeight: 700 }}>
-                {contact.outreach_lane.replace(/_/g, " ")}
-              </span>
-            ) : null}
-            {contact.sequence_status ? (
-              <span style={{ background: "#f3eaff", color: colors.violet, borderRadius: 999, fontSize: 11, padding: "3px 8px", fontWeight: 700 }}>
-                {contact.sequence_status.replace(/_/g, " ")}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, verticalAlign: "top" }}>
-        {persona !== "unknown" ? (
-          <span style={{ ...PERSONA_STYLE[persona], borderRadius: 999, fontSize: 11, padding: "4px 9px", fontWeight: 700 }}>
-            {PERSONA_LABEL[persona]}
-          </span>
-        ) : null}
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, color: colors.faint, fontSize: 12, verticalAlign: "top" }}>
-        {ts(contact.enriched_at)}
-      </td>
-      <td style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.border}`, verticalAlign: "top" }}>
-        <div style={{ display: "inline-flex", gap: 8 }}>
-          <button
-            onClick={async () => {
-              setRe(true);
-              try {
-                await accountSourcingApi.reEnrichContact(contact.id);
-              } finally {
-                setTimeout(() => setRe(false), 2500);
-              }
-            }}
-            style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.sub }}
-            title="Re-enrich"
-          >
-            {re ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          </button>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function CompanyCard({ company, onRefresh }: { company: Company; onRefresh: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loadingContacts, setLoadingContacts] = useState(false);
-
-  const [re, setRe] = useState(false);
-  const [push, setPush] = useState(false);
-  const [savingWorkflow, setSavingWorkflow] = useState(false);
-  const [workflow, setWorkflow] = useState({
-    assigned_rep: company.assigned_rep || "",
-    assigned_rep_name: company.assigned_rep_name || "",
-    assigned_rep_email: company.assigned_rep_email || "",
-    outreach_status: company.outreach_status || "",
-    disposition: company.disposition || "",
-    recommended_outreach_lane: company.recommended_outreach_lane || "",
-    rep_feedback: company.rep_feedback || "",
-  });
-
-  const loadContacts = useCallback(async () => {
-    setLoadingContacts(true);
-    try {
-      const data = await accountSourcingApi.getContacts(company.id);
-      setContacts(data);
-    } finally {
-      setLoadingContacts(false);
-    }
-  }, [company.id]);
-
-  useEffect(() => {
-    if (expanded && contacts.length === 0) {
-      loadContacts();
-    }
-  }, [expanded, contacts.length, loadContacts]);
-
-  useEffect(() => {
-    setWorkflow({
-      assigned_rep: company.assigned_rep || "",
-      assigned_rep_name: company.assigned_rep_name || "",
-      assigned_rep_email: company.assigned_rep_email || "",
-      outreach_status: company.outreach_status || "",
-      disposition: company.disposition || "",
-      recommended_outreach_lane: company.recommended_outreach_lane || "",
-      rep_feedback: company.rep_feedback || "",
-    });
-  }, [company.assigned_rep, company.assigned_rep_name, company.assigned_rep_email, company.outreach_status, company.disposition, company.recommended_outreach_lane, company.rep_feedback]);
+function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (userId: string | null, userName: string | null) => void }) {
+  const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
-  const signals = company.intent_signals as { hiring?: number; funding?: number; product?: number } | undefined;
-  const analyst = getImportAnalyst(company);
-  const uploadedSignals = getImportSignals(company);
   const priority = getAccountPrioritySnapshot(company);
-  const cache = (company.enrichment_cache || {}) as Record<string, unknown>;
-  const committeeEntry = cache.committee_coverage as { data?: { coverage_score?: number; missing_roles?: unknown[] } } | undefined;
-  const committee = (committeeEntry?.data ?? committeeEntry) as { coverage_score?: number; missing_roles?: unknown[] } | undefined;
-  const missingRoleCount = Array.isArray(committee?.missing_roles) ? committee!.missing_roles.length : 0;
-  const coverageScore = typeof committee?.coverage_score === "number" ? committee.coverage_score : undefined;
-
-  const saveWorkflow = async () => {
-    setSavingWorkflow(true);
-    try {
-      await accountSourcingApi.updateCompany(company.id, {
-        assigned_rep: workflow.assigned_rep.trim() || null,
-        assigned_rep_name: workflow.assigned_rep_name.trim() || null,
-        assigned_rep_email: workflow.assigned_rep_email.trim() || null,
-        outreach_status: workflow.outreach_status || null,
-        disposition: workflow.disposition || null,
-        recommended_outreach_lane: workflow.recommended_outreach_lane || null,
-        rep_feedback: workflow.rep_feedback.trim() || null,
-      });
-      onRefresh();
-    } finally {
-      setSavingWorkflow(false);
-    }
-  };
+  const icpAnalysis = getIcpAnalysis(company);
+  const salesPlay = getSalesPlay(company);
+  const talVerdict = asText(salesPlay?.tal_verdict) || (typeof icpAnalysis?.classification === "string" ? icpAnalysis.classification : undefined);
+  const disposition = company.disposition || "";
 
   return (
-    <div style={{ ...cardStyle, overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "18px 20px",
-          display: "grid",
-          gridTemplateColumns: "auto minmax(0,1fr) auto",
-          columnGap: 12,
-          rowGap: 10,
-          cursor: "pointer",
-          background: expanded ? "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)" : "#ffffff",
-        }}
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <div style={{ color: colors.faint, paddingTop: 2 }}>{expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</div>
-
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <Building2 size={16} color="#8b98ad" />
-            <Link to={`/account-sourcing/${company.id}`} onClick={(e) => e.stopPropagation()} style={{ color: colors.text, fontWeight: 800, fontSize: 18, textDecoration: "none" }}>
-              {company.name}
-            </Link>
-            <a href={`https://${company.domain}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-              <ExternalLink size={12} color="#8b98ad" />
-            </a>
-            <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "3px 8px" }}>
-              {tier.toUpperCase()} ({company.icp_score ?? 0})
-            </span>
-          </div>
-
-          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 12, color: colors.sub, fontSize: 14 }}>
-            <span>{company.domain}</span>
-            {company.industry ? <span>{company.industry}</span> : null}
-            {company.employee_count ? <span>{company.employee_count.toLocaleString()} employees</span> : null}
-            {company.funding_stage ? <span>{company.funding_stage}</span> : null}
-            {typeof analyst?.category === "string" ? <span>{analyst.category}</span> : null}
-          </div>
-
-          {company.description ? (
-            <p style={{ marginTop: 10, color: colors.sub, lineHeight: 1.6, fontSize: 15, marginBottom: 0 }}>
-              {company.description}
-            </p>
-          ) : null}
-          {company.why_now ? (
-            <p style={{ marginTop: 8, color: colors.faint, lineHeight: 1.55, fontSize: 13.5, marginBottom: 0 }}>
-              <strong style={{ color: colors.text }}>Why now:</strong> {company.why_now}
-            </p>
-          ) : null}
-
-          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-            <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "10px 12px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>PIPELINE READINESS</div>
-              <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 18 }}>{coverageScore ?? 0}%</div>
-              <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Committee coverage</div>
-            </div>
-            <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "10px 12px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>NEXT GAPS</div>
-              <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 18 }}>{missingRoleCount}</div>
-              <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Roles still missing</div>
-            </div>
-            {typeof analyst?.icp_fit_score === "number" ? (
-              <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "10px 12px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>UPLOADED ICP</div>
-                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 18 }}>{analyst.icp_fit_score}/10</div>
-                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>{typeof analyst?.confidence === "string" ? `${analyst.confidence} confidence` : "From uploaded research"}</div>
-              </div>
-            ) : null}
-            {typeof analyst?.intent_score === "number" ? (
-              <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#fbfdff", padding: "10px 12px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>UPLOADED INTENT</div>
-                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 18 }}>{analyst.intent_score}/10</div>
-                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>
-                  {uploadedSignals.positive} positive / {uploadedSignals.negative} negative signals
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gap: 8, justifyItems: "end", alignContent: "start" }} onClick={(e) => e.stopPropagation()}>
-          <div style={{ color: colors.faint, fontSize: 12, textAlign: "right" }}>
-            Enriched
-            <div style={{ color: colors.sub, fontWeight: 700, marginTop: 2 }}>{ts(company.enriched_at)}</div>
-          </div>
-
-          <div style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {signals?.hiring ? <span style={{ background: colors.greenSoft, color: colors.green, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>Hiring</span> : null}
-            {signals?.funding ? <span style={{ background: colors.primarySoft, color: colors.primary, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>Funding</span> : null}
-            {signals?.product ? <span style={{ background: colors.violetSoft, color: colors.violet, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>Product</span> : null}
-            {typeof analyst?.classification === "string" ? (
-              <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                {String(analyst.classification)}
-              </span>
-            ) : null}
-            {typeof analyst?.fit_type === "string" ? (
-              <span style={{ background: "#fff4df", color: colors.amber, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                {String(analyst.fit_type)}
-              </span>
-            ) : null}
-            {typeof committee?.coverage_score === "number" ? (
-              <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                Committee {committee.coverage_score}%
-              </span>
-            ) : null}
-            {missingRoleCount > 0 ? (
-              <span style={{ background: colors.redSoft, color: colors.red, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                {missingRoleCount} gaps
-              </span>
-            ) : null}
-            <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-              Priority {priority.priorityBand} ({priority.priorityScore})
-            </span>
-            <span style={{ ...INTEREST_STYLE[priority.interestLevel], borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-              Interest {priority.interestLevel}
-            </span>
-            {company.recommended_outreach_lane ? (
-              <span style={{ background: "#eef5ff", color: colors.primary, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                {company.recommended_outreach_lane.replace(/_/g, " ")}
-              </span>
-            ) : null}
-            {company.assigned_rep ? (
-              <span style={{ background: "#f8fbff", color: colors.sub, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                Owner {company.assigned_rep}
-              </span>
-            ) : null}
-            {company.assigned_rep_email ? (
-              <span style={{ background: "#f7f9fc", color: colors.sub, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                {company.assigned_rep_email}
-              </span>
-            ) : null}
-            {company.disposition ? (
-              <span style={{ background: "#f6f8fb", color: colors.text, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
-                {company.disposition.replace(/_/g, " ")}
-              </span>
-            ) : null}
-          </div>
-
-          <div style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button
-              onClick={async () => {
-                setRe(true);
-                try {
-                  await accountSourcingApi.reEnrichCompany(company.id);
-                } finally {
-                  setTimeout(() => {
-                    setRe(false);
-                    onRefresh();
-                  }, 3500);
-                }
-              }}
-              style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "7px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              {re ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Re-enrich
-            </button>
-
-            <button
-              onClick={async () => {
-                setPush(true);
-                try {
-                  await accountSourcingApi.pushToInstantly(company.id, company.instantly_campaign_id || "default");
-                } finally {
-                  setTimeout(() => setPush(false), 1800);
-                }
-              }}
-              style={{ border: `1px solid #cde5ff`, background: "#eff7ff", color: "#1f5ecc", borderRadius: 10, padding: "7px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              {push ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Instantly
-            </button>
-          </div>
+    <div
+      onClick={() => nav(`/account-sourcing/${company.id}`)}
+      style={{
+        ...cardStyle,
+        padding: "14px 20px",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        transition: "background 0.15s",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fbff"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "#ffffff"; }}
+    >
+      <Building2 size={18} color="#71839a" style={{ flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>{company.name}</div>
+        <div style={{ color: colors.faint, fontSize: 12, marginTop: 2 }}>
+          {company.domain.endsWith(".unknown") ? "Domain unresolved" : company.domain}
+          {company.industry ? ` · ${company.industry}` : ""}
         </div>
       </div>
-
-      {expanded ? (
-        <div style={{ borderTop: `1px solid ${colors.border}`, padding: "16px 20px 20px", background: "#fbfdff" }}>
-          {typeof coverageScore === "number" && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6, color: colors.sub, fontSize: 12, fontWeight: 700 }}>
-                <span>Committee coverage</span>
-                <span>{coverageScore}%</span>
-              </div>
-              <div style={{ height: 8, background: "#e9eef5", borderRadius: 999, overflow: "hidden" }}>
-                <div
-                  style={{
-                    width: `${coverageScore}%`,
-                    height: "100%",
-                    background: coverageScore >= 75 ? "#10b981" : coverageScore >= 50 ? "#2563eb" : "#f59e0b",
-                  }}
-                />
-              </div>
-            </div>
-          )}
-          <div style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-            <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "12px 14px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>PRIORITY</div>
-              <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>{priority.priorityScore}</div>
-              <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>{priority.priorityBand} priority account</div>
-            </div>
-            <div style={{ borderRadius: 12, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "12px 14px" }}>
-              <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>INTEREST</div>
-              <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>{priority.interestLevel}</div>
-              <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>
-                {company.last_outreach_at ? `Last outreach ${formatDate(company.last_outreach_at)}` : "No outreach feedback yet"}
-              </div>
-            </div>
-          </div>
-          <div style={{ marginBottom: 16, borderRadius: 14, border: `1px solid ${colors.border}`, background: "#ffffff", padding: "14px 16px", display: "grid", gap: 10 }}>
-            <div style={{ color: colors.text, fontSize: 13, fontWeight: 800 }}>Prospecting Workflow</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-              <input
-                value={workflow.assigned_rep_name}
-                onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_name: e.target.value }))}
-                placeholder="Assigned rep name"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text }}
-              />
-              <input
-                value={workflow.assigned_rep_email}
-                onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep_email: e.target.value }))}
-                placeholder="Assigned rep email"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text }}
-              />
-              <input
-                value={workflow.assigned_rep}
-                onChange={(e) => setWorkflow((current) => ({ ...current, assigned_rep: e.target.value }))}
-                placeholder="Legacy owner label"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text }}
-              />
-              <select
-                value={workflow.outreach_status}
-                onChange={(e) => setWorkflow((current) => ({ ...current, outreach_status: e.target.value }))}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-              >
-                {OUTREACH_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value || "blank"} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={workflow.disposition}
-                onChange={(e) => setWorkflow((current) => ({ ...current, disposition: e.target.value }))}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-              >
-                {DISPOSITION_OPTIONS.map((option) => (
-                  <option key={option.value || "blank"} value={option.value}>
-                    {option.label}
-                    </option>
-                  ))}
-                </select>
-              <select
-                value={workflow.recommended_outreach_lane}
-                onChange={(e) => setWorkflow((current) => ({ ...current, recommended_outreach_lane: e.target.value }))}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
-              >
-                {OUTREACH_LANE_OPTIONS.map((option) => (
-                  <option key={option.value || "blank"} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <textarea
-              value={workflow.rep_feedback}
-              onChange={(e) => setWorkflow((current) => ({ ...current, rep_feedback: e.target.value }))}
-              placeholder="Rep feedback, objections, account thesis, or why this account should be deprioritized..."
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, minHeight: 84, resize: "vertical" }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ color: colors.faint, fontSize: 12 }}>
-                {company.last_outreach_at ? `Last outreach logged ${formatDate(company.last_outreach_at)}` : "Save after outreach to keep interest and priority current."}
-              </div>
-              <button
-                onClick={saveWorkflow}
-                disabled={savingWorkflow}
-                style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                {savingWorkflow ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                Save workflow
-              </button>
-            </div>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: colors.faint, letterSpacing: 0.3 }}>CONTACTS ({contacts.length})</div>
-            <button onClick={loadContacts} style={{ border: 0, background: "transparent", color: colors.primary, fontWeight: 700, cursor: "pointer", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <RefreshCw size={12} /> Refresh
-            </button>
-          </div>
-
-          {loadingContacts ? (
-            <div style={{ padding: 18, textAlign: "center" }}>
-              <Loader2 className="animate-spin" size={20} color={colors.primary} />
-            </div>
-          ) : contacts.length === 0 ? (
-            <div style={{ padding: 16, color: colors.faint, fontSize: 13, textAlign: "center" }}>
-              No contacts discovered yet.
-            </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
-                <thead>
-                  <tr style={{ background: "#f7f9fc" }}>
-                    {[
-                      "Name",
-                      "Title",
-                      "Channels",
-                      "Persona",
-                      "Enriched",
-                      "Actions",
-                    ].map((h) => (
-                      <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: colors.faint, fontSize: 11, letterSpacing: 0.4, borderBottom: `1px solid ${colors.border}` }}>
-                        {h.toUpperCase()}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {contacts.map((c) => (
-                    <ContactRow key={c.id} contact={c} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      ) : null}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "4px 10px" }}>
+          {tier.toUpperCase()}
+        </span>
+        {talVerdict ? (
+          <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800 }}>
+            {talVerdict}
+          </span>
+        ) : null}
+        <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800 }}>
+          {priority.priorityBand}
+        </span>
+        {disposition ? (
+          <span style={{ background: "#f4f7fb", color: colors.sub, borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 700, border: `1px solid ${colors.border}` }}>
+            {disposition}
+          </span>
+        ) : null}
+      </div>
+      {/* AE / SDR assign — stop propagation so clicking doesn't navigate */}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+        <AssignDropdown
+          entityType="company"
+          entityId={company.id}
+          role="ae"
+          currentAssignedId={company.assigned_to_id ?? null}
+          currentAssignedName={company.assigned_rep_name || company.assigned_rep || company.assigned_rep_email || null}
+          onAssigned={onAssigned}
+          compact
+          label="AE"
+        />
+        <AssignDropdown
+          entityType="company"
+          entityId={company.id}
+          role="sdr"
+          currentAssignedId={company.sdr_id ?? null}
+          currentAssignedName={company.sdr_name || company.sdr_email || null}
+          onAssigned={onAssigned}
+          compact
+          label="SDR"
+        />
+      </div>
+      <ChevronRight size={16} color={colors.faint} style={{ flexShrink: 0 }} />
     </div>
   );
 }
 
 export default function AccountSourcing() {
+  const pageSize = 40;
+  const [searchParams, setSearchParams] = useSearchParams();
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [summary, setSummary] = useState<AccountSourcingSummary | null>(null);
   const [batches, setBatches] = useState<SourcingBatch[]>([]);
-  const [activeBatch, setActiveBatch] = useState<SourcingBatch | null>(null);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [tierFilter, setTierFilter] = useState("");
-  const [priorityFilter, setPriorityFilter] = useState("");
-  const [dispositionFilter, setDispositionFilter] = useState("");
-  const [laneFilter, setLaneFilter] = useState("");
-  const [ownerFilter, setOwnerFilter] = useState("");
-  const [checkingBatch, setCheckingBatch] = useState(false);
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
+  const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
+  const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
+  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
+  const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
+  const [companyTotal, setCompanyTotal] = useState(0);
+  const [companyPages, setCompanyPages] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
   const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
+  const [activeTab, setActiveTab] = useState<"accounts" | "imports">("accounts");
+  const [dismissedBatchIds, setDismissedBatchIds] = useState<string[]>(() => {
+    try {
+      const raw = window.localStorage.getItem("account-sourcing-dismissed-batches");
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [successModal, setSuccessModal] = useState<{ title: string; message: string } | null>(null);
+  const [pendingBatchApproval, setPendingBatchApproval] = useState<SourcingBatch | null>(null);
+  const [confirmingBatchId, setConfirmingBatchId] = useState("");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createForm, setCreateForm] = useState({ companiesText: "" });
+  const [creatingCompany, setCreatingCompany] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [bulkEnriching, setBulkEnriching] = useState(false);
+  const [bulkEnrichResult, setBulkEnrichResult] = useState<string | null>(null);
+  const [bulkIcpRunning, setBulkIcpRunning] = useState(false);
+  const [bulkIcpResult, setBulkIcpResult] = useState<string | null>(null);
+  const { isAdmin } = useAuth();
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("account-sourcing-dismissed-batches", JSON.stringify(dismissedBatchIds));
+    } catch {
+      // ignore local storage issues
+    }
+  }, [dismissedBatchIds]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, b] = await Promise.all([accountSourcingApi.listCompanies(), accountSourcingApi.listBatches()]);
-      setCompanies(c);
+      const [companyPage, companySummary, b] = await Promise.all([
+        accountSourcingApi.listCompaniesPaginated({
+          skip: (page - 1) * pageSize,
+          limit: pageSize,
+          q: debouncedSearch || undefined,
+          icpTier: tierFilter.length ? tierFilter : undefined,
+          disposition: dispositionFilter.length ? dispositionFilter : undefined,
+          recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
+        }),
+        accountSourcingApi.summary(),
+        accountSourcingApi.listBatches(),
+      ]);
+      setCompanies(companyPage.items);
+      setCompanyTotal(companyPage.total);
+      setCompanyPages(companyPage.pages);
+      setSummary(companySummary);
       setBatches(b);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [debouncedSearch, dispositionFilter, laneFilter, page, tierFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const latestVisibleBatch = useMemo(
+    () =>
+      batches.find(
+        (batch) =>
+          !dismissedBatchIds.includes(batch.id) &&
+          ["awaiting_confirmation", "pending", "processing", "completed"].includes(batch.status)
+      ) ?? null,
+    [batches, dismissedBatchIds]
+  );
+
+  // Sync filter state to URL so navigating away and back restores the view
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      search.trim() ? next.set("q", search.trim()) : next.delete("q");
+      tierFilter.length ? next.set("tier", tierFilter.join(",")) : next.delete("tier");
+      dispositionFilter.length ? next.set("disp", dispositionFilter.join(",")) : next.delete("disp");
+      laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
+      page > 1 ? next.set("pg", String(page)) : next.delete("pg");
+      return next;
+    }, { replace: true });
+  }, [search, tierFilter, dispositionFilter, laneFilter, page]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, tierFilter, dispositionFilter, laneFilter]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -896,7 +596,6 @@ export default function AccountSourcing() {
     setResettingScope(scope);
     try {
       const result = await accountSourcingApi.resetData(scope);
-      setActiveBatch(null);
       await load();
       window.alert(`${scope === "workspace" ? "Workspace" : "Account Sourcing"} cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
     } finally {
@@ -904,63 +603,119 @@ export default function AccountSourcing() {
     }
   }, [load]);
 
-  const checkActiveBatchStatus = useCallback(async () => {
-    if (!activeBatch) return;
-    setCheckingBatch(true);
-    try {
-      const updated = await accountSourcingApi.batchStatus(activeBatch.id);
-      setActiveBatch(updated);
-      if (updated.status === "completed" || updated.status === "failed") {
-        await load();
-      }
-    } finally {
-      setCheckingBatch(false);
+  const hasFilters = !!(search || tierFilter.length || dispositionFilter.length || laneFilter.length);
+  const totalCompanies = summary?.total_companies ?? 0;
+  const hotCount = summary?.hot_count ?? 0;
+  const warmCount = summary?.warm_count ?? 0;
+  const highPriorityCount = summary?.high_priority_count ?? 0;
+  const engagedCount = summary?.engaged_count ?? 0;
+  const unresolvedCount = summary?.unresolved_count ?? 0;
+  const unenrichedCount = summary?.unenriched_count ?? 0;
+  const researchedCount = summary?.researched_count ?? 0;
+  const targetVerdictCount = summary?.target_verdict_count ?? 0;
+  const watchVerdictCount = summary?.watch_verdict_count ?? 0;
+  const enrichedCount = summary?.enriched_count ?? 0;
+  const totalContacts = summary?.total_contacts ?? 0;
+  const showingStart = companyTotal === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingEnd = companyTotal === 0 ? 0 : Math.min(page * pageSize, companyTotal);
+  const latestVerdictSummary = (latestVisibleBatch?.verdict_summary || {}) as Record<string, unknown>;
+  const etaText =
+    latestVisibleBatch?.eta_seconds && latestVisibleBatch.eta_seconds > 0
+      ? `${Math.ceil(latestVisibleBatch.eta_seconds / 60)} min remaining`
+      : latestVisibleBatch?.status === "completed"
+        ? "Finished"
+        : "Estimating...";
+  const batchInFlight = Boolean(latestVisibleBatch && ["pending", "processing"].includes(latestVisibleBatch.status));
+  const latestProgressMessage = latestVisibleBatch
+    ? latestVisibleBatch.progress_message ||
+      (latestVisibleBatch.total_rows > 0
+        ? `Processed ${latestVisibleBatch.processed_rows} of ${latestVisibleBatch.total_rows} accounts`
+        : "Research in progress")
+    : "";
+  const progressPercent = latestVisibleBatch
+    ? latestVisibleBatch.status === "completed"
+      ? 100
+      : latestVisibleBatch.total_rows
+        ? Math.min(100, Math.round((latestVisibleBatch.processed_rows / latestVisibleBatch.total_rows) * 100))
+        : 0
+    : 0;
+
+  useEffect(() => {
+    if (!batchInFlight) return;
+    const id = window.setInterval(() => {
+      void load();
+    }, 8000);
+    return () => window.clearInterval(id);
+  }, [batchInFlight, load]);
+
+  const downloadTemplate = useCallback(() => {
+    const template = [
+      ["Company Name", "Domain", "Industry", "AE", "SDR", "Classification", "Contact", "Title", "Email", "LinkedIn URL"],
+      ["BlackLine", "blackline.com", "Finance automation", "rakesh@beacon.li", "mahesh@beacon.li", "target", "Jane Smith", "Director of Professional Services", "jane@blackline.com", "https://linkedin.com/in/janesmith"],
+    ]
+      .map((row) => row.join(","))
+      .join("\n");
+    const blob = new Blob([template], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "beacon-account-sourcing-template.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleBatchUploaded = useCallback((batch: SourcingBatch) => {
+    setSuccessModal({
+      title: "Upload received",
+      message:
+        batch.requires_confirmation
+          ? "The file was uploaded. Beacon found TAL verdicts that need review before enrichment starts."
+          : "The file was uploaded successfully and enrichment has started.",
+    });
+    if (batch.requires_confirmation) {
+      setPendingBatchApproval(batch);
     }
-  }, [activeBatch, load]);
+    setDismissedBatchIds((current) => current.filter((id) => id !== batch.id));
+    void load();
+  }, [load]);
 
-  const q = search.trim().toLowerCase();
-  const ownerOptions = Array.from(
-    new Set(
-      companies
-        .map((company) => company.assigned_rep_email || company.assigned_rep_name || company.assigned_rep || "")
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
-  const list = companies
-    .filter((c) => {
-      const priority = getAccountPrioritySnapshot(c);
-      const matchesSearch = !q || (
-        c.name.toLowerCase().includes(q)
-        || c.domain.toLowerCase().includes(q)
-        || (c.industry || "").toLowerCase().includes(q)
-        || (c.assigned_rep || "").toLowerCase().includes(q)
-        || (c.assigned_rep_email || "").toLowerCase().includes(q)
-        || (c.disposition || "").toLowerCase().includes(q)
-        || (c.recommended_outreach_lane || "").toLowerCase().includes(q)
+  const handleCreateCompany = useCallback(async () => {
+    const entries = parseManualCompanyLines(createForm.companiesText);
+    if (!entries.length) {
+      setCreateError("Add at least one company name.");
+      return;
+    }
+    setCreatingCompany(true);
+    setCreateError("");
+    try {
+      const createdBatches: SourcingBatch[] = [];
+      for (const entry of entries) {
+        const batch = await accountSourcingApi.createManualCompany({
+          name: entry.name,
+          domain: entry.domain,
+        });
+        createdBatches.push(batch);
+      }
+      setShowCreateModal(false);
+      setCreateForm({ companiesText: "" });
+      setSuccessModal({
+        title: entries.length === 1 ? "Account added" : "Accounts added",
+        message:
+          entries.length === 1
+            ? "The account was created and enrichment has started."
+            : `${entries.length} accounts were created and enrichment has started for each of them.`,
+      });
+      setDismissedBatchIds((current) =>
+        current.filter((id) => !createdBatches.some((batch) => batch.id === id))
       );
-      const matchesTier = !tierFilter || (c.icp_tier || "") === tierFilter;
-      const matchesPriority = !priorityFilter || priority.priorityBand === priorityFilter;
-      const matchesDisposition = !dispositionFilter || (c.disposition || "") === dispositionFilter;
-      const matchesLane = !laneFilter || (c.recommended_outreach_lane || "") === laneFilter;
-      const ownerValue = c.assigned_rep_email || c.assigned_rep_name || c.assigned_rep || "";
-      const matchesOwner = !ownerFilter || ownerValue === ownerFilter;
-
-      return matchesSearch && matchesTier && matchesPriority && matchesDisposition && matchesLane && matchesOwner;
-    })
-    .slice()
-    .sort((a, b) => getAccountPrioritySnapshot(b).priorityScore - getAccountPrioritySnapshot(a).priorityScore);
-  const hotCount = companies.filter((c) => c.icp_tier === "hot").length;
-  const warmCount = companies.filter((c) => c.icp_tier === "warm").length;
-  const highPriorityCount = companies.filter((c) => getAccountPrioritySnapshot(c).priorityBand === "high").length;
-  const engagedCount = companies.filter((c) => ["interested", "working"].includes((c.disposition || "").toLowerCase())).length;
-  const unresolvedCount = companies.filter((c) => c.domain.endsWith(".unknown")).length;
-  const unenrichedCount = companies.filter((c) => !c.enriched_at).length;
-  const committeeReadyCount = companies.filter((company) => {
-    const cache = (company.enrichment_cache || {}) as Record<string, unknown>;
-    const committeeEntry = cache.committee_coverage as { data?: { coverage_score?: number } } | undefined;
-    const committee = (committeeEntry?.data ?? committeeEntry) as { coverage_score?: number } | undefined;
-    return (committee?.coverage_score ?? 0) >= 75;
-  }).length;
+      setActiveTab("imports");
+      await load();
+    } catch (error: unknown) {
+      setCreateError(error instanceof Error ? error.message : "Failed to create company");
+    } finally {
+      setCreatingCompany(false);
+    }
+  }, [createForm.companiesText, load]);
 
   return (
     <div style={pageStyle}>
@@ -980,50 +735,95 @@ export default function AccountSourcing() {
               </div>
               <h1 style={{ margin: "14px 0 0", color: colors.text, fontSize: 42, letterSpacing: 0.2 }}>Account Sourcing</h1>
               <p style={{ margin: "10px 0 0", color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 780 }}>
-                Import target accounts, score fit, widen stakeholder coverage, and prepare cleaner handoffs into prospecting.
+                Start with company names and turn them into presentable account briefs with verdicts, timing, outreach angles, and a clean view of where to aim next.
               </p>
+              <div style={{ marginTop: 18, display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#f7faff", border: `1px solid ${colors.border}`, borderRadius: 14, padding: "8px" }}>
+                {[
+                  { id: "accounts", label: "Accounts" },
+                  { id: "imports", label: `Recent Imports${batches.length ? ` (${batches.length})` : ""}` },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id as "accounts" | "imports")}
+                    style={{
+                      border: 0,
+                      background: activeTab === tab.id ? "#eef5ff" : "transparent",
+                      color: activeTab === tab.id ? colors.primary : colors.sub,
+                      borderRadius: 10,
+                      padding: "10px 14px",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
               <button
-                onClick={() => void runReset("account-sourcing")}
-                disabled={Boolean(resettingScope)}
+                onClick={() => setShowCreateModal(true)}
                 style={{
-                  border: "1px solid #f0c2c8",
-                  background: "#fff6f7",
-                  color: colors.red,
+                  border: 0,
+                  background: "#4f46e5",
+                  color: "#fff",
                   borderRadius: 12,
                   padding: "10px 14px",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
                   fontWeight: 700,
-                  cursor: resettingScope ? "not-allowed" : "pointer",
-                  opacity: resettingScope ? 0.7 : 1,
+                  cursor: "pointer",
                 }}
               >
-                {resettingScope === "account-sourcing" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
-                Clear Account Sourcing
+                <Plus size={15} />
+                Add Accounts
               </button>
-              <button
-                onClick={() => void runReset("workspace")}
-                disabled={Boolean(resettingScope)}
-                style={{
-                  border: "1px solid #f5d4d8",
-                  background: "#fffafb",
-                  color: colors.red,
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: resettingScope ? "not-allowed" : "pointer",
-                  opacity: resettingScope ? 0.7 : 1,
-                }}
-              >
-                {resettingScope === "workspace" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
-                Clear Workspace
-              </button>
+              {isAdmin && (
+                <>
+                  <button
+                    onClick={() => void runReset("account-sourcing")}
+                    disabled={Boolean(resettingScope)}
+                    style={{
+                      border: "1px solid #f0c2c8",
+                      background: "#fff6f7",
+                      color: colors.red,
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: resettingScope ? "not-allowed" : "pointer",
+                      opacity: resettingScope ? 0.7 : 1,
+                    }}
+                  >
+                    {resettingScope === "account-sourcing" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
+                    Clear Account Sourcing
+                  </button>
+                  <button
+                    onClick={() => void runReset("workspace")}
+                    disabled={Boolean(resettingScope)}
+                    style={{
+                      border: "1px solid #f5d4d8",
+                      background: "#fffafb",
+                      color: colors.red,
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: resettingScope ? "not-allowed" : "pointer",
+                      opacity: resettingScope ? 0.7 : 1,
+                    }}
+                  >
+                    {resettingScope === "workspace" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
+                    Clear Workspace
+                  </button>
+                </>
+              )}
               <button
                 onClick={async () => {
                   setExportingContacts(true);
@@ -1086,6 +886,74 @@ export default function AccountSourcing() {
                 {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                 Export CSV
               </button>
+              {isAdmin && (
+                <>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm("Run ICP research for all sourced accounts? Uses web search + Claude AI — no Apollo or Hunter credits.\n\nThis may take 15-30s per company.")) return;
+                      setBulkIcpRunning(true);
+                      setBulkIcpResult(null);
+                      try {
+                        const result = await accountSourcingApi.bulkIcpResearch(false);
+                        setBulkIcpResult(`Queued ${result.queued} of ${result.total} accounts for ICP research`);
+                      } catch (e) {
+                        setBulkIcpResult(e instanceof Error ? e.message : "Failed to queue ICP research");
+                      } finally {
+                        setBulkIcpRunning(false);
+                      }
+                    }}
+                    disabled={bulkIcpRunning}
+                    style={{
+                      border: `1px solid #c3dfc0`,
+                      background: "#edfaeb",
+                      color: "#1a6b2a",
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: bulkIcpRunning ? "not-allowed" : "pointer",
+                      opacity: bulkIcpRunning ? 0.7 : 1,
+                    }}
+                  >
+                    {bulkIcpRunning ? <Loader2 size={15} className="animate-spin" /> : <Brain size={15} />}
+                    Run ICP Research
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm("Queue enrichment for all sourced accounts? This may take a while depending on how many companies you have.")) return;
+                      setBulkEnriching(true);
+                      setBulkEnrichResult(null);
+                      try {
+                        const result = await accountSourcingApi.bulkEnrichAll(false);
+                        setBulkEnrichResult(`Queued ${result.queued} of ${result.total} accounts for enrichment`);
+                      } catch (e) {
+                        setBulkEnrichResult(e instanceof Error ? e.message : "Failed to queue enrichment");
+                      } finally {
+                        setBulkEnriching(false);
+                      }
+                    }}
+                    disabled={bulkEnriching}
+                    style={{
+                      border: `1px solid #c8daf0`,
+                      background: "#eaf2ff",
+                      color: "#175089",
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      cursor: bulkEnriching ? "not-allowed" : "pointer",
+                      opacity: bulkEnriching ? 0.7 : 1,
+                    }}
+                  >
+                    {bulkEnriching ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                    Enrich All Accounts
+                  </button>
+                </>
+              )}
               <button
                 onClick={load}
                 style={{
@@ -1107,13 +975,49 @@ export default function AccountSourcing() {
           </div>
         </div>
 
+        {bulkIcpResult && (
+          <div style={{ borderRadius: 12, border: "1px solid #c3dfc0", background: "#edfaeb", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ fontSize: 13, color: "#1a6b2a", fontWeight: 600 }}>{bulkIcpResult}</span>
+            <button onClick={() => setBulkIcpResult(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#4a8c5a" }}><X size={14} /></button>
+          </div>
+        )}
+        {bulkEnrichResult && (
+          <div style={{ borderRadius: 12, border: "1px solid #c8daf0", background: "#eaf2ff", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ fontSize: 13, color: "#175089", fontWeight: 600 }}>{bulkEnrichResult}</span>
+            <button onClick={() => setBulkEnrichResult(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a96b0" }}><X size={14} /></button>
+          </div>
+        )}
+
+        <div
+          style={{
+            borderRadius: 16,
+            border: "1px solid #f5ddaa",
+            background: "#fff8e8",
+            padding: "12px 16px",
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ color: "#8a5b00", fontSize: 11, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
+              Prospect sourcing update
+            </div>
+            <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6 }}>
+              Beacon is temporarily not getting contacts during company research. Use Prospecting to upload stakeholder CSVs and map them onto sourced accounts once the companies are ready.
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
           <SummaryCard
             icon={<Building2 size={18} />}
             label="Sourced Accounts"
-            value={String(companies.length)}
+            value={String(totalCompanies)}
             hint="Total accounts currently available for enrichment and prospecting."
             tone="neutral"
+            onClick={() => setActiveTab("accounts")}
           />
           <SummaryCard
             icon={<Flame size={18} />}
@@ -1121,13 +1025,21 @@ export default function AccountSourcing() {
             value={String(hotCount)}
             hint="Accounts with the strongest ICP fit and highest near-term potential."
             tone="warm"
+            onClick={() => {
+              setActiveTab("accounts");
+              setTierFilter(["hot"]);
+            }}
           />
           <SummaryCard
             icon={<TrendingUp size={18} />}
             label="Warm Accounts"
             value={String(warmCount)}
-            hint="Good-fit accounts that still need deeper signal or committee coverage."
+            hint="Good-fit accounts that still need stronger proof, timing, or persona clarity."
             tone="primary"
+            onClick={() => {
+              setActiveTab("accounts");
+              setTierFilter(["warm"]);
+            }}
           />
           <SummaryCard
             icon={<Target size={18} />}
@@ -1135,6 +1047,10 @@ export default function AccountSourcing() {
             value={String(highPriorityCount)}
             hint="Accounts worth the fastest follow-up based on fit, intent, and sales feedback."
             tone="green"
+            onClick={() => {
+              setActiveTab("accounts");
+              setDispositionFilter(["working"]);
+            }}
           />
         </div>
 
@@ -1145,13 +1061,26 @@ export default function AccountSourcing() {
             value={String(engagedCount)}
             hint="Accounts where reps have logged active motion or positive interest."
             tone="primary"
+            onClick={() => {
+              setActiveTab("accounts");
+              setDispositionFilter(["interested"]);
+            }}
           />
           <SummaryCard
             icon={<Target size={18} />}
-            label="Committee Ready"
-            value={String(committeeReadyCount)}
-            hint="Accounts with 75%+ buying-committee coverage already mapped."
+            label="Research Complete"
+            value={String(researchedCount)}
+            hint="Accounts with a generated Beacon research brief already available."
             tone="green"
+            onClick={() => setActiveTab("imports")}
+          />
+          <SummaryCard
+            icon={<Sparkles size={18} />}
+            label="Target Verdicts"
+            value={String(targetVerdictCount)}
+            hint={`${watchVerdictCount} more accounts are currently in Watch.`}
+            tone="warm"
+            onClick={() => setActiveTab("imports")}
           />
           <SummaryCard
             icon={<AlertCircle size={18} />}
@@ -1159,184 +1088,620 @@ export default function AccountSourcing() {
             value={String(unresolvedCount + unenrichedCount)}
             hint={`${unresolvedCount} unresolved domains, ${unenrichedCount} accounts without completed enrichment.`}
             tone="warm"
+            onClick={() => setActiveTab("imports")}
           />
         </div>
 
-        <UploadPanel onUploaded={(b) => { setActiveBatch(b); load(); }} />
-        {activeBatch && activeBatch.status !== "completed" ? (
-          <div style={{ display: "grid", gap: 8 }}>
-            <BatchBar batch={activeBatch} />
-            <div>
-              <button
-                onClick={checkActiveBatchStatus}
-                disabled={checkingBatch}
-                style={{
-                  border: `1px solid ${colors.border}`,
-                  background: colors.card,
-                  color: colors.text,
-                  borderRadius: 10,
-                  padding: "8px 12px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: checkingBatch ? "not-allowed" : "pointer",
-                  opacity: checkingBatch ? 0.7 : 1,
-                }}
-              >
-                {checkingBatch ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                Check Batch Status
-              </button>
-            </div>
-          </div>
+        {isAdmin && activeTab === "accounts" ? (
+          <UploadPanel onUploaded={handleBatchUploaded} onDownloadTemplate={downloadTemplate} />
         ) : null}
 
-        {batches.length > 0 ? (
-          <div>
-            <div style={{ color: colors.faint, fontWeight: 800, letterSpacing: 0.4, marginBottom: 8, fontSize: 13 }}>
-              RECENT IMPORTS
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {batches.slice(0, 5).map((b) => (
-                <div key={b.id} style={{ ...cardStyle, padding: "8px 12px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-                  {b.status === "completed" ? <CheckCircle2 size={13} color={colors.green} /> : <Loader2 size={13} className="animate-spin" color={colors.primary} />}
-                  <span style={{ fontWeight: 700, color: colors.text }}>{b.filename}</span>
-                  <span style={{ color: colors.faint }}>{b.created_companies} companies</span>
-                  <span style={{ color: colors.faint }}>{ts(b.created_at)}</span>
+        {latestVisibleBatch ? (
+          <div
+            style={{
+              ...cardStyle,
+              padding: "16px 18px",
+              display: "grid",
+              gap: 12,
+              background:
+                latestVisibleBatch.status === "completed"
+                  ? "#f0faf4"
+                  : latestVisibleBatch.status === "awaiting_confirmation"
+                    ? "#fff8ef"
+                    : "#fbfdff",
+              border:
+                latestVisibleBatch.status === "completed"
+                  ? "1px solid #c8e8d8"
+                  : latestVisibleBatch.status === "awaiting_confirmation"
+                    ? "1px solid #ffd8a8"
+                    : `1px solid ${colors.border}`,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start" }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {latestVisibleBatch.status === "completed" ? (
+                    <CheckCircle2 size={16} color={colors.green} />
+                  ) : latestVisibleBatch.status === "awaiting_confirmation" ? (
+                    <AlertCircle size={16} color={colors.amber} />
+                  ) : (
+                    <Loader2 size={16} className="animate-spin" color={colors.primary} />
+                  )}
+                  <span style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>{latestVisibleBatch.filename}</span>
                 </div>
-              ))}
+                <div style={{ color: colors.sub, fontSize: 13 }}>
+                  {latestProgressMessage || "Tracking research progress"}
+                  {latestVisibleBatch.created_by_name ? ` • Uploaded by ${latestVisibleBatch.created_by_name}` : ""}
+                  {` • ${ts(latestVisibleBatch.created_at)}`}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {latestVisibleBatch.status === "awaiting_confirmation" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPendingBatchApproval(latestVisibleBatch)}
+                      style={{
+                        border: "1px solid #ffd29a",
+                        background: "#fff2db",
+                        color: colors.amber,
+                        borderRadius: 10,
+                        padding: "8px 12px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Review TAL verdicts
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingBatchApproval(latestVisibleBatch)}
+                      style={{
+                        border: 0,
+                        background: colors.primary,
+                        color: "#fff",
+                        borderRadius: 10,
+                        padding: "8px 12px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Continue enrichment
+                    </button>
+                  </>
+                ) : null}
+                {latestVisibleBatch.status === "completed" ? (
+                  <button
+                    type="button"
+                    onClick={() => setDismissedBatchIds((current) => [...current, latestVisibleBatch.id])}
+                    style={{
+                      border: `1px solid ${colors.border}`,
+                      background: "#fff",
+                      color: colors.text,
+                      borderRadius: 10,
+                      padding: "8px 12px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Close card
+                  </button>
+                ) : (
+                  <button
+                    onClick={load}
+                    disabled={loading}
+                    style={{
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 10,
+                      padding: "8px 12px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: loading ? "not-allowed" : "pointer",
+                      opacity: loading ? 0.7 : 1,
+                    }}
+                  >
+                    {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                    Refresh progress
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>PROGRESS</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>
+                  {latestVisibleBatch.processed_rows}/{latestVisibleBatch.total_rows}
+                </div>
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Accounts processed</div>
+              </div>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CONTACTS FOUND</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>
+                  {latestVisibleBatch.contacts_found ?? 0}
+                </div>
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Relevant stakeholders saved</div>
+              </div>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CURRENT STEP</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 16 }}>
+                  {formatBatchStage(latestVisibleBatch.current_stage, latestVisibleBatch.status)}
+                </div>
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>{etaText}</div>
+              </div>
+              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>TAL VERDICTS</div>
+                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 18 }}>
+                  {String(latestVerdictSummary.target || 0)} target / {String(latestVerdictSummary.watch || 0)} watch
+                </div>
+                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>
+                  {latestVerdictSummary.message ? String(latestVerdictSummary.message) : "No uploaded verdicts"}
+                </div>
+              </div>
+            </div>
+            <div style={{ height: 8, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
+              <div
+                style={{
+                  width: `${progressPercent}%`,
+                  height: "100%",
+                  background: latestVisibleBatch.status === "completed" ? colors.green : colors.primary,
+                }}
+              />
             </div>
           </div>
         ) : null}
 
-        <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ position: "relative", minWidth: 260 }}>
-            <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: 11 }} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search companies..."
+        {activeTab === "accounts" ? (
+          <>
+            <div
               style={{
-                width: "100%",
-                border: `1px solid ${colors.border}`,
-                borderRadius: 10,
-                padding: "10px 12px 10px 30px",
-                fontSize: 14,
-                outline: "none",
+                ...cardStyle,
+                padding: "14px 16px",
+                display: "grid",
+                gap: 12,
+                position: "sticky",
+                top: 16,
+                zIndex: 5,
               }}
-            />
+            >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ position: "relative", minWidth: 260, flex: 1 }}>
+              <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: 11 }} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search companies..."
+                style={{
+                  width: "100%",
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 10,
+                  padding: "10px 12px 10px 30px",
+                  fontSize: 14,
+                  outline: "none",
+                }}
+              />
+            </div>
+            <div style={{ color: colors.sub, fontSize: 14, display: "flex", gap: 20, flexWrap: "wrap" }}>
+              <span>{totalCompanies} companies sourced</span>
+              <span>{highPriorityCount} high-priority</span>
+              <span>{researchedCount} researched</span>
+              <span>{targetVerdictCount} target verdicts</span>
+            </div>
           </div>
-          <div style={{ color: colors.sub, fontSize: 14, display: "flex", gap: 20, flexWrap: "wrap" }}>
-            <span>{companies.length} companies sourced</span>
-            <span>{hotCount} hot</span>
-            <span>{warmCount} warm</span>
-            <span>{highPriorityCount} high-priority</span>
-            <span>{committeeReadyCount} committee-ready</span>
-          </div>
-        </div>
 
-        <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <select
-              value={tierFilter}
-              onChange={(e) => setTierFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 130 }}
-            >
-              <option value="">All ICP tiers</option>
-              <option value="hot">Hot</option>
-              <option value="warm">Warm</option>
-              <option value="monitor">Monitor</option>
-              <option value="cold">Cold</option>
-            </select>
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 140 }}
-            >
-              <option value="">All priorities</option>
-              <option value="high">High priority</option>
-              <option value="medium">Medium priority</option>
-              <option value="low">Low priority</option>
-            </select>
-            <select
-              value={dispositionFilter}
-              onChange={(e) => setDispositionFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 150 }}
-            >
-              <option value="">All dispositions</option>
-              {DISPOSITION_OPTIONS.filter((option) => option.value).map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <select
-              value={laneFilter}
-              onChange={(e) => setLaneFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 160 }}
-            >
-              <option value="">All lanes</option>
-              {OUTREACH_LANE_OPTIONS.filter((option) => option.value).map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <select
-              value={ownerFilter}
-              onChange={(e) => setOwnerFilter(e.target.value)}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, color: colors.text, background: "#fff", minWidth: 180 }}
-            >
-              <option value="">All owners</option>
-              {ownerOptions.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <MultiSelectFilter
+                values={tierFilter}
+                onChange={setTierFilter}
+                options={TIER_OPTIONS}
+                label="ICP Tier"
+                allLabel="All ICP tiers"
+                minWidth={130}
+              />
+              <MultiSelectFilter
+                values={dispositionFilter}
+                onChange={setDispositionFilter}
+                options={DISPOSITION_OPTIONS}
+                label="Disposition"
+                allLabel="All dispositions"
+                minWidth={150}
+              />
+              <MultiSelectFilter
+                values={laneFilter}
+                onChange={setLaneFilter}
+                options={OUTREACH_LANE_OPTIONS}
+                label="Outreach Lane"
+                allLabel="All lanes"
+                minWidth={170}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700 }}>
+                {companyTotal === 0 ? "0 shown" : `${showingStart}-${showingEnd} of ${companyTotal}`}
+              </span>
+              <span style={{ color: colors.faint, fontSize: 12 }}>Page {page} of {Math.max(companyPages, 1)}</span>
+              {hasFilters ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    setTierFilter([]);
+                    setDispositionFilter([]);
+                    setLaneFilter([]);
+                  }}
+                  style={{
+                    border: `1px solid ${colors.border}`,
+                    background: colors.card,
+                    color: colors.text,
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Reset filters
+                </button>
+              ) : null}
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700 }}>{list.length} shown</span>
-            <button
-              type="button"
-              onClick={() => {
-                setSearch("");
-                setTierFilter("");
-                setPriorityFilter("");
-                setDispositionFilter("");
-                setLaneFilter("");
-                setOwnerFilter("");
-              }}
-              style={{
-                border: `1px solid ${colors.border}`,
-                background: colors.card,
-                color: colors.text,
-                borderRadius: 10,
-                padding: "10px 14px",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >
-              Reset filters
-            </button>
-          </div>
-        </div>
+            </div>
 
-        {loading ? (
+            {loading ? (
           <div style={{ ...cardStyle, padding: 36, textAlign: "center" }}>
             <Loader2 className="animate-spin" color={colors.primary} />
           </div>
-        ) : list.length === 0 ? (
+        ) : companies.length === 0 ? (
           <div style={{ ...cardStyle, padding: 34, textAlign: "center", color: colors.faint }}>
             <Building2 size={30} style={{ marginBottom: 8 }} />
-            {q ? "No companies match your search." : "No companies sourced yet."}
+            {hasFilters ? "No companies match these filters." : "No companies sourced yet."}
           </div>
         ) : (
           <div style={{ display: "grid", gap: 14 }}>
-            {list.map((c) => (
-              <CompanyCard key={c.id} company={c} onRefresh={load} />
+            {companies.map((c) => (
+              <CompanyCard key={c.id} company={c} onAssigned={() => load()} />
             ))}
+            <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ color: colors.sub, fontSize: 13 }}>
+                {companyTotal === 0 ? "0 shown" : `Showing ${showingStart}-${showingEnd} of ${companyTotal} sourced companies`}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  style={{
+                    border: `1px solid ${colors.border}`,
+                    background: page <= 1 ? "#f5f7fb" : colors.card,
+                    color: page <= 1 ? colors.faint : colors.text,
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    fontWeight: 700,
+                    cursor: page <= 1 ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Previous
+                </button>
+                <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700, minWidth: 84, textAlign: "center" }}>
+                  Page {page} / {Math.max(companyPages, 1)}
+                </span>
+                <button
+                  type="button"
+                  disabled={page >= companyPages}
+                  onClick={() => setPage((current) => Math.min(companyPages, current + 1))}
+                  style={{
+                    border: `1px solid ${colors.border}`,
+                    background: page >= companyPages ? "#f5f7fb" : colors.card,
+                    color: page >= companyPages ? colors.faint : colors.text,
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    fontWeight: 700,
+                    cursor: page >= companyPages ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
+          </>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {batches.length === 0 ? (
+              <div style={{ ...cardStyle, padding: 28, textAlign: "center", color: colors.faint }}>
+                No imports yet.
+              </div>
+            ) : (
+              batches.map((batch) => (
+                <div key={batch.id} style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {batch.status === "completed" ? <CheckCircle2 size={15} color={colors.green} /> : <Upload size={15} color={colors.primary} />}
+                        <span style={{ fontWeight: 800, color: colors.text, fontSize: 16 }}>{batch.filename}</span>
+                      </div>
+                      <div style={{ color: colors.sub, fontSize: 13 }}>
+                        {batch.created_by_name ? `Created by ${batch.created_by_name}` : "Created by Beacon"} • {ts(batch.created_at)}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const blob = await accountSourcingApi.exportCsv({ batchId: batch.id });
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = `${batch.filename.replace(/\s+/g, "-").toLowerCase()}-companies.csv`;
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Download companies
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const blob = await accountSourcingApi.exportContactsCsv({ batchId: batch.id });
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = `${batch.filename.replace(/\s+/g, "-").toLowerCase()}-contacts.csv`;
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Download contacts
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+                    {[
+                      { label: "Status", value: batch.status.replace(/_/g, " "), hint: batch.progress_message || "Activity tracked automatically" },
+                      { label: "Accounts", value: `${batch.created_companies}`, hint: `${batch.processed_rows}/${batch.total_rows} processed` },
+                      { label: "Contacts", value: `${batch.contacts_found ?? 0}`, hint: "Relevant stakeholders saved" },
+                      { label: "Verdicts", value: `${String((batch.verdict_summary || {}).target || 0)} target`, hint: String((batch.verdict_summary || {}).message || "No uploaded verdicts") },
+                    ].map((item) => (
+                      <div key={`${batch.id}-${item.label}`} style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
+                        <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>{item.label.toUpperCase()}</div>
+                        <div style={{ marginTop: 6, color: colors.text, fontSize: 18, fontWeight: 800 }}>{item.value}</div>
+                        <div style={{ marginTop: 4, color: colors.sub, fontSize: 12, lineHeight: 1.45 }}>{item.hint}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {successModal ? (
+          <>
+            <div
+              onClick={() => setSuccessModal(null)}
+              style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.24)", zIndex: 50 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: 460,
+                maxWidth: "92vw",
+                background: "#fff",
+                borderRadius: 18,
+                boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+                padding: "24px 24px 20px",
+                zIndex: 51,
+                display: "grid",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <CheckCircle2 size={18} color={colors.green} />
+                  <div style={{ color: colors.text, fontWeight: 800, fontSize: 18 }}>{successModal.title}</div>
+                </div>
+                <button type="button" onClick={() => setSuccessModal(null)} style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.faint }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div style={{ color: colors.sub, fontSize: 14, lineHeight: 1.6 }}>{successModal.message}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button type="button" onClick={() => setSuccessModal(null)} style={{ border: 0, background: colors.primary, color: "#fff", borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer" }}>
+                  Continue
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {pendingBatchApproval ? (
+          <>
+            <div
+              onClick={() => setPendingBatchApproval(null)}
+              style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.24)", zIndex: 50 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: 520,
+                maxWidth: "94vw",
+                background: "#fff",
+                borderRadius: 18,
+                boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+                padding: "24px",
+                zIndex: 51,
+                display: "grid",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div>
+                  <div style={{ color: colors.text, fontSize: 18, fontWeight: 800 }}>Review TAL verdicts</div>
+                  <div style={{ color: colors.sub, fontSize: 13, marginTop: 4 }}>{pendingBatchApproval.filename}</div>
+                </div>
+                <button type="button" onClick={() => setPendingBatchApproval(null)} style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.faint }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                {[
+                  { label: "Target", value: String((pendingBatchApproval.verdict_summary || {}).target || 0) },
+                  { label: "Watch", value: String((pendingBatchApproval.verdict_summary || {}).watch || 0) },
+                  { label: "Non-target", value: String((pendingBatchApproval.verdict_summary || {}).non_target || 0) },
+                  { label: "Unknown", value: String((pendingBatchApproval.verdict_summary || {}).unknown || 0) },
+                ].map((item) => (
+                  <div key={item.label} style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 10px", background: "#fbfdff", textAlign: "center" }}>
+                    <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>{item.label.toUpperCase()}</div>
+                    <div style={{ marginTop: 6, color: colors.text, fontSize: 18, fontWeight: 800 }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ color: colors.sub, fontSize: 14, lineHeight: 1.6 }}>
+                {String((pendingBatchApproval.verdict_summary || {}).message || "Some imported rows need approval before enrichment starts.")}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={confirmingBatchId === pendingBatchApproval.id}
+                  onClick={async () => {
+                    setConfirmingBatchId(pendingBatchApproval.id);
+                    try {
+                      await accountSourcingApi.cancelBatch(pendingBatchApproval.id);
+                      setPendingBatchApproval(null);
+                      await load();
+                    } finally {
+                      setConfirmingBatchId("");
+                    }
+                  }}
+                  style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer" }}
+                >
+                  Cancel enrichment
+                </button>
+                <button
+                  type="button"
+                  disabled={confirmingBatchId === pendingBatchApproval.id}
+                  onClick={async () => {
+                    setConfirmingBatchId(pendingBatchApproval.id);
+                    try {
+                      await accountSourcingApi.confirmBatch(pendingBatchApproval.id, true);
+                      setPendingBatchApproval(null);
+                      setSuccessModal({
+                        title: "Enrichment started",
+                        message: "Beacon has started enriching the approved import.",
+                      });
+                      await load();
+                    } finally {
+                      setConfirmingBatchId("");
+                    }
+                  }}
+                  style={{ border: 0, background: colors.primary, color: "#fff", borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer", minWidth: 160 }}
+                >
+                  {confirmingBatchId === pendingBatchApproval.id ? "Starting..." : "Continue enrichment"}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {showCreateModal ? (
+          <>
+            <div onClick={() => setShowCreateModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.24)", zIndex: 50 }} />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: 500,
+                maxWidth: "94vw",
+                background: "#fff",
+                borderRadius: 18,
+                boxShadow: "0 20px 60px rgba(15,23,42,0.18)",
+                padding: "24px",
+                zIndex: 51,
+                display: "grid",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div style={{ color: colors.text, fontSize: 18, fontWeight: 800 }}>Add accounts manually</div>
+                <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: 0, background: "transparent", cursor: "pointer", color: colors.faint }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div style={{ color: colors.sub, fontSize: 14, lineHeight: 1.6 }}>
+                Paste one company per line. You can optionally add a website or domain after a comma or pipe. Beacon will log who created each one and when.
+              </div>
+              <div
+                style={{
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 12,
+                  padding: "12px 14px",
+                  background: "#fbfdff",
+                  display: "grid",
+                  gap: 6,
+                }}
+              >
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>FORMAT</div>
+                <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>
+                  One per line.
+                  <br />
+                  `BlackLine`
+                  <br />
+                  `Serrala, serrala.com`
+                  <br />
+                  `Netcore Cloud | netcorecloud.com`
+                </div>
+              </div>
+              <textarea
+                value={createForm.companiesText}
+                onChange={(e) => setCreateForm({ companiesText: e.target.value })}
+                placeholder={"BlackLine\nSerrala, serrala.com\nNetcore Cloud | netcorecloud.com"}
+                rows={8}
+                style={{
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 10,
+                  padding: "12px",
+                  fontSize: 14,
+                  color: colors.text,
+                  resize: "vertical",
+                  minHeight: 180,
+                  lineHeight: 1.6,
+                }}
+              />
+              {createError ? <div style={{ color: colors.red, fontSize: 13, fontWeight: 700 }}>{createError}</div> : null}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer" }}>
+                  Close
+                </button>
+                <button type="button" disabled={creatingCompany} onClick={() => void handleCreateCompany()} style={{ border: 0, background: colors.primary, color: "#fff", borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer", minWidth: 140 }}>
+                  {creatingCompany ? "Creating..." : "Create & enrich"}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );

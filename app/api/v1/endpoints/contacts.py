@@ -2,72 +2,301 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from sqlalchemy import func
+from sqlmodel import SQLModel, select
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
+from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.repositories.contact import ContactRepository
 from app.schemas.common import PaginatedResponse
+from app.services.account_sourcing import (
+    load_workspace_sequence_schedule,
+    parse_prospect_upload_file,
+    refresh_company_prospecting_fields,
+    refresh_contact_sequence_plan,
+    row_to_company_fields,
+    row_to_contact_fields,
+)
+from app.services.contact_tracking import apply_contact_tracking, to_contact_read
+from app.services.permissions import require_workspace_permission
 from app.services.persona_classifier import classify_persona
+from app.services.prospect_hygiene import is_valid_prospect_candidate
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
+
+
+class ProspectImportMissingCompany(SQLModel):
+    name: str
+    domain: Optional[str] = None
+    contacts_count: int = 0
+
+
+class ProspectImportResponse(SQLModel):
+    imported_rows: int
+    created_count: int
+    updated_count: int
+    skipped_count: int
+    warning_count: int = 0
+    missing_company_count: int
+    missing_companies: list[ProspectImportMissingCompany]
+    message: str
+
+
+async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> Company | None:
+    company_fields = row_to_company_fields(row)
+    domain = (company_fields.get("domain") or "").strip().lower()
+    name = (company_fields.get("name") or "").strip()
+
+    company: Company | None = None
+    if domain and not domain.endswith(".unknown"):
+        company = (
+            await session.execute(select(Company).where(Company.domain == domain).limit(1))
+        ).scalars().first()
+    if not company and name:
+        company = (
+            await session.execute(
+                select(Company).where(func.lower(Company.name) == name.lower()).limit(1)
+            )
+        ).scalars().first()
+    return company
+
+
+def _placeholder_company_domain(name: str) -> str:
+    base = "".join(ch.lower() if ch.isalnum() else "-" for ch in (name or "").strip())
+    slug = "-".join(part for part in base.split("-") if part) or "unknown-company"
+    return f"{slug}.unknown"
+
+
+async def _get_or_create_uploaded_placeholder_company(
+    session: DBSession,
+    row: dict[str, str],
+    current_user: CurrentUser,
+) -> tuple[Company | None, bool]:
+    company = await _resolve_uploaded_company(session, row)
+    if company:
+        return company, False
+
+    company_fields = row_to_company_fields(row)
+    company_name = (company_fields.get("name") or "").strip()
+    if not company_name:
+        return None, False
+
+    company_domain = (company_fields.get("domain") or "").strip().lower() or _placeholder_company_domain(company_name)
+    company = Company(
+        name=company_name,
+        domain=company_domain,
+        industry=(company_fields.get("industry") or "").strip() or None,
+        region=(company_fields.get("region") or "").strip() or None,
+        headquarters=(company_fields.get("headquarters") or "").strip() or None,
+        description=(company_fields.get("description") or "").strip() or None,
+        assigned_rep_email=(company_fields.get("assigned_rep_email") or "").strip() or None,
+        recommended_outreach_lane=(company_fields.get("recommended_outreach_lane") or "").strip() or None,
+        enrichment_sources={
+            "prospect_import_placeholder": {
+                "source": "prospect_import",
+                "uploaded_by": current_user.email,
+                "needs_enrichment": True,
+            }
+        },
+    )
+    session.add(company)
+    await session.flush()
+    return company, True
 
 
 @router.get("/", response_model=PaginatedResponse[ContactRead])
 async def list_contacts(
     session: DBSession,
     pagination: Pagination,
+    current_user: CurrentUser,
     company_id: Optional[UUID] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Search by name, email, title, or company"),
+    persona: Optional[str] = Query(default=None),
+    sequence_status: Optional[str] = Query(default=None),
+    call_disposition: Optional[str] = Query(default=None, description="Filter by one or more call dispositions"),
+    email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified"),
+    ae_id: Optional[str] = Query(default=None, description="Filter by one or more assigned AE user IDs"),
+    sdr_id: Optional[str] = Query(default=None, description="Filter by one or more assigned SDR user IDs"),
+    prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches"),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
-    No second API call to /companies needed on the frontend.
+    Non-admins are scoped to contacts assigned to them (AE or SDR).
     """
+    is_admin = current_user.role == "admin"
+    effective_ae_id = ae_id
+    effective_sdr_id = sdr_id
+    if not is_admin:
+        user_id_str = str(current_user.id)
+        effective_ae_id = user_id_str
+        effective_sdr_id = user_id_str
+
     repo = ContactRepository(session)
     items, total = await repo.list_with_company_name(
         company_id=company_id,
+        q=q,
+        persona=persona,
+        sequence_status=sequence_status,
+        call_disposition=call_disposition,
+        email_state=email_state,
+        ae_id=effective_ae_id,
+        sdr_id=effective_sdr_id,
+        scope_any_match=not is_admin,
+        prospect_only=prospect_only,
         skip=pagination.skip,
         limit=pagination.limit,
     )
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 
 
+@router.post("/admin/purge-all")
+async def purge_all_prospects(
+    session: DBSession,
+    current_user: CurrentUser,
+    confirm: str = Query(default="", description="Must equal 'DELETE ALL PROSPECTS' to proceed"),
+):
+    """Admin-only: delete every contact and their FK dependents.
+
+    Explicitly hard-to-invoke: caller must be an admin AND supply the exact
+    confirmation phrase. Intended for migration resets, not day-to-day use.
+    Deals themselves survive; only deal_contacts (stakeholder links) go away.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    if confirm != "DELETE ALL PROSPECTS":
+        raise HTTPException(
+            status_code=400,
+            detail="Pass ?confirm=DELETE+ALL+PROSPECTS to confirm. This is irreversible.",
+        )
+
+    # Count for reporting
+    pre_count = (
+        await session.execute(select(func.count(Contact.id)))
+    ).scalar_one()
+
+    # Order matters: dependents first. Use raw DELETE for speed on large tables.
+    from sqlalchemy import delete as _sql_delete
+    from app.models.outreach import OutreachSequence, OutreachStep
+    from app.models.deal import DealContact
+    from app.models.reminder import Reminder
+    from app.models.angel import AngelMapping
+    from app.models.activity import Activity
+
+    # Null-out activity links (keep activity history)
+    await session.execute(
+        Activity.__table__.update().values(contact_id=None).where(Activity.contact_id.is_not(None))
+    )
+    # Delete outreach steps via their parent sequences
+    seq_ids_subq = select(OutreachSequence.id)
+    await session.execute(_sql_delete(OutreachStep).where(OutreachStep.sequence_id.in_(seq_ids_subq)))
+    await session.execute(_sql_delete(OutreachSequence))
+    # Delete deal_contacts (stakeholder links) — deals themselves stay
+    await session.execute(_sql_delete(DealContact))
+    # Delete reminders + angel mappings
+    await session.execute(_sql_delete(Reminder))
+    await session.execute(_sql_delete(AngelMapping))
+    # Finally the contacts
+    await session.execute(_sql_delete(Contact))
+    await session.commit()
+
+    return {
+        "deleted_contacts": pre_count,
+        "message": f"Purged {pre_count} prospects and their sequences, stakeholder links, reminders, and angel mappings. Deals and activity history retained.",
+    }
+
+
 @router.post("/", response_model=ContactRead, status_code=201)
-async def create_contact(payload: ContactCreate, session: DBSession):
+async def create_contact(payload: ContactCreate, session: DBSession, _user: CurrentUser):
+    # No hygiene gate on manual adds — when a rep explicitly types a prospect
+    # into the form, that's intent. We still need *something* to identify the
+    # row, so we only reject truly empty submissions.
+    if not any([
+        (payload.first_name or "").strip(),
+        (payload.last_name or "").strip(),
+        (payload.email or "").strip(),
+        (payload.title or "").strip(),
+        (payload.linkedin_url or "").strip(),
+    ]):
+        raise HTTPException(status_code=422, detail="Provide at least a name, email, title, or LinkedIn URL.")
+
     contact = Contact(**payload.model_dump())
+
+    # Auto-assign to the creator (unless already set) so a rep who manually
+    # adds a prospect actually sees it in their scoped list. Admins creating
+    # contacts on behalf of someone else can leave it unassigned.
+    if _user.role != "admin":
+        if not contact.assigned_to_id and not contact.sdr_id:
+            if _user.role == "sdr":
+                contact.sdr_id = _user.id
+                contact.sdr_name = getattr(_user, "name", None) or _user.email
+            else:
+                contact.assigned_to_id = _user.id
+                contact.assigned_rep_email = _user.email
+
+    current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+    current_enrichment.setdefault("source", "manual_prospect")
+    current_enrichment.setdefault("uploaded_by", _user.email)
+    current_enrichment.setdefault("uploaded_at", datetime.utcnow().isoformat())
+    contact.enrichment_data = current_enrichment
     if not contact.persona:
         contact.persona = classify_persona(contact)
-    return await ContactRepository(session).save(contact)
+
+    # Seed the prospect's progress tracker using the workspace's current
+    # Sequence Settings (Email D0 / LinkedIn D3 / Call D7 etc). This only
+    # runs for fresh prospects — the refresh helper refuses to overwrite
+    # the plan once the sequence has started.
+    if contact.company_id:
+        company = await session.get(Company, contact.company_id)
+        if company:
+            ws_schedule = await load_workspace_sequence_schedule(session)
+            refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+
+    saved = await ContactRepository(session).save(contact)
+    return await to_contact_read(session, saved)
 
 
 @router.get("/{contact_id}", response_model=ContactRead)
 async def get_contact(contact_id: UUID, session: DBSession):
-    return await ContactRepository(session).get_or_raise(contact_id)
+    contact = await ContactRepository(session).get_or_raise(contact_id)
+    return await to_contact_read(session, contact)
 
 
 @router.put("/{contact_id}", response_model=ContactRead)
-async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession):
+async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await repo.get_or_raise(contact_id)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
+        # Strip timezone info so asyncpg doesn't mix aware/naive datetimes
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            value = value.replace(tzinfo=None)
         setattr(contact, key, value)
     if "title" in update_data or "seniority" in update_data:
         contact.persona = classify_persona(contact)
     contact.updated_at = datetime.utcnow()
-    return await repo.save(contact)
+    saved = await repo.save(contact)
+    return await to_contact_read(session, saved)
+
+
+@router.delete("/bulk", status_code=204)
+async def bulk_delete_contacts(session: DBSession, _admin: AdminUser):
+    """Delete all contacts. Admin only."""
+    repo = ContactRepository(session)
+    await repo.delete_all()
 
 
 @router.delete("/{contact_id}", status_code=204)
-async def delete_contact(contact_id: UUID, session: DBSession):
+async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     await repo.get_or_raise(contact_id)
     await repo.delete_with_cascade(contact_id)
 
 
 @router.post("/{contact_id}/enrich")
-async def enrich_contact(contact_id: UUID, session: DBSession):
+async def enrich_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await repo.get_or_raise(contact_id)
 
@@ -93,16 +322,17 @@ async def enrich_contact(contact_id: UUID, session: DBSession):
 
     contact.updated_at = datetime.utcnow()
     await repo.save(contact)
+    contact_read = await to_contact_read(session, contact)
     return {
         "contact_id": str(contact_id),
         "status": "enriched",
         "fields_updated": enriched_fields,
-        "contact": ContactRead.model_validate(contact),
+        "contact": contact_read,
     }
 
 
 @router.post("/discover/{company_id}", response_model=list[ContactRead], status_code=201)
-async def discover_contacts(company_id: UUID, session: DBSession):
+async def discover_contacts(company_id: UUID, session: DBSession, _user: CurrentUser):
     """
     Call Hunter domain-search for the given company and create any new contacts found.
     Skips duplicates by email. Returns the newly created contacts.
@@ -143,6 +373,14 @@ async def discover_contacts(company_id: UUID, session: DBSession):
             parts = prefix.replace(".", " ").replace("_", " ").split()
             first = parts[0].capitalize() if parts else prefix
             last = parts[1].capitalize() if len(parts) > 1 else ""
+        if not is_valid_prospect_candidate(
+            first_name=first,
+            last_name=last,
+            email=email,
+            title=c.get("title"),
+            linkedin_url=c.get("linkedin_url"),
+        ):
+            continue
         contact = Contact(
             first_name=first,
             last_name=last,
@@ -159,7 +397,190 @@ async def discover_contacts(company_id: UUID, session: DBSession):
     for c in created:
         await session.refresh(c)
 
-    return [ContactRead.model_validate(c) for c in created]
+    reads = [ContactRead.model_validate(c) for c in created]
+    await apply_contact_tracking(session, reads)
+    return reads
+
+
+@router.post("/import-csv", response_model=ProspectImportResponse, status_code=201)
+async def import_contacts_csv(
+    current_user: CurrentUser,
+    session: DBSession,
+    file: UploadFile = File(...),
+):
+    await require_workspace_permission(session, current_user, "prospect_migration")
+
+    lower_name = (file.filename or "").lower()
+    if not (lower_name.endswith(".csv") or lower_name.endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")
+
+    content = await file.read()
+    rows = parse_prospect_upload_file(file.filename or "prospects.csv", content)
+    if not rows:
+        raise HTTPException(status_code=400, detail="No rows found in the upload")
+
+    # Load the workspace sequence schedule once so every imported prospect's
+    # progress tracker reflects the current Email/Call/LinkedIn cadence.
+    ws_schedule = await load_workspace_sequence_schedule(session)
+
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+    warning_count = 0
+    touched_company_ids: set[UUID] = set()
+    missing_companies: dict[str, ProspectImportMissingCompany] = {}
+
+    for row in rows:
+        company, created_placeholder_company = await _get_or_create_uploaded_placeholder_company(session, row, current_user)
+        company_fields = row_to_company_fields(row)
+        company_context = {
+            "assigned_rep_email": company.assigned_rep_email if company else None,
+            "recommended_outreach_lane": company.recommended_outreach_lane if company else None,
+            "prospecting_profile": company.prospecting_profile if company else None,
+            "enrichment_sources": company.enrichment_sources if company else None,
+        }
+        contact_fields = row_to_contact_fields(row, company_context)
+        if not contact_fields:
+            # Row has zero identifying data (no name, email, title, or LinkedIn).
+            # These are genuinely empty and cannot be imported.
+            skipped_count += 1
+            continue
+        # Hygiene is a warning, not a block — reps can fix suspicious rows
+        # in-app after import rather than lose them at the upload step.
+        if not is_valid_prospect_candidate(
+            first_name=contact_fields.get("first_name"),
+            last_name=contact_fields.get("last_name"),
+            email=contact_fields.get("email"),
+            title=contact_fields.get("title"),
+            linkedin_url=contact_fields.get("linkedin_url"),
+        ):
+            warning_count += 1
+
+        if not company:
+            key = f"{(company_fields.get('domain') or '').strip().lower()}::{(company_fields.get('name') or '').strip().lower()}"
+            current = missing_companies.get(key)
+            if current:
+                current.contacts_count += 1
+            else:
+                missing_companies[key] = ProspectImportMissingCompany(
+                    name=(company_fields.get("name") or "Unknown company").strip(),
+                    domain=(company_fields.get("domain") or "").strip() or None,
+                    contacts_count=1,
+                )
+            skipped_count += 1
+            continue
+
+        if created_placeholder_company:
+            key = f"{(company_fields.get('domain') or '').strip().lower()}::{(company_fields.get('name') or '').strip().lower()}"
+            current = missing_companies.get(key)
+            if current:
+                current.contacts_count += 1
+            else:
+                missing_companies[key] = ProspectImportMissingCompany(
+                    name=(company_fields.get("name") or "Unknown company").strip(),
+                    domain=(company_fields.get("domain") or "").strip() or None,
+                    contacts_count=1,
+                )
+
+        touched_company_ids.add(company.id)
+        contact_fields["assigned_to_id"] = contact_fields.get("assigned_to_id") or company.assigned_to_id
+        contact_fields["assigned_rep_email"] = contact_fields.get("assigned_rep_email") or company.assigned_rep_email
+        contact_fields["sdr_id"] = contact_fields.get("sdr_id") or company.sdr_id
+        contact_fields["sdr_name"] = contact_fields.get("sdr_name") or company.sdr_name
+        contact_fields["company_id"] = company.id
+
+        raw_enrichment = contact_fields.get("enrichment_data") if isinstance(contact_fields.get("enrichment_data"), dict) else {}
+        raw_enrichment["source"] = "prospect_csv_upload"
+        raw_enrichment["uploaded_by"] = current_user.email
+        raw_enrichment["uploaded_at"] = datetime.utcnow().isoformat()
+        contact_fields["enrichment_data"] = raw_enrichment
+
+        email = (contact_fields.get("email") or "").strip().lower() if isinstance(contact_fields.get("email"), str) else None
+        first_name = (contact_fields.get("first_name") or "").strip()
+        last_name = (contact_fields.get("last_name") or "").strip()
+
+        existing = None
+        if email:
+            existing = (
+                await session.execute(select(Contact).where(Contact.email == email).limit(1))
+            ).scalars().first()
+        if not existing and first_name and last_name:
+            existing = (
+                await session.execute(
+                    select(Contact).where(
+                        Contact.company_id == company.id,
+                        Contact.first_name == first_name,
+                        Contact.last_name == last_name,
+                    ).limit(1)
+                )
+            ).scalars().first()
+
+        if existing and existing.company_id and existing.company_id != company.id:
+            skipped_count += 1
+            continue
+
+        if existing:
+            changed = False
+            for key, value in contact_fields.items():
+                if value in (None, "", []):
+                    continue
+                if key == "enrichment_data":
+                    current_enrichment = existing.enrichment_data if isinstance(existing.enrichment_data, dict) else {}
+                    current_enrichment.update(value)
+                    if current_enrichment != existing.enrichment_data:
+                        existing.enrichment_data = current_enrichment
+                        changed = True
+                    continue
+                if getattr(existing, key, None) != value:
+                    setattr(existing, key, value)
+                    changed = True
+            if changed or not existing.persona:
+                existing.persona = classify_persona(existing)
+                existing.updated_at = datetime.utcnow()
+                refresh_contact_sequence_plan(existing, company, workspace_schedule=ws_schedule)
+                session.add(existing)
+                updated_count += 1
+            else:
+                skipped_count += 1
+        else:
+            contact = Contact(**contact_fields)
+            contact.persona = classify_persona(contact)
+            refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+            session.add(contact)
+            created_count += 1
+
+    await session.commit()
+
+    for company_id in touched_company_ids:
+        company = await session.get(Company, company_id)
+        if not company:
+            continue
+        company_contacts = (
+            await session.execute(select(Contact).where(Contact.company_id == company_id))
+        ).scalars().all()
+        refresh_company_prospecting_fields(company, company_contacts)
+        session.add(company)
+    await session.commit()
+
+    missing_rows = sorted(missing_companies.values(), key=lambda item: (item.name.lower(), item.domain or ""))
+    message_parts = ["Prospects imported successfully."]
+    if warning_count:
+        message_parts.append(
+            f"{warning_count} row{'s' if warning_count != 1 else ''} look{'s' if warning_count == 1 else ''} like a role mailbox or placeholder — review them in Prospecting."
+        )
+    if missing_rows:
+        message_parts.append("Placeholder companies were created for rows that still need enrichment.")
+
+    return ProspectImportResponse(
+        imported_rows=len(rows),
+        created_count=created_count,
+        updated_count=updated_count,
+        skipped_count=skipped_count,
+        warning_count=warning_count,
+        missing_company_count=len(missing_rows),
+        missing_companies=missing_rows,
+        message=" ".join(message_parts),
+    )
 
 
 @router.get("/{contact_id}/brief")

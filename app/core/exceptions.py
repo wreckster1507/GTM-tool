@@ -37,6 +37,16 @@ class ExternalServiceError(BeaconError):
     status_code = 502
 
 
+class UnauthorizedError(BeaconError):
+    """Missing or invalid authentication credentials."""
+    status_code = 401
+
+
+class ForbiddenError(BeaconError):
+    """Authenticated but insufficient permissions (e.g. non-admin trying to assign)."""
+    status_code = 403
+
+
 # ── FastAPI exception handlers ──────────────────────────────────────────────
 
 async def beacon_exception_handler(request: Request, exc: BeaconError) -> JSONResponse:
@@ -53,3 +63,5 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(ConflictError, beacon_exception_handler)
     app.add_exception_handler(ValidationError, beacon_exception_handler)
     app.add_exception_handler(ExternalServiceError, beacon_exception_handler)
+    app.add_exception_handler(UnauthorizedError, beacon_exception_handler)
+    app.add_exception_handler(ForbiddenError, beacon_exception_handler)

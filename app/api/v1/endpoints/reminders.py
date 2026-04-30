@@ -1,0 +1,119 @@
+"""Reminders — per-stakeholder follow-up reminders for sales reps."""
+from datetime import datetime, timezone
+from typing import Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.dependencies import DBSession
+from app.core.exceptions import NotFoundError, ValidationError
+from app.models.company import Company
+from app.models.contact import Contact
+from app.models.reminder import Reminder, ReminderCreate, ReminderRead, ReminderUpdate
+from app.models.user import User
+
+router = APIRouter(prefix="/reminders", tags=["reminders"])
+
+
+def _normalize_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
+    """Persist datetimes as naive UTC for TIMESTAMP WITHOUT TIME ZONE columns."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+async def _to_read(session: AsyncSession, r: Reminder) -> ReminderRead:
+    read = ReminderRead.model_validate(r)
+    contact = await session.get(Contact, r.contact_id)
+    if contact:
+        read.contact_name = f"{contact.first_name} {contact.last_name}"
+    if r.company_id:
+        company = await session.get(Company, r.company_id)
+        if company:
+            read.company_name = company.name
+    if r.assigned_to_id:
+        user = await session.get(User, r.assigned_to_id)
+        if user:
+            read.assigned_to_name = user.name
+    return read
+
+
+@router.get("/", response_model=list[ReminderRead])
+async def list_reminders(
+    session: DBSession,
+    contact_id: Optional[UUID] = Query(default=None),
+    company_id: Optional[UUID] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    assigned_to_id: Optional[UUID] = Query(default=None),
+):
+    """List reminders with optional filters."""
+    stmt = select(Reminder)
+    if contact_id:
+        stmt = stmt.where(Reminder.contact_id == contact_id)
+    if company_id:
+        stmt = stmt.where(Reminder.company_id == company_id)
+    if status:
+        stmt = stmt.where(Reminder.status == status)
+    if assigned_to_id:
+        stmt = stmt.where(Reminder.assigned_to_id == assigned_to_id)
+    stmt = stmt.order_by(Reminder.due_at.asc())
+    rows = (await session.execute(stmt)).scalars().all()
+    return [await _to_read(session, r) for r in rows]
+
+
+@router.post("/", response_model=ReminderRead, status_code=201)
+async def create_reminder(payload: ReminderCreate, session: DBSession):
+    contact = await session.get(Contact, payload.contact_id)
+    if not contact:
+        raise NotFoundError(f"Contact {payload.contact_id} not found")
+
+    reminder = Reminder(
+        contact_id=payload.contact_id,
+        company_id=payload.company_id or contact.company_id,
+        assigned_to_id=payload.assigned_to_id,
+        note=payload.note,
+        due_at=_normalize_utc_naive(payload.due_at),
+    )
+    session.add(reminder)
+    await session.commit()
+    await session.refresh(reminder)
+    return await _to_read(session, reminder)
+
+
+@router.patch("/{reminder_id}", response_model=ReminderRead)
+async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: DBSession):
+    reminder = await session.get(Reminder, reminder_id)
+    if not reminder:
+        raise NotFoundError(f"Reminder {reminder_id} not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "due_at" in data:
+        data["due_at"] = _normalize_utc_naive(data["due_at"])
+    if "completed_at" in data:
+        data["completed_at"] = _normalize_utc_naive(data["completed_at"])
+    if "status" in data:
+        if data["status"] not in ("pending", "completed", "dismissed"):
+            raise ValidationError("Status must be pending, completed, or dismissed")
+        if data["status"] == "completed":
+            data["completed_at"] = datetime.utcnow()
+
+    for key, value in data.items():
+        setattr(reminder, key, value)
+
+    session.add(reminder)
+    await session.commit()
+    await session.refresh(reminder)
+    return await _to_read(session, reminder)
+
+
+@router.delete("/{reminder_id}", status_code=204)
+async def delete_reminder(reminder_id: UUID, session: DBSession):
+    reminder = await session.get(Reminder, reminder_id)
+    if not reminder:
+        raise NotFoundError(f"Reminder {reminder_id} not found")
+    await session.delete(reminder)
+    await session.commit()

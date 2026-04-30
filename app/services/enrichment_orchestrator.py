@@ -116,6 +116,7 @@ async def _create_contacts_from_hunter(
     """Turn Hunter-discovered emails into Contact rows, skipping duplicates."""
     from app.models.contact import Contact
     from app.services.persona_classifier import classify_persona
+    from app.services.prospect_hygiene import is_valid_prospect_candidate
     from sqlmodel import select
 
     for c in contacts:
@@ -137,6 +138,15 @@ async def _create_contacts_from_hunter(
             parts = prefix.replace(".", " ").replace("_", " ").split()
             first = parts[0].capitalize() if parts else prefix
             last = parts[1].capitalize() if len(parts) > 1 else ""
+
+        if not is_valid_prospect_candidate(
+            first_name=first,
+            last_name=last,
+            email=email,
+            title=c.get("title"),
+            linkedin_url=c.get("linkedin_url"),
+        ):
+            continue
 
         contact = Contact(
             first_name=first,

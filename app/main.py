@@ -1,20 +1,57 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
 from app.services.background_jobs import shutdown_background_workers, start_background_workers
+from app.services.meeting_automation import run_due_pre_meeting_intel_once
+from app.services.zippy_docs.base import ZIPPY_OUTPUT_DIR
 
+logger = logging.getLogger(__name__)
+
+
+async def _pre_meeting_automation_loop() -> None:
+    while True:
+        try:
+            await run_due_pre_meeting_intel_once()
+        except Exception:
+            logger.exception("Pre-meeting automation loop failed")
+        await asyncio.sleep(600)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await start_background_workers()
+    automation_task = asyncio.create_task(_pre_meeting_automation_loop(), name="pre-meeting-automation")
+    try:
+        yield
+    finally:
+        automation_task.cancel()
+        await asyncio.gather(automation_task, return_exceptions=True)
+        await shutdown_background_workers()
+
+# FastAPI app bootstrap:
+# 1. create the app
+# 2. attach cross-origin policy for the browser frontend
+# 3. register shared exception handling
+# 4. mount the versioned API router
 app = FastAPI(
     title="Beacon CRM API",
     description="GTM Sales CRM for Beacon.li — AI Implementation Orchestration",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
-# ── CORS ────────────────────────────────────────────────────────────────────
+# The frontend talks to the API directly from the browser, so allowed origins
+# come from settings instead of being hard-coded in each route.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -24,24 +61,21 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# ── Exception handlers ───────────────────────────────────────────────────────
-# Custom BeaconError subclasses map cleanly to HTTP status codes.
-# No more HTTPException(status_code=404, ...) scattered across every route.
+# Centralise app-specific errors so route handlers can raise domain errors
+# without duplicating HTTP status mapping logic everywhere.
 register_exception_handlers(app)
 
-# ── API v1 router ────────────────────────────────────────────────────────────
-# All routes live under /api/v1/.  Adding v2 later = mount a second router.
+# All API endpoints live under /api/v1. A future v2 can be mounted alongside it
+# without changing the existing route modules.
 app.include_router(v1_router, prefix="/api/v1")
 
-
-@app.on_event("startup")
-async def startup_background_workers() -> None:
-    await start_background_workers()
-
-
-@app.on_event("shutdown")
-async def stop_background_workers() -> None:
-    await shutdown_background_workers()
+# Serve Zippy-generated Word docs (MOM, NDAs, drafts) so the frontend can link
+# straight to them. The directory is ensured at import time by zippy_docs.base.
+app.mount(
+    "/zippy_outputs",
+    StaticFiles(directory=str(ZIPPY_OUTPUT_DIR), check_dir=False),
+    name="zippy_outputs",
+)
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

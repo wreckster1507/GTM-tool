@@ -5,12 +5,16 @@ Runs every 24 hours via the beat_schedule in celery_app.py.
 """
 import asyncio
 import logging
+from datetime import datetime
 
 from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-_ACTIVE_STAGES = ["discovery", "demo", "poc", "proposal", "negotiation"]
+# Closed/terminal stages that should NOT be health-checked.
+_CLOSED_STAGES = frozenset([
+    "closed_won", "closed_lost", "not_a_fit", "churned",
+])
 
 
 @celery_app.task(name="app.tasks.health.recalculate_all_deal_health")
@@ -36,11 +40,17 @@ async def _async_recalculate() -> int:
     updated = 0
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(Deal).where(Deal.stage.in_(_ACTIVE_STAGES))
+            select(Deal).where(Deal.stage.notin_(_CLOSED_STAGES))
         )
         deals = result.scalars().all()
 
         for deal in deals:
+            # Recompute days_in_stage from stage_entered_at
+            if deal.stage_entered_at:
+                deal.days_in_stage = (datetime.utcnow() - deal.stage_entered_at).days
+            elif deal.created_at:
+                deal.days_in_stage = (datetime.utcnow() - deal.created_at).days
+
             acts_result = await session.execute(
                 select(Activity).where(Activity.deal_id == deal.id)
             )

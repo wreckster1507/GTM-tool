@@ -30,7 +30,6 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import update as sa_update
-from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -39,6 +38,7 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.sourcing_batch import SourcingBatch
 from app.services.icp_scorer import score_company
+from app.services.prospect_hygiene import is_valid_prospect_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +110,19 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "build_vs_buy_impl_auto": ["build vs buy for impl. auto", "build vs buy for impl auto"],
     "ai_acquisition_impl": ["ai acquisition for impl.", "ai acquisition for impl"],
     "final_qual":     ["final qual"],
-    "sdr":            ["sdr"],
-    "ae":             ["ae"],
+    "sdr":            ["sdr", "sdr name", "sdr rep"],
+    "ae":             ["ae", "ae name", "account executive",
+                       "owner", "account owner", "assigned to", "rep", "sales rep"],
     "contact_name":   ["contact", "prospect name", "full name", "name"],
     "contact_first_name": ["first", "first name"],
     "contact_last_name": ["last", "last name"],
     "contact_title":  ["title", "job title", "job", "role"],
     "contact_email":  ["email", "work email"],
+    "contact_phone":  [
+        "direct mobile personal", "mobile", "phone", "phone number",
+        "direct phone", "cell", "cell phone", "personal phone",
+        "hq direct line", "direct line",
+    ],
     "linkedin_url":   ["linkedin", "linkedin url", "linkedin profile"],
     "next_steps":     ["next steps", "recommended next step"],
     "ownership_stage": ["ownership stage"],
@@ -139,6 +145,35 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "conversation_starter": ["conversation starter"],
     "what_they_do":   ["what they do"],
     "who_they_are":   ["who they are"],
+    # Rich columns from the Beacon "The 100" workbook
+    "tier":           ["tier", "account tier"],
+    "email_confidence": ["email confidence"],
+    "direct_mobile":  ["direct mobile personal", "direct mobile", "direct  mobile personal"],
+    "hq_direct_line": ["hq direct line"],
+    "hq_switchboard": ["hq switchboard toll free", "hq switchboard", "hq switchboard  toll free"],
+    "tenure_role":    ["tenure role"],
+    "tenure_company": ["tenure company"],
+    "contact_location": ["location"],
+    "contact_icp_score": ["icp score"],
+    "contact_intent_score": ["intent score"],
+    "contact_source": ["source"],
+    "apollo_id":      ["apollo id"],
+    "career_arc":     ["career arc"],
+    "linkedin_activity": ["linkedin activity posts", "linkedin activity"],
+    "intent_signals": ["intent signals"],
+    "primary_messaging_angle": ["primary messaging angle"],
+    "personalization_hook": ["personalization hook"],
+    "research_confidence": ["research confidence"],
+    "outreach_priority": ["outreach priority"],
+    "email1_subject": ["email 1 subject"],
+    "email1_body":    ["email 1 body"],
+    "email1_when":    ["email 1 when to use", "email 1  when to use"],
+    "email2_subject": ["email 2 subject"],
+    "email2_body":    ["email 2 body"],
+    "email2_when":    ["email 2 when to use", "email 2  when to use"],
+    "email3_subject": ["email 3 subject"],
+    "email3_body":    ["email 3 body"],
+    "email3_when":    ["email 3 when to use", "email 3  when to use"],
 }
 
 _ALIASES: dict[str, list[str]] = {
@@ -445,6 +480,9 @@ def _analyst_signal_columns() -> tuple[list[str], list[str]]:
 
 
 def _extract_import_intelligence(row: dict[str, str]) -> dict[str, Any]:
+    # Preserve both normalized analyst signals and the original uploaded values.
+    # The normalized shape powers scoring, while the raw row is useful for export
+    # and audit/debug scenarios.
     positive_cols, negative_cols = _analyst_signal_columns()
 
     analyst = {
@@ -494,6 +532,8 @@ def _extract_import_intelligence(row: dict[str, str]) -> dict[str, Any]:
 
 
 def _derive_uploaded_intent_signals(import_intelligence: dict[str, Any]) -> dict[str, Any]:
+    # Convert narrative analyst columns into simple counters/flags that can be
+    # merged with machine-generated intent signals later in the pipeline.
     analyst = import_intelligence.get("analyst", {})
     positive_signals = import_intelligence.get("positive_signals", [])
     negative_signals = import_intelligence.get("negative_signals", [])
@@ -539,6 +579,8 @@ def _build_company_outreach_lane(
     ownership_stage: str,
     analyst: dict[str, Any],
 ) -> str:
+    # This is a routing heuristic for downstream playbooks, not a perfect model.
+    # It deliberately chooses one best lane even when the source data is partial.
     if any(int(connector.get("strength", 0) or 0) >= 3 for connector in connectors):
         return "warm_intro"
 
@@ -571,9 +613,48 @@ def _role_focus_from_title(title: str) -> str:
     return "post-sales stakeholder"
 
 
+async def load_workspace_sequence_schedule(session) -> list[dict[str, Any]] | None:
+    """Fetch the workspace "Sequence Settings" as [{day_offset, channel}, ...]."""
+    from app.models.settings import WorkspaceSettings  # local import avoids cycle
+    ws = await session.get(WorkspaceSettings, 1)
+    if not ws:
+        return None
+    return _workspace_step_schedule(ws.outreach_step_delays, ws.outreach_content_settings)
+
+
+def _workspace_step_schedule(ws_step_delays, ws_content_settings) -> list[dict[str, Any]] | None:
+    """Return [{day_offset, channel}, ...] from workspace settings, or None if not usable.
+
+    Shape in the DB: `outreach_step_delays = [0, 3, 7]` and
+    `outreach_content_settings.step_templates[i].channel in {email, call, linkedin}`.
+    """
+    if not isinstance(ws_step_delays, list) or not ws_step_delays:
+        return None
+    templates = []
+    if isinstance(ws_content_settings, dict):
+        raw = ws_content_settings.get("step_templates")
+        if isinstance(raw, list):
+            templates = raw
+
+    schedule: list[dict[str, Any]] = []
+    for idx, delay in enumerate(ws_step_delays):
+        try:
+            day = int(delay)
+        except (TypeError, ValueError):
+            day = 0
+        channel = "email"
+        if idx < len(templates) and isinstance(templates[idx], dict):
+            raw_channel = str(templates[idx].get("channel") or "email").strip().lower()
+            if raw_channel in {"email", "call", "linkedin"}:
+                channel = raw_channel
+        schedule.append({"day_offset": day, "channel": channel})
+    return schedule
+
+
 def _build_contact_sequence_plan(
     contact_fields: dict[str, Any],
     company_fields: dict[str, Any],
+    workspace_schedule: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     prospecting = (
         company_fields.get("prospecting_profile")
@@ -771,6 +852,21 @@ def _build_contact_sequence_plan(
         family = "Implementation/operator"
         goal = "Start with the operator pain and convert it into an implementation efficiency conversation."
 
+    # Workspace "Sequence Settings" override: if the workspace has configured
+    # its own cadence (e.g. Email D0 -> LinkedIn D3 -> Call D7), reshape the
+    # lane's steps to match. We keep the lane-specific objective/angle/cta
+    # copy by index and only swap day_offset + channel so the prospect plan
+    # still feels personalized.
+    if workspace_schedule:
+        reshaped: list[dict[str, Any]] = []
+        for idx, slot in enumerate(workspace_schedule):
+            base = steps[idx] if idx < len(steps) else dict(steps[-1])
+            new_step = dict(base)
+            new_step["day_offset"] = slot.get("day_offset", new_step.get("day_offset", 0))
+            new_step["channel"] = slot.get("channel", new_step.get("channel", "email"))
+            reshaped.append(new_step)
+        steps = reshaped
+
     return {
         "lane": lane,
         "sequence_family": family,
@@ -781,7 +877,42 @@ def _build_contact_sequence_plan(
     }
 
 
-def refresh_contact_sequence_plan(contact: Contact, company: Company) -> Contact:
+# Any of these sequence_status values (or a non-null instantly_campaign_id)
+# means the contact has left the "ready / planned" phase — we must not
+# overwrite their in-flight or terminal progress by regenerating the plan.
+_LOCKED_SEQUENCE_STATUSES = frozenset({
+    "queued_instantly",
+    "sent",
+    "launched",
+    "completed",
+    "replied",
+    "meeting_booked",
+    "interested",
+    "not_interested",
+    "unsubscribed",
+    "bounced",
+})
+
+
+def _contact_has_started_sequence(contact: Contact) -> bool:
+    if getattr(contact, "instantly_campaign_id", None):
+        return True
+    status = (getattr(contact, "sequence_status", None) or "").strip().lower()
+    return status in _LOCKED_SEQUENCE_STATUSES
+
+
+def refresh_contact_sequence_plan(
+    contact: Contact,
+    company: Company,
+    *,
+    workspace_schedule: list[dict[str, Any]] | None = None,
+) -> Contact:
+    # Never overwrite a plan for a contact whose sequence is already in flight
+    # or has terminated — the workspace-settings change only shapes *future*
+    # prospects' progress, not existing ones.
+    if _contact_has_started_sequence(contact):
+        return contact
+
     contact_fields: dict[str, Any] = {
         "first_name": contact.first_name,
         "last_name": contact.last_name,
@@ -801,7 +932,11 @@ def refresh_contact_sequence_plan(contact: Contact, company: Company) -> Contact
         "beacon_angle": company.beacon_angle,
         "prospecting_profile": company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {},
     }
-    sequence_plan = _build_contact_sequence_plan(contact_fields, company_fields)
+    sequence_plan = _build_contact_sequence_plan(
+        contact_fields,
+        company_fields,
+        workspace_schedule=workspace_schedule,
+    )
     enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
     contact.enrichment_data = {
         **enrichment,
@@ -896,20 +1031,65 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     title = _find(row, "contact_title")
     email = _clean_email(_find(row, "contact_email"))
     linkedin_url = _find(row, "linkedin_url") or None
+    # Prefer "Direct / Mobile (Personal)" if present; else generic contact phone;
+    # else HQ direct line as a fallback.
+    phone = (
+        _find(row, "direct_mobile")
+        or _find(row, "contact_phone")
+        or _find(row, "hq_direct_line")
+        or None
+    )
 
     if not first and not last and contact_name:
         first, last = _split_contact_name(contact_name)
 
     if not any([first, last, title, email, linkedin_url]):
         return None
+    # Hygiene filter is applied as a *warning* at the endpoint level — rows are
+    # still imported so the rep can correct them in-app rather than losing data.
 
     import_block = company_fields.get("enrichment_sources", {}).get("import", {}) if isinstance(company_fields.get("enrichment_sources"), dict) else {}
     prospecting = company_fields.get("prospecting_profile") if isinstance(company_fields.get("prospecting_profile"), dict) else {}
     connectors = prospecting.get("warm_paths") if isinstance(prospecting, dict) else []
     best_connector = connectors[0] if isinstance(connectors, list) and connectors else {}
 
-    talking_points = []
+    # Rich intelligence columns from the Beacon "The 100" workbook.
+    email_confidence = (_find(row, "email_confidence") or "").strip().upper()
+    career_arc = _find(row, "career_arc") or None
+    linkedin_activity = _find(row, "linkedin_activity") or None
+    intent_signals = _find(row, "intent_signals") or None
+    messaging_angle = _find(row, "primary_messaging_angle") or None
+    personalization_hook = _find(row, "personalization_hook") or None
+    research_confidence = _find(row, "research_confidence") or None
+    outreach_priority = _find(row, "outreach_priority") or None
+    contact_location = _find(row, "contact_location") or None
+    tenure_role = _find(row, "tenure_role") or None
+    tenure_company = _find(row, "tenure_company") or None
+    tier = _find(row, "tier") or None
+    contact_source = _find(row, "contact_source") or None
+    apollo_id = _find(row, "apollo_id") or None
+
+    # Pre-written email cadence — each step becomes the actual outreach body so
+    # Instantly sends the hand-crafted copy instead of AI-generated placeholders.
+    pre_written_emails = []
+    for idx in (1, 2, 3):
+        subject = _find(row, f"email{idx}_subject")
+        body = _find(row, f"email{idx}_body")
+        when = _find(row, f"email{idx}_when")
+        if subject or body:
+            pre_written_emails.append({
+                "step": idx,
+                "subject": subject or None,
+                "body": body or None,
+                "when_to_use": when or None,
+            })
+
+    # Talking points: prefer the workbook's messaging angle + hook over the
+    # company-level defaults when both exist (per-prospect research wins).
+    talking_points: list[str] = []
     for candidate in [
+        messaging_angle,
+        personalization_hook,
         prospecting.get("recommended_outreach_strategy") if isinstance(prospecting, dict) else None,
         prospecting.get("conversation_starter") if isinstance(prospecting, dict) else None,
         import_block.get("analyst", {}).get("intent_why") if isinstance(import_block, dict) and isinstance(import_block.get("analyst"), dict) else None,
@@ -917,10 +1097,28 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         if candidate:
             talking_points.append(str(candidate).strip())
 
+    # Prefer the workbook's per-prospect hooks for conversation_starter +
+    # personalization_notes so the Prospecting drawer surfaces them first.
+    conversation_starter = (
+        personalization_hook
+        or messaging_angle
+        or (prospecting.get("conversation_starter") if isinstance(prospecting, dict) else None)
+    )
+    personalization_notes = (
+        career_arc
+        or intent_signals
+        or (prospecting.get("why_now") if isinstance(prospecting, dict) else None)
+    )
+
     base_fields = {
         "first_name": first[:120],
         "last_name": last[:160],
         "email": email or None,
+        # If the workbook explicitly flags the email as HIGH confidence, seed
+        # email_verified so the rep doesn't have to re-verify. Other values
+        # (MEDIUM/LOW/blank) leave email_verified unset for normal verification.
+        "email_verified": True if email and email_confidence == "HIGH" else None,
+        "phone": phone,
         "title": title or None,
         "linkedin_url": linkedin_url,
         "assigned_rep_email": company_fields.get("assigned_rep_email"),
@@ -929,12 +1127,37 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         "instantly_status": "ready" if email else "missing_email",
         "warm_intro_strength": _parse_int(str(best_connector.get("strength") or "")) if best_connector else None,
         "warm_intro_path": best_connector or None,
-        "conversation_starter": prospecting.get("conversation_starter") if isinstance(prospecting, dict) else None,
-        "personalization_notes": prospecting.get("why_now") if isinstance(prospecting, dict) else None,
+        "conversation_starter": conversation_starter,
+        "personalization_notes": personalization_notes,
         "talking_points": talking_points or None,
         "enrichment_data": {
             "source": "upload",
             "raw_row": {key: value for key, value in row.items() if _has_nonempty_text(value)},
+            # Structured per-prospect research from the workbook. Lives in
+            # enrichment_data so the rep sees it in the drawer and so later
+            # enrichment passes can layer on top without losing this content.
+            "workbook": {
+                "tier": tier,
+                "email_confidence": email_confidence or None,
+                "source": contact_source,
+                "apollo_id": apollo_id,
+                "location": contact_location,
+                "tenure_role": tenure_role,
+                "tenure_company": tenure_company,
+                "career_arc": career_arc,
+                "linkedin_activity": linkedin_activity,
+                "intent_signals": intent_signals,
+                "primary_messaging_angle": messaging_angle,
+                "personalization_hook": personalization_hook,
+                "research_confidence": research_confidence,
+                "outreach_priority": outreach_priority,
+                "icp_score": _find(row, "contact_icp_score") or None,
+                "intent_score": _find(row, "contact_intent_score") or None,
+            },
+            # Hand-crafted outreach copy — the OutreachDrawer prefers these
+            # over AI-generated text when present, and Instantly pushes them
+            # verbatim on Launch.
+            "pre_written_emails": pre_written_emails or None,
         },
     }
     enrichment_data = base_fields["enrichment_data"] if isinstance(base_fields.get("enrichment_data"), dict) else {}
@@ -1392,6 +1615,50 @@ def account_priority_snapshot(company: Company) -> dict[str, Any]:
 _PAID_CACHE_TTL_HOURS = 24 * 14
 _BATCH_PARALLELISM = 3
 
+_PRIORITY_TITLE_HINTS = (
+    "director of engineering",
+    "engineering director",
+    "vp engineering",
+    "vice president of engineering",
+    "head of engineering",
+    "director of professional services",
+    "vp professional services",
+    "head of professional services",
+    "professional services",
+    "implementation consulting",
+    "implementation consultant",
+    "implementation director",
+    "implementation lead",
+    "implementation manager",
+    "implementation",
+    "solutions consulting",
+    "solutions consultant",
+    "customer implementation",
+    "product management",
+    "product manager",
+    "director of product",
+    "vp product",
+    "head of product",
+    "technical program",
+    "data science",
+    "director of data",
+    "head of data",
+    "director of technology",
+    "head of technology",
+    "cto",
+    "chief technology officer",
+    "platform engineering",
+    "enterprise applications",
+)
+
+_PRIORITY_PERSONA_HINTS = {
+    "buyer",
+    "champion",
+    "evaluator",
+    "technical_evaluator",
+    "implementation_owner",
+}
+
 
 def _cache_entry_is_fresh(cache: dict[str, Any], key: str, ttl_hours: int) -> bool:
     entry = cache.get(key)
@@ -1407,6 +1674,78 @@ def _cache_entry_is_fresh(cache: dict[str, Any], key: str, ttl_hours: int) -> bo
     if fetched.tzinfo is not None:
         fetched = fetched.replace(tzinfo=None)
     return datetime.utcnow() - fetched <= timedelta(hours=ttl_hours)
+
+
+def is_priority_stakeholder_candidate(candidate: Contact | dict[str, Any]) -> bool:
+    """
+    Keep sourced contacts focused on the small set of implementation / product /
+    engineering personas Beacon cares about most.
+    """
+    if isinstance(candidate, Contact):
+        title = candidate.title or ""
+        persona = candidate.persona or ""
+        persona_type = candidate.persona_type or ""
+    else:
+        title = str(candidate.get("title") or "")
+        persona = str(candidate.get("persona") or "")
+        persona_type = str(candidate.get("persona_type") or "")
+
+    normalized_title = title.strip().lower()
+    normalized_persona = (persona_type or persona).strip().lower()
+
+    if normalized_persona in _PRIORITY_PERSONA_HINTS:
+        return True
+
+    if not normalized_title:
+        return False
+
+    if any(hint in normalized_title for hint in _PRIORITY_TITLE_HINTS):
+        return True
+
+    fallback_keywords = (
+        "engineering",
+        "implementation",
+        "professional services",
+        "product",
+        "technology",
+        "technical",
+        "data",
+    )
+    senior_keywords = ("director", "head", "vp", "vice president", "chief", "lead")
+    return any(keyword in normalized_title for keyword in fallback_keywords) and any(
+        keyword in normalized_title for keyword in senior_keywords
+    )
+
+
+def append_company_activity_log(
+    company: Company,
+    *,
+    action: str,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Company:
+    """
+    Store lightweight account-sourcing audit entries directly on the company so
+    the company detail page can explain what changed without another table.
+    """
+    cache = copy.deepcopy(company.enrichment_cache or {})
+    existing = cache.get("activity_log")
+    entries = list(existing) if isinstance(existing, list) else []
+    entries.append(
+        {
+            "action": action,
+            "message": message or action.replace("_", " ").title(),
+            "actor_name": actor_name,
+            "actor_email": actor_email,
+            "at": datetime.utcnow().isoformat(),
+            "metadata": metadata or {},
+        }
+    )
+    cache["activity_log"] = entries[-40:]
+    company.enrichment_cache = cache
+    return company
 
 
 def _should_run_paid_enrichment(company: Company, cache: dict[str, Any], force_paid_refresh: bool) -> tuple[bool, str]:
@@ -1502,6 +1841,45 @@ def _normalize_row(headers: list[str], values: list[str]) -> dict[str, str]:
     return row
 
 
+def _header_score(values: list[str]) -> int:
+    normalized = [_normalize_header(value) for value in values if (value or "").strip()]
+    if not normalized:
+        return 0
+
+    matched_fields: set[str] = set()
+    for field, aliases in _ALIASES.items():
+        if any(alias in normalized for alias in aliases):
+            matched_fields.add(field)
+
+    score = len(matched_fields)
+    has_company = "name" in matched_fields or "domain" in matched_fields
+    has_contact = (
+        "contact_name" in matched_fields
+        or "contact_email" in matched_fields
+        or "contact_title" in matched_fields
+    )
+    if has_company:
+        score += 2
+    if has_contact:
+        score += 2
+    return score
+
+
+def _detect_header_row(sheet_rows: list[list[str]]) -> tuple[int, list[str]]:
+    best_index = 0
+    best_headers: list[str] = []
+    best_score = -1
+
+    for idx, values in enumerate(sheet_rows[:12]):
+        score = _header_score(values)
+        if score > best_score:
+            best_index = idx
+            best_headers = [_normalize_header(value) for value in values]
+            best_score = score
+
+    return best_index, best_headers
+
+
 def parse_csv(content: bytes) -> list[dict[str, str]]:
     """Parse CSV bytes into normalized dicts. Skip rows without name or domain."""
     text = content.decode("utf-8-sig")
@@ -1531,20 +1909,56 @@ def _read_xlsx_shared_strings(archive: zipfile.ZipFile) -> list[str]:
     return strings
 
 
-def _sheet_paths(archive: zipfile.ZipFile) -> list[str]:
+def _read_xlsx_hyperlinks(archive: zipfile.ZipFile, sheet_path: str) -> dict[str, str]:
+    """Return a mapping of cell reference (e.g. 'C3') → URL for hyperlinks in a sheet.
+
+    xlsx stores hyperlinks in two places:
+    - The sheet XML lists which cells have hyperlinks and their relationship IDs.
+    - The sheet's .rels file maps relationship IDs to actual URLs.
+    """
+    # Build rel_id → url from the sheet's rels file
+    rels_path = sheet_path.replace("worksheets/sheet", "worksheets/_rels/sheet").replace(".xml", ".xml.rels")
+    if rels_path not in archive.namelist():
+        return {}
+
+    _rels_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    rels_root = ET.fromstring(archive.read(rels_path))
+    rel_id_to_url: dict[str, str] = {}
+    for rel in rels_root.findall(f"{{{_rels_ns}}}Relationship"):
+        if rel.attrib.get("Type", "").endswith("/hyperlink"):
+            rel_id_to_url[rel.attrib["Id"]] = rel.attrib.get("Target", "")
+
+    if not rel_id_to_url:
+        return {}
+
+    # Map cell references to URLs from the sheet's <hyperlinks> section
+    sheet_root = ET.fromstring(archive.read(sheet_path))
+    _r_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    cell_to_url: dict[str, str] = {}
+    for hl in sheet_root.findall(".//main:hyperlinks/main:hyperlink", _XLSX_NS):
+        cell_ref = hl.attrib.get("ref", "")
+        rel_id = hl.attrib.get(f"{{{_r_ns}}}id", "")
+        url = rel_id_to_url.get(rel_id, "")
+        if cell_ref and url:
+            # ref can be a range like "C3:C3" — take just the first cell
+            cell_to_url[cell_ref.split(":")[0]] = url
+    return cell_to_url
+
+
+def _sheet_entries(archive: zipfile.ZipFile) -> list[tuple[str, str]]:
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     rel_map = {
         rel.attrib["Id"]: rel.attrib["Target"]
         for rel in rels.findall("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship")
     }
-    paths: list[str] = []
+    entries: list[tuple[str, str]] = []
     for sheet in workbook.findall("main:sheets/main:sheet", _XLSX_NS):
         rel_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
         target = rel_map.get(rel_id or "")
         if target:
-            paths.append(f"xl/{target.lstrip('/')}")
-    return paths
+            entries.append((sheet.attrib.get("name", ""), f"xl/{target.lstrip('/')}"))
+    return entries
 
 
 def _xlsx_column_index(cell_ref: str) -> int:
@@ -1555,42 +1969,52 @@ def _xlsx_column_index(cell_ref: str) -> int:
     return max(index - 1, 0)
 
 
+def _read_xlsx_sheet_rows(archive: zipfile.ZipFile, sheet_path: str, shared_strings: list[str]) -> list[list[str]]:
+    sheet = ET.fromstring(archive.read(sheet_path))
+    sheet_rows: list[list[str]] = []
+
+    for row in sheet.findall("main:sheetData/main:row", _XLSX_NS):
+        values: list[str] = []
+        for cell in row.findall("main:c", _XLSX_NS):
+            cell_ref = cell.attrib.get("r", "")
+            target_idx = _xlsx_column_index(cell_ref) if cell_ref else len(values)
+            while len(values) < target_idx:
+                values.append("")
+
+            cell_type = cell.attrib.get("t")
+            value_node = cell.find("main:v", _XLSX_NS)
+            if cell_type == "s" and value_node is not None and value_node.text is not None:
+                shared_idx = int(value_node.text)
+                values.append(shared_strings[shared_idx] if shared_idx < len(shared_strings) else "")
+            elif cell_type == "inlineStr":
+                text_node = cell.find("main:is/main:t", _XLSX_NS)
+                values.append(text_node.text if text_node is not None else "")
+            else:
+                values.append(value_node.text if value_node is not None and value_node.text is not None else "")
+        sheet_rows.append(values)
+
+    return sheet_rows
+
+
 def parse_xlsx(content: bytes) -> list[dict[str, str]]:
     """Parse all sheets of an XLSX workbook into normalized dict rows."""
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        sheet_paths = _sheet_paths(archive)
-        if not sheet_paths:
+        sheet_entries = _sheet_entries(archive)
+        if not sheet_entries:
             return []
 
         shared_strings = _read_xlsx_shared_strings(archive)
         rows: list[dict[str, str]] = []
-        for sheet_path in sheet_paths:
-            sheet = ET.fromstring(archive.read(sheet_path))
-            headers: list[str] = []
+        for _sheet_name, sheet_path in sheet_entries:
+            sheet_rows = _read_xlsx_sheet_rows(archive, sheet_path, shared_strings)
+            if not sheet_rows:
+                continue
 
-            for idx, row in enumerate(sheet.findall("main:sheetData/main:row", _XLSX_NS)):
-                values: list[str] = []
-                for cell in row.findall("main:c", _XLSX_NS):
-                    cell_ref = cell.attrib.get("r", "")
-                    target_idx = _xlsx_column_index(cell_ref) if cell_ref else len(values)
-                    while len(values) < target_idx:
-                        values.append("")
+            header_index, headers = _detect_header_row(sheet_rows)
+            if not headers:
+                continue
 
-                    cell_type = cell.attrib.get("t")
-                    value_node = cell.find("main:v", _XLSX_NS)
-                    if cell_type == "s" and value_node is not None and value_node.text is not None:
-                        shared_idx = int(value_node.text)
-                        values.append(shared_strings[shared_idx] if shared_idx < len(shared_strings) else "")
-                    elif cell_type == "inlineStr":
-                        text_node = cell.find("main:is/main:t", _XLSX_NS)
-                        values.append(text_node.text if text_node is not None else "")
-                    else:
-                        values.append(value_node.text if value_node is not None and value_node.text is not None else "")
-
-                if idx == 0:
-                    headers = [_normalize_header(value) for value in values]
-                    continue
-
+            for values in sheet_rows[header_index + 1:]:
                 if not any((value or "").strip() for value in values):
                     continue
 
@@ -1603,10 +2027,111 @@ def parse_xlsx(content: bytes) -> list[dict[str, str]]:
         return rows
 
 
+def parse_prospect_xlsx(content: bytes) -> list[dict[str, str]]:
+    """
+    Parse the fixed Beacon prospect workbook structure:
+    - sheet name: Prospecting
+    - row 1: grouped section labels
+    - row 2: actual headers
+    - row 3+: prospect rows
+    """
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        sheet_entries = _sheet_entries(archive)
+        if not sheet_entries:
+            return []
+
+        prospecting_sheet = next(
+            ((name, path) for name, path in sheet_entries if name.strip().lower() == "prospecting"),
+            None,
+        )
+        if not prospecting_sheet:
+            return []
+
+        _, sheet_path = prospecting_sheet
+        shared_strings = _read_xlsx_shared_strings(archive)
+        sheet_rows = _read_xlsx_sheet_rows(archive, sheet_path, shared_strings)
+        if len(sheet_rows) < 3:
+            return []
+
+        # row index 1 (0-based) is the actual header row in this workbook
+        headers = [_normalize_header(value) for value in sheet_rows[1]]
+
+        # Build cell_ref → url map and figure out which columns carry hyperlinks
+        # that are LinkedIn profile URLs. We also detect which column index holds
+        # the contact name so we can assign hyperlinks on name cells to linkedin.
+        cell_to_url = _read_xlsx_hyperlinks(archive, sheet_path)
+
+        # Find which 0-based column indices are "name-like" contact columns
+        name_col_indices: set[int] = set()
+        for col_idx, header in enumerate(headers):
+            if header in _ALIASES["contact_name"] or header in _ALIASES["contact_first_name"]:
+                name_col_indices.add(col_idx)
+
+        # Build a mapping: excel_row_number (1-based) → linkedin_url
+        # by scanning all hyperlinks that point to linkedin.com
+        def _col_letter(idx: int) -> str:
+            """Convert 0-based column index to Excel letter(s) e.g. 0→A, 2→C."""
+            result = ""
+            idx += 1
+            while idx:
+                idx, rem = divmod(idx - 1, 26)
+                result = chr(65 + rem) + result
+            return result
+
+        # Pre-build: for each excel data row, extract linkedin URLs from hyperlinked cells
+        # Data rows start at excel row 3 (1-based) = sheet_rows index 2 (0-based)
+        rows: list[dict[str, str]] = []
+        for data_idx, values in enumerate(sheet_rows[2:]):
+            if not any((value or "").strip() for value in values):
+                continue
+
+            cleaned = _normalize_row(headers, values)
+
+            # Excel row number for this data row (row 1 = grouped labels, row 2 = headers, row 3+ = data)
+            excel_row = data_idx + 3
+
+            # Pull LinkedIn URL from any hyperlink on this row:
+            # 1. Prefer an explicit "linkedin" column hyperlink
+            # 2. Fall back to a hyperlink on a name column that points to linkedin.com
+            linkedin_url = ""
+            for col_idx in range(max(len(headers), len(values))):
+                cell_ref = f"{_col_letter(col_idx)}{excel_row}"
+                url = cell_to_url.get(cell_ref, "")
+                if not url:
+                    continue
+                if "linkedin.com" in url:
+                    linkedin_url = url
+                    break  # first linkedin hyperlink wins
+
+            if linkedin_url and not cleaned.get("linkedin"):
+                cleaned["linkedin"] = linkedin_url
+
+            has_company = any(cleaned.get(alias) for alias in _ALIASES["name"])
+            has_contact = any(
+                cleaned.get(alias)
+                for alias in (
+                    _ALIASES["contact_name"]
+                    + _ALIASES["contact_email"]
+                    + _ALIASES["contact_title"]
+                )
+            )
+            if has_company or has_contact:
+                rows.append(cleaned)
+
+        return rows
+
+
 def parse_tabular_file(filename: str, content: bytes) -> list[dict[str, str]]:
     lower_name = (filename or "").lower()
     if lower_name.endswith(".xlsx"):
         return parse_xlsx(content)
+    return parse_csv(content)
+
+
+def parse_prospect_upload_file(filename: str, content: bytes) -> list[dict[str, str]]:
+    lower_name = (filename or "").lower()
+    if lower_name.endswith(".xlsx"):
+        return parse_prospect_xlsx(content)
     return parse_csv(content)
 
 
@@ -1782,6 +2307,77 @@ def _summary_upload_context(company: Company) -> dict[str, Any]:
         "recommended_outreach_strategy": prospecting.get("recommended_outreach_strategy"),
     }
 
+
+def _research_quality_snapshot(
+    *,
+    company: Company,
+    cache: dict[str, Any],
+    scraped: dict[str, Any],
+    intent: dict[str, Any],
+    domain_available: bool,
+    apollo_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    apollo_contacts_entry = cache.get("apollo_contacts") if isinstance(cache.get("apollo_contacts"), dict) else {}
+    apollo_contacts = apollo_contacts_entry.get("data") if isinstance(apollo_contacts_entry, dict) else []
+    hunter_contacts_entry = cache.get("hunter_contacts") if isinstance(cache.get("hunter_contacts"), dict) else {}
+    hunter_contacts_data = hunter_contacts_entry.get("data") if isinstance(hunter_contacts_entry, dict) else {}
+    hunter_contacts = hunter_contacts_data.get("contacts") if isinstance(hunter_contacts_data, dict) else []
+    hunter_company_entry = cache.get("hunter_company") if isinstance(cache.get("hunter_company"), dict) else {}
+    hunter_company = hunter_company_entry.get("data") if isinstance(hunter_company_entry, dict) else None
+
+    website_pages = int(scraped.get("pages_scraped", 0) or 0)
+    intent_hits = len(intent.get("raw_results", [])) if isinstance(intent.get("raw_results"), list) else 0
+    apollo_contacts_count = len(apollo_contacts) if isinstance(apollo_contacts, list) else 0
+    hunter_contacts_count = len(hunter_contacts) if isinstance(hunter_contacts, list) else 0
+
+    evidence_score = 0
+    evidence_score += 2 if domain_available else 0
+    evidence_score += 2 if website_pages > 0 else 0
+    evidence_score += 1 if intent_hits > 0 else 0
+    evidence_score += 2 if isinstance(apollo_data, dict) and bool(apollo_data) else 0
+    evidence_score += 1 if isinstance(hunter_company, dict) and bool(hunter_company) else 0
+    evidence_score += 2 if apollo_contacts_count > 0 else 0
+    evidence_score += 1 if hunter_contacts_count > 0 else 0
+
+    if evidence_score >= 6:
+        evidence_level = "strong"
+    elif evidence_score >= 3:
+        evidence_level = "partial"
+    else:
+        evidence_level = "thin"
+
+    live_research_sources = [
+        name
+        for name, active in (
+            ("website", website_pages > 0),
+            ("web_search", intent_hits > 0),
+            ("apollo_company", isinstance(apollo_data, dict) and bool(apollo_data)),
+            ("apollo_contacts", apollo_contacts_count > 0),
+            ("hunter_company", isinstance(hunter_company, dict) and bool(hunter_company)),
+            ("hunter_contacts", hunter_contacts_count > 0),
+        )
+        if active
+    ]
+
+    return {
+        "domain_available": domain_available,
+        "website_pages_scraped": website_pages,
+        "intent_result_count": intent_hits,
+        "apollo_company_found": isinstance(apollo_data, dict) and bool(apollo_data),
+        "apollo_contacts_found": apollo_contacts_count,
+        "hunter_company_found": isinstance(hunter_company, dict) and bool(hunter_company),
+        "hunter_contacts_found": hunter_contacts_count,
+        "live_research_sources": live_research_sources,
+        "evidence_score": evidence_score,
+        "evidence_level": evidence_level,
+        "allow_ai_summary": evidence_level != "thin",
+        "summary_note": (
+            "Live research evidence is thin; avoid treating AI summarization as grounded research."
+            if evidence_level == "thin"
+            else "Live research captured enough evidence for AI synthesis."
+        ),
+    }
+
 async def enrich_company_tiered(
     company_id: UUID,
     session: AsyncSession,
@@ -1837,6 +2433,9 @@ async def enrich_company_tiered(
             resolution_detail,
         )
 
+    # The cache doubles as a pipeline log for the UI: each stage writes status and
+    # fetched payloads so partial failures remain explainable to the user.
+
     # ── Tier 1: Free sources ────────────────────────────────────────────────
     from app.clients.web_search import WebSearchClient
     ws = WebSearchClient()
@@ -1874,9 +2473,9 @@ async def enrich_company_tiered(
         cache["intent_signals"] = {"data": intent, "fetched_at": datetime.utcnow().isoformat()}
         existing_intent = copy.deepcopy(company.intent_signals or {})
         company.intent_signals = {
-            "hiring": max(int(existing_intent.get("hiring", 0) or 0), len(intent.get("hiring", []))),
-            "funding": max(int(existing_intent.get("funding", 0) or 0), len(intent.get("funding", []))),
-            "product": max(int(existing_intent.get("product", 0) or 0), len(intent.get("product", []))),
+            "hiring": max(int(existing_intent.get("hiring", 0) or 0), len(intent.get("hiring") or [])),
+            "funding": max(int(existing_intent.get("funding", 0) or 0), len(intent.get("funding") or [])),
+            "product": max(int(existing_intent.get("product", 0) or 0), len(intent.get("product") or [])),
             "uploaded_intent_score": existing_intent.get("uploaded_intent_score"),
             "uploaded_fit_type": existing_intent.get("uploaded_fit_type"),
             "uploaded_classification": existing_intent.get("uploaded_classification"),
@@ -1899,10 +2498,19 @@ async def enrich_company_tiered(
         },
         "fetched_at": datetime.utcnow().isoformat(),
     }
+    cache["contact_discovery"] = {
+        "data": {
+            "mode": "paused",
+            "message": "Contact discovery during company research is temporarily paused. Upload prospects from the Prospecting page to attach stakeholders.",
+        },
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
 
     cached_apollo_entry = cache.get("apollo_company") if isinstance(cache.get("apollo_company"), dict) else None
     apollo_data = cached_apollo_entry.get("data") if isinstance(cached_apollo_entry, dict) else None
 
+    # Paid enrichment is intentionally gated behind the free pass so domain
+    # resolution and scraped context can improve match quality first.
     # ── Tier 2: Apollo (paid, gated) ────────────────────────────────────────
     if should_run_paid:
         _pipeline_stamp(cache, "paid_enrichment", "started", f"Paid enrichment allowed: {paid_reason}")
@@ -1910,27 +2518,16 @@ async def enrich_company_tiered(
         apollo = ApolloClient()
 
         run_apollo_company = force_paid_refresh or not _cache_entry_is_fresh(cache, "apollo_company", _PAID_CACHE_TTL_HOURS)
-        run_apollo_contacts = force_paid_refresh or not _cache_entry_is_fresh(cache, "apollo_contacts", _PAID_CACHE_TTL_HOURS)
 
         apollo_company_result = None
-        apollo_contacts_result = None
-        if run_apollo_company or run_apollo_contacts:
+        if run_apollo_company:
             try:
-                apollo_company_result, apollo_contacts_result = await asyncio.wait_for(
-                    asyncio.gather(
-                        apollo.enrich_company(company.domain) if run_apollo_company else asyncio.sleep(0, result=None),
-                        apollo.search_people(
-                            domain=company.domain,
-                            limit=10,
-                            seniorities=["c_suite", "vp", "director"],
-                        ) if run_apollo_contacts else asyncio.sleep(0, result=[]),
-                        return_exceptions=True,
-                    ),
+                apollo_company_result = await asyncio.wait_for(
+                    apollo.enrich_company(company.domain),
                     timeout=_PAID_ENRICHMENT_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
                 apollo_company_result = None
-                apollo_contacts_result = []
                 logger.warning(f"Apollo enrichment timed out for {company.name} ({company.domain})")
                 _pipeline_stamp(cache, "paid_enrichment", "timeout", "Apollo enrichment timed out; continuing")
 
@@ -1941,27 +2538,12 @@ async def enrich_company_tiered(
             cache["apollo_company"] = {"data": apollo_data, "fetched_at": datetime.utcnow().isoformat()}
             _apply_apollo(company, apollo_data)
             logger.info(f"Apollo enriched company: {company.domain}")
-
-        if isinstance(apollo_contacts_result, Exception):
-            logger.error(f"Apollo contact search failed for {company.domain}: {apollo_contacts_result}")
-        elif isinstance(apollo_contacts_result, list):
-            cache["apollo_contacts"] = {"data": apollo_contacts_result, "fetched_at": datetime.utcnow().isoformat()}
-            if apollo_contacts_result:
-                try:
-                    created = await _create_contacts(company, apollo_contacts_result, session)
-                    logger.info(f"Found {len(apollo_contacts_result)} contacts, created {created} for {company.domain}")
-                except Exception as e:
-                    logger.error(f"Apollo contact persistence failed for {company.domain}: {e}")
-                    if session.in_transaction():
-                        try:
-                            await session.rollback()
-                        except MissingGreenlet as rollback_error:
-                            logger.warning(f"Skipped rollback due to async context mismatch: {rollback_error}")
-                        except Exception as rollback_error:
-                            logger.warning(f"Rollback failed after Apollo contact error: {rollback_error}")
-                    company = await session.get(Company, company_id)
-                    if not company:
-                        return None
+        cache["apollo_contacts"] = {
+            "data": [],
+            "fetched_at": datetime.utcnow().isoformat(),
+            "paused": True,
+            "message": "Apollo contact discovery is temporarily paused during company enrichment.",
+        }
 
         # ── Tier 3: Hunter.io (paid — fallback only) ───────────────────────
         contact_coverage = await _contact_coverage_snapshot(company.id, session)
@@ -1973,35 +2555,26 @@ async def enrich_company_tiered(
             from app.clients.hunter import HunterClient
             hunter = HunterClient()
 
-            run_hunter_contacts = force_paid_refresh or not _cache_entry_is_fresh(cache, "hunter_contacts", _PAID_CACHE_TTL_HOURS)
             run_hunter_company = force_paid_refresh or not _cache_entry_is_fresh(cache, "hunter_company", _PAID_CACHE_TTL_HOURS)
 
-            hunter_contacts_result = None
             hunter_company_result = None
-            if run_hunter_contacts or run_hunter_company:
+            if run_hunter_company:
                 try:
-                    hunter_contacts_result, hunter_company_result = await asyncio.wait_for(
-                        asyncio.gather(
-                            hunter.domain_search(company.domain) if run_hunter_contacts else asyncio.sleep(0, result=None),
-                            hunter.company_enrichment(company.domain) if run_hunter_company else asyncio.sleep(0, result=None),
-                            return_exceptions=True,
-                        ),
+                    hunter_company_result = await asyncio.wait_for(
+                        hunter.company_enrichment(company.domain),
                         timeout=_PAID_ENRICHMENT_TIMEOUT_SECONDS,
                     )
                 except asyncio.TimeoutError:
-                    hunter_contacts_result = None
                     hunter_company_result = None
                     logger.warning(f"Hunter enrichment timed out for {company.name} ({company.domain})")
                     _pipeline_stamp(cache, "paid_enrichment", "timeout", "Hunter enrichment timed out; continuing")
 
-            if isinstance(hunter_contacts_result, Exception):
-                logger.error(f"Hunter domain search failed for {company.domain}: {hunter_contacts_result}")
-            elif isinstance(hunter_contacts_result, dict):
-                cache["hunter_contacts"] = {"data": hunter_contacts_result, "fetched_at": datetime.utcnow().isoformat()}
-                hunter_contacts = hunter_contacts_result.get("contacts", [])
-                if hunter_contacts:
-                    created = await _create_contacts(company, hunter_contacts, session)
-                    logger.info(f"Hunter found {len(hunter_contacts)} contacts, created {created} new for {company.domain}")
+            cache["hunter_contacts"] = {
+                "data": {"contacts": []},
+                "fetched_at": datetime.utcnow().isoformat(),
+                "paused": True,
+                "message": "Hunter contact discovery is temporarily paused during company enrichment.",
+            }
 
             if isinstance(hunter_company_result, Exception):
                 logger.error(f"Hunter company enrichment failed for {company.domain}: {hunter_company_result}")
@@ -2012,50 +2585,78 @@ async def enrich_company_tiered(
     else:
         _pipeline_stamp(cache, "paid_enrichment", "skipped", paid_reason)
 
+    # Email verification is capped to a few top contacts to add confidence
+    # signals without turning every batch into an expensive verification run.
+    # ── Email verification for top contacts (Hunter) ──────────────────────
+    await _verify_top_contact_emails(company.id, session, cache)
+
+    research_quality = _research_quality_snapshot(
+        company=company,
+        cache=cache,
+        scraped=scraped,
+        intent=intent,
+        domain_available=domain_available,
+        apollo_data=apollo_data if isinstance(apollo_data, dict) else None,
+    )
+    cache["research_quality"] = {
+        "data": research_quality,
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+
     # ── AI Tier: Claude summarization ───────────────────────────────────────
     from app.clients.claude_enrichment import summarize_company
     _pipeline_stamp(cache, "ai_summary", "started", "Generating AI summary")
-    try:
-        summary = await asyncio.wait_for(
-            summarize_company(
-                scraped_data=scraped,
-                apollo_data=apollo_data,
-                search_results=intent,
-                company_name=company.name,
-                domain=company.domain,
-                upload_context=summary_context,
-            ),
-            timeout=_AI_SUMMARY_TIMEOUT_SECONDS,
-        )
-        summary_source = summary.get("_source", "unknown")
-        is_fallback = summary_source == "fallback"
+    if not research_quality["allow_ai_summary"]:
+        cache["ai_summary"] = {
+            "data": {
+                "_source": "skipped_thin_research",
+                "confidence": 0,
+                "description": company.description or "",
+                "industry": company.industry or "Unknown",
+                "research_quality": research_quality,
+                "note": research_quality["summary_note"],
+            },
+            "fetched_at": datetime.utcnow().isoformat(),
+        }
+        _pipeline_stamp(cache, "ai_summary", "fallback", str(research_quality["summary_note"]))
+    else:
+        try:
+            summary = await asyncio.wait_for(
+                summarize_company(
+                    scraped_data=scraped,
+                    apollo_data=apollo_data,
+                    search_results=intent,
+                    company_name=company.name,
+                    domain=company.domain,
+                    upload_context=summary_context,
+                ),
+                timeout=_AI_SUMMARY_TIMEOUT_SECONDS,
+            )
+            if summary is None:
+                logger.warning(f"AI summary unavailable for {company.name}")
+                _pipeline_stamp(cache, "ai_summary", "unavailable", "AI summary returned None — no API key or analysis failed")
+            else:
+                summary_source = summary.get("_source", "unknown")
+                summary["research_quality"] = research_quality
 
-        if not is_fallback and summary.get("description"):
-            company.description = summary["description"]
-        if not is_fallback and summary.get("industry") and summary["industry"] != "Unknown":
-            company.industry = summary["industry"]
-        # Apply tech stack if discovered by AI
-        if not is_fallback and summary.get("tech_stack_signals") and not company.tech_stack:
-            company.tech_stack = summary["tech_stack_signals"]
+                if summary.get("description"):
+                    company.description = summary["description"]
+                if summary.get("industry") and summary["industry"] != "Unknown":
+                    company.industry = summary["industry"]
+                # Apply tech stack if discovered by AI
+                if summary.get("tech_stack_signals") and not company.tech_stack:
+                    company.tech_stack = summary["tech_stack_signals"]
 
-        prev_ai_entry = cache.get("ai_summary") if isinstance(cache.get("ai_summary"), dict) else None
-        prev_ai_data = prev_ai_entry.get("data") if isinstance(prev_ai_entry, dict) else None
-        prev_ai_source = prev_ai_data.get("_source") if isinstance(prev_ai_data, dict) else None
+                cache["ai_summary"] = {"data": summary, "fetched_at": datetime.utcnow().isoformat()}
 
-        # Keep last good Claude payload when a fallback response is generated.
-        if is_fallback and prev_ai_source == "claude":
-            logger.warning(f"Keeping previous Claude AI summary for {company.name}; new summary was fallback")
-        else:
-            cache["ai_summary"] = {"data": summary, "fetched_at": datetime.utcnow().isoformat()}
-
-        logger.info(f"AI summary generated for {company.name} from source={summary_source} with {len(summary)} fields")
-        _pipeline_stamp(cache, "ai_summary", "completed", f"AI summary source={summary_source}")
-    except asyncio.TimeoutError:
-        logger.error(f"Claude summarization timed out for {company.name}")
-        _pipeline_stamp(cache, "ai_summary", "timeout", "AI summary timed out")
-    except Exception as e:
-        logger.error(f"Claude summarization failed for {company.name}: {e}")
-        _pipeline_stamp(cache, "ai_summary", "failed", str(e))
+                logger.info(f"AI summary generated for {company.name} from source={summary_source} with {len(summary)} fields")
+                _pipeline_stamp(cache, "ai_summary", "completed", f"AI summary source={summary_source}")
+        except asyncio.TimeoutError:
+            logger.error(f"Claude summarization timed out for {company.name}")
+            _pipeline_stamp(cache, "ai_summary", "timeout", "AI summary timed out")
+        except Exception as e:
+            logger.error(f"Claude summarization failed for {company.name}: {e}")
+            _pipeline_stamp(cache, "ai_summary", "failed", str(e))
 
     # ── Committee coverage & prospecting priorities ─────────────────────────
     _pipeline_stamp(cache, "committee_analysis", "started", "Building committee coverage and priorities")
@@ -2091,6 +2692,7 @@ async def enrich_company_tiered(
     company.updated_at = datetime.utcnow()
 
     # Force-write JSONB cache in case ORM dirty tracking misses nested JSON changes.
+    # Nested dict/list edits do not always mark the ORM field dirty automatically.
     await session.execute(
         sa_update(Company)
         .where(Company.id == company.id)
@@ -2218,6 +2820,8 @@ async def process_batch(batch_id: UUID, session: AsyncSession) -> SourcingBatch 
     total_companies = len(companies)
     for index, company in enumerate(companies, start=1):
         try:
+            # Give each company a fresh session so one failure or stale ORM state
+            # does not poison the rest of the batch.
             logger.info(f"Batch {batch_id}: starting company {index}/{total_companies} -> {company.name} ({company.domain})")
             async with AsyncSessionLocal() as company_session:
                 await enrich_company_tiered(company.id, company_session)
@@ -2266,6 +2870,8 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
     created = 0
     for c in contacts_data:
         try:
+            if not is_priority_stakeholder_candidate(c):
+                continue
             company_warm_paths = (
                 company.prospecting_profile.get("warm_paths")
                 if isinstance(company.prospecting_profile, dict)
@@ -2281,7 +2887,8 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
             if not first and not last:
                 continue
 
-            # Skip duplicate by email (use .first() to handle multiple rows safely)
+            # Email is the strongest dedupe key when present because it remains
+            # stable across title changes and repeated imports.
             if email:
                 existing = await session.execute(
                     select(Contact).where(Contact.email == email).limit(1)
@@ -2289,7 +2896,8 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
                 if existing.scalars().first():
                     continue
 
-            # Skip duplicate by name + company
+            # Fall back to name + company when the provider has not given us an
+            # email address yet.
             if first and last:
                 existing = await session.execute(
                     select(Contact).where(
@@ -2356,3 +2964,76 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
     if created:
         await session.commit()
     return created
+
+
+_SENIORITY_RANK = {
+    "c_suite": 1, "executive": 1, "vp": 2, "director": 3,
+    "senior": 4, "manager": 5, "entry": 6,
+}
+_MAX_VERIFY_EMAILS = 5
+
+
+async def _verify_top_contact_emails(
+    company_id: UUID, session: AsyncSession, cache: dict[str, Any]
+) -> None:
+    """
+    Verify email deliverability for the top contacts (by seniority) at a company
+    using Hunter.io's email-verifier. Updates contact.email_verified and
+    enrichment_data.confidence. Capped at 5 contacts to control API costs.
+    """
+    from app.clients.hunter import HunterClient
+    hunter = HunterClient()
+    if hunter.mock:
+        return  # No API key — skip verification
+
+    result = await session.execute(
+        select(Contact)
+        .where(Contact.company_id == company_id)
+        .where(Contact.email.isnot(None))
+        .where(Contact.email_verified == False)
+    )
+    contacts = list(result.scalars().all())
+    if not contacts:
+        return
+
+    # Sort by seniority (C-suite first), then take top N
+    contacts.sort(key=lambda c: _SENIORITY_RANK.get(c.seniority or "", 6))
+    to_verify = contacts[:_MAX_VERIFY_EMAILS]
+
+    verified_count = 0
+    for contact in to_verify:
+        try:
+            verification = await hunter.verify_email(contact.email)
+            if not verification:
+                continue
+
+            is_deliverable = verification.get("result") == "deliverable"
+            score = verification.get("score", 0)
+            contact.email_verified = is_deliverable
+
+            # Store verification details in enrichment_data
+            enrich = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+            enrich["email_verification"] = verification
+            enrich["confidence"] = score
+            contact.enrichment_data = enrich
+
+            if is_deliverable:
+                verified_count += 1
+        except Exception as e:
+            logger.warning(f"Email verification failed for {contact.email}: {e}")
+            continue
+
+    if to_verify:
+        await session.commit()
+        cache["email_verification"] = {
+            "data": {
+                "verified": verified_count,
+                "checked": len(to_verify),
+                "total_contacts_with_email": len(contacts),
+            },
+            "fetched_at": datetime.utcnow().isoformat(),
+        }
+        logger.info(
+            f"Email verification: {verified_count}/{len(to_verify)} deliverable "
+            f"for company {company_id}"
+        )

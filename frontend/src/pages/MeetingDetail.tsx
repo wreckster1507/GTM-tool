@@ -6,9 +6,10 @@ import {
   Building2, TrendingUp, Lightbulb, Search, PlayCircle,
   Swords, MessageSquareWarning, ArrowRight, Briefcase, Zap,
   Globe, Target, Mail, UserPlus, FileText, Crosshair, Trash2,
+  Link2, Link2Off, Plus, X, Save,
 } from "lucide-react";
-import { companiesApi, contactsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
-import type { Company, Contact, Meeting, Signal } from "../types";
+import { companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
+import type { Company, Contact, Deal, Meeting, Signal } from "../types";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -115,7 +116,22 @@ interface AttendeeIntelligence {
   committee_coverage?: CommitteeCoverage;
 }
 
+interface CompanySnapshot {
+  icp_score?: number | null;
+  icp_tier?: string | null;
+  industry?: string | null;
+  employee_count?: number | null;
+  funding_stage?: string | null;
+  pain_points?: string[];
+  talking_points?: string[];
+  beacon_angle?: string | null;
+  conversation_starter?: string | null;
+  why_now_summary?: string | null;
+  recommended_approach?: string | null;
+}
+
 interface WebResearch {
+  company_snapshot?: CompanySnapshot | null;
   company_background?: CompanyBackground | null;
   website_analysis?: Record<string, string> | null;
   recent_news?: Array<{ title: string; url: string; snippet: string }>;
@@ -237,11 +253,26 @@ export default function MeetingDetail() {
 
   const [loading, setLoading]         = useState(true);
   const [running, setRunning]         = useState(false);
+  const [researchingMore, setResearchingMore] = useState(false);
   const [generatingStory, setGeneratingStory] = useState(false);
   const [scoring, setScoring]         = useState(false);
   const [rawNotes, setRawNotes]       = useState("");
   const [error, setError]             = useState("");
   const [statusMsg, setStatusMsg]     = useState("");
+  const [researchGaps, setResearchGaps] = useState<Array<{ key: string; label: string }>>([]);
+
+  // ── Manual linking state ────────────────────────────────────────────────────
+  const [showLinkPanel, setShowLinkPanel]   = useState(false);
+  const [allCompanies, setAllCompanies]     = useState<Company[]>([]);
+  const [allDeals, setAllDeals]             = useState<Deal[]>([]);
+  const [allContacts, setAllContacts]       = useState<Contact[]>([]);
+  const [linkCompanyId, setLinkCompanyId]   = useState<string>("");
+  const [linkDealId, setLinkDealId]         = useState<string>("");
+  const [linkSaving, setLinkSaving]         = useState(false);
+  // attendee editor
+  const [editingAttendees, setEditingAttendees] = useState(false);
+  const [attendeeList, setAttendeeList]         = useState<Array<{ contact_id: string; name: string; title?: string; email?: string; role?: string }>>([]);
+  const [attendeeSaving, setAttendeeSaving]     = useState(false);
 
   // ── Load all existing DB data on mount ──────────────────────────────────────
   const loadAll = async () => {
@@ -262,6 +293,8 @@ export default function MeetingDetail() {
         setContacts(cts);
         setSignals(sig.slice(0, 8));
       }
+      // Load research gaps in background — doesn't block page render
+      meetingsApi.getResearchGaps(m.id).then(g => setResearchGaps(g.gaps)).catch(() => {});
     } finally {
       setLoading(false);
     }
@@ -351,6 +384,26 @@ export default function MeetingDetail() {
     }
   };
 
+  // ── Research More: fill gaps in enrichment_cache ────────────────────────────
+  const handleResearchMore = async () => {
+    if (!id) return;
+    setResearchingMore(true);
+    setError("");
+    setStatusMsg(`Researching ${researchGaps.length} gaps…`);
+    try {
+      const result = await meetingsApi.researchMore(id);
+      await loadAll();
+      const filledCount = result.filled?.length ?? 0;
+      setStatusMsg(filledCount > 0 ? `Filled ${filledCount} gap${filledCount !== 1 ? "s" : ""} ✓` : "Nothing new found");
+      setTimeout(() => setStatusMsg(""), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Research more failed");
+      setStatusMsg("");
+    } finally {
+      setResearchingMore(false);
+    }
+  };
+
   // ── Generate GPT-4o demo strategy (reads cached research_data) ──────────────
   const handleGenerateDemoStrategy = async () => {
     if (!id) return;
@@ -381,10 +434,121 @@ export default function MeetingDetail() {
     }
   };
 
+  // ── Open link panel: load companies + deals once ────────────────────────────
+  const handleOpenLinkPanel = async () => {
+    setLinkCompanyId(meeting?.company_id ?? "");
+    setLinkDealId(meeting?.deal_id ?? "");
+    if (allCompanies.length === 0) {
+      const [cs, ds] = await Promise.all([companiesApi.list(), dealsApi.list(0, 300)]);
+      setAllCompanies(cs);
+      setAllDeals(ds);
+    }
+    setShowLinkPanel(true);
+  };
+
+  const handleSaveLink = async () => {
+    if (!id) return;
+    setLinkSaving(true);
+    try {
+      const payload: Record<string, string | null> = {};
+      if (linkCompanyId !== (meeting?.company_id ?? "")) payload.company_id = linkCompanyId || null;
+      if (linkDealId !== (meeting?.deal_id ?? "")) payload.deal_id = linkDealId || null;
+      if (Object.keys(payload).length > 0) {
+        await meetingsApi.update(id, payload as any);
+        await loadAll();
+      }
+      setShowLinkPanel(false);
+    } finally {
+      setLinkSaving(false);
+    }
+  };
+
+  // ── Open attendee editor: load contacts for linked company ───────────────────
+  const handleOpenAttendeeEditor = async () => {
+    const existing = Array.isArray(meeting?.attendees) ? meeting!.attendees as any[] : [];
+    setAttendeeList(existing.map((a: any) => ({
+      contact_id: a.contact_id ?? "",
+      name: a.name ?? "",
+      title: a.title ?? "",
+      email: a.email ?? "",
+      role: a.role ?? "attendee",
+    })));
+    if (meeting?.company_id && allContacts.length === 0) {
+      const cs = await contactsApi.list(0, 100, meeting.company_id);
+      setAllContacts(cs);
+    }
+    setEditingAttendees(true);
+  };
+
+  const handleAddAttendee = (contact: Contact) => {
+    if (attendeeList.some(a => a.contact_id === contact.id)) return;
+    setAttendeeList(prev => [...prev, {
+      contact_id: contact.id,
+      name: `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim(),
+      title: contact.title ?? "",
+      email: contact.email ?? "",
+      role: "attendee",
+    }]);
+  };
+
+  const handleRemoveAttendee = (contactId: string) => {
+    setAttendeeList(prev => prev.filter(a => a.contact_id !== contactId));
+  };
+
+  const handleSaveAttendees = async () => {
+    if (!id) return;
+    setAttendeeSaving(true);
+    try {
+      await meetingsApi.update(id, { attendees: attendeeList } as any);
+      await loadAll();
+      setEditingAttendees(false);
+    } finally {
+      setAttendeeSaving(false);
+    }
+  };
+
   if (loading) return <div className="crm-panel p-14 text-center crm-muted">Loading meeting workspace...</div>;
   if (!meeting) return <div className="crm-panel p-14 text-center crm-muted">Meeting not found.</div>;
 
   const techStack = company?.tech_stack as Record<string, string> | null;
+
+  // ── Parse enrichment_cache directly — shown immediately, no intel run needed ──
+  const ec = (company?.enrichment_cache ?? {}) as Record<string, any>;
+  const _unwrapEc = (key: string) => {
+    const entry = ec[key];
+    if (entry && typeof entry === "object" && "data" in entry) return entry.data;
+    return entry ?? null;
+  };
+  // icp_analysis cache shape: { data: { conversation_starter, beacon_angle, ... }, analyzed_at, ... }
+  // _unwrapEc already pulls .data out, so cachedIcp IS the ICP fields object directly.
+  const icpData = _unwrapEc("icp_analysis") as Record<string, any> | null;
+  const cachedAiSummary = _unwrapEc("ai_summary") as Record<string, any> | null;
+  const cachedIntent = _unwrapEc("intent_signals") as Record<string, any> | null;
+  const cachedHunterContacts = _unwrapEc("hunter_contacts") as any;
+  const cachedCompetitive = ec["competitive_landscape_v2"] as any[] | null;
+  const cachedHunterCompany = _unwrapEc("hunter_company") as Record<string, any> | null;
+  const cachedGoogleNews = _unwrapEc("google_news") as Array<{ title: string; url: string; published?: string; source?: string }> | null;
+
+  const icpPainPoints: string[] = icpData?.pain_points ?? cachedAiSummary?.pain_points ?? [];
+  const icpTalkingPoints: string[] = cachedAiSummary?.talking_points ?? [];
+  const icpBeaconAngle: string | null = icpData?.beacon_angle ?? null;
+  const icpConversationStarter: string | null = icpData?.conversation_starter ?? null;
+  const icpWhyNow: string | null = icpData?.why_now ?? null;
+  const icpRecommendedApproach: string | null = icpData?.recommended_outreach_strategy ?? null;
+  const icpHiringSignals: string[] = (cachedIntent?.ps_hiring ?? [])
+    .filter((s: any) => typeof s === "object" && s?.title)
+    .map((s: any) => s.title as string)
+    .slice(0, 8);
+  const icpFunding: string | null = (cachedIntent?.funding ?? [])[0]?.snippet ?? null;
+  const icpCompetitors: Array<{ name: string; summary?: string }> = (cachedCompetitive ?? [])
+    .filter((c: any) => typeof c === "object")
+    .map((c: any) => ({ name: c.name ?? c.competitor ?? "", summary: c.summary ?? "" }));
+  // hunter_contacts.data may be a flat array OR {contacts:[]} shape — handle both
+  const icpHunterContacts: Array<{ first_name?: string; last_name?: string; title?: string; email?: string; linkedin_url?: string; seniority?: string; department?: string; phone_number?: string }> =
+    Array.isArray(cachedHunterContacts) ? cachedHunterContacts.filter((c: any) => typeof c === "object") :
+    (Array.isArray(cachedHunterContacts?.contacts) ? cachedHunterContacts.contacts.filter((c: any) => typeof c === "object") : []);
+
+  const hasIcpData = !!(icpBeaconAngle || icpConversationStarter || icpPainPoints.length || icpTalkingPoints.length);
 
   return (
     <div className="meeting-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -393,7 +557,7 @@ export default function MeetingDetail() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           {meeting.deal_id ? (
-            <button className="crm-button soft" onClick={() => navigate(`/deals/${meeting.deal_id}`)}>
+            <button className="crm-button soft" onClick={() => navigate(`/pipeline?deal=${meeting.deal_id}`)}>
               <ArrowLeft size={14} /> Back to Deal
             </button>
           ) : (
@@ -409,7 +573,7 @@ export default function MeetingDetail() {
             onClick={async () => {
               if (!window.confirm(`Delete meeting "${meeting.title}"? This cannot be undone.`)) return;
               await meetingsApi.delete(id!);
-              navigate(meeting.deal_id ? `/deals/${meeting.deal_id}` : "/meetings");
+              navigate(meeting.deal_id ? `/pipeline?deal=${meeting.deal_id}` : "/meetings");
             }}
           >
             <Trash2 size={14} />
@@ -426,7 +590,7 @@ export default function MeetingDetail() {
             <p className="text-[14px] text-[#647a91] mt-2 flex items-center gap-2 flex-wrap">
               {company ? (
                 <>
-                  <Link to={`/companies/${company.id}`} className="font-semibold text-[#24364b] hover:text-[#ff6b35]">
+                  <Link to={`/account-sourcing/${company.id}`} className="font-semibold text-[#24364b] hover:text-[#ff6b35]">
                     {company.name}
                   </Link>
                   ·
@@ -435,18 +599,156 @@ export default function MeetingDetail() {
                     {company.domain} <ExternalLink size={12} />
                   </a>
                 </>
-              ) : "No linked company"}
+              ) : <span className="text-[#f59e0b] font-semibold">No company linked</span>}
               {meeting.scheduled_at && <span>· {formatDate(meeting.scheduled_at)}</span>}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {statusMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{statusMsg}</span>}
+            <button className="crm-button soft" onClick={handleOpenAttendeeEditor}>
+              <Users size={14} /> Manage Attendees
+            </button>
+            <button className="crm-button soft" onClick={handleOpenLinkPanel}>
+              <Link2 size={14} /> {company ? "Re-link" : "Link Company / Deal"}
+            </button>
             <button className="crm-button soft" onClick={handleRunIntelligence} disabled={running}>
               {running ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
               {running ? "Searching…" : intelWasRun ? "Re-run Web Intel" : "Run Web Intel"}
             </button>
           </div>
         </div>
+
+        {/* ── Link Company / Deal panel ── */}
+        {showLinkPanel && (
+          <div style={{ marginTop: 20, padding: "16px 18px", borderRadius: 14, border: "1px solid #d5e5ff", background: "#f3f8ff" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#24364b", display: "flex", alignItems: "center", gap: 6 }}>
+                <Link2 size={14} style={{ color: "#1f6feb" }} /> Link Company &amp; Deal
+              </span>
+              <button type="button" onClick={() => setShowLinkPanel(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a8ea4" }}>
+                <X size={14} />
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#546679", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5 }}>Company</label>
+                <select
+                  value={linkCompanyId}
+                  onChange={(e) => setLinkCompanyId(e.target.value)}
+                  style={{ width: "100%", height: 36, borderRadius: 9, border: "1px solid #c8d8ee", padding: "0 10px", fontSize: 13, color: "#24364b", background: "#fff" }}
+                >
+                  <option value="">— No company —</option>
+                  {allCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#546679", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5 }}>Deal</label>
+                <select
+                  value={linkDealId}
+                  onChange={(e) => setLinkDealId(e.target.value)}
+                  style={{ width: "100%", height: 36, borderRadius: 9, border: "1px solid #c8d8ee", padding: "0 10px", fontSize: 13, color: "#24364b", background: "#fff" }}
+                >
+                  <option value="">— No deal —</option>
+                  {allDeals.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                disabled={linkSaving}
+                onClick={handleSaveLink}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "#1f6feb", border: "1px solid #1f6feb", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                <Save size={13} /> {linkSaving ? "Saving…" : "Save"}
+              </button>
+              <button type="button" onClick={() => setShowLinkPanel(false)}
+                style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid #d9e1ec", background: "#fff", color: "#546679", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                Cancel
+              </button>
+              {(meeting.company_id || meeting.deal_id) && (
+                <button type="button"
+                  onClick={async () => {
+                    setLinkCompanyId("");
+                    setLinkDealId("");
+                    await meetingsApi.update(id!, { company_id: null, deal_id: null } as any);
+                    await loadAll();
+                    setShowLinkPanel(false);
+                  }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "1px solid #fcc", background: "#fff5f5", color: "#c0392b", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  <Link2Off size={12} /> Unlink all
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Attendee editor panel ── */}
+        {editingAttendees && (
+          <div style={{ marginTop: 20, padding: "16px 18px", borderRadius: 14, border: "1px solid #d3f0e2", background: "#f0fdf4" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#1a3d2b", display: "flex", alignItems: "center", gap: 6 }}>
+                <Users size={14} style={{ color: "#16a34a" }} /> Meeting Attendees
+              </span>
+              <button type="button" onClick={() => setEditingAttendees(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a8ea4" }}>
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Current attendee list */}
+            {attendeeList.length > 0 ? (
+              <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
+                {attendeeList.map((a) => (
+                  <div key={a.contact_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderRadius: 10, background: "#fff", border: "1px solid #c3e6cb" }}>
+                    <div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#1a3d2b" }}>{a.name}</span>
+                      {a.title && <span style={{ fontSize: 12, color: "#4a7a5a", marginLeft: 8 }}>{a.title}</span>}
+                      {a.email && <span style={{ fontSize: 11, color: "#7aad8a", marginLeft: 8 }}>{a.email}</span>}
+                    </div>
+                    <button type="button" onClick={() => handleRemoveAttendee(a.contact_id)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#e05050", padding: 4 }}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ fontSize: 13, color: "#4a7a5a", marginBottom: 12 }}>No attendees added yet.</p>
+            )}
+
+            {/* Add from linked company's contacts */}
+            {allContacts.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#4a7a5a", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                  Add from {company?.name ?? "linked company"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {allContacts
+                    .filter(c => !attendeeList.some(a => a.contact_id === c.id))
+                    .map(c => (
+                      <button key={c.id} type="button" onClick={() => handleAddAttendee(c)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, border: "1px solid #a8d5b5", background: "#fff", color: "#1a5c34", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                        <Plus size={11} />
+                        {c.first_name} {c.last_name}
+                        {c.title && <span style={{ color: "#7aad8a", fontWeight: 400 }}>· {c.title}</span>}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" disabled={attendeeSaving} onClick={handleSaveAttendees}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "#16a34a", border: "1px solid #16a34a", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                <Save size={13} /> {attendeeSaving ? "Saving…" : "Save Attendees"}
+              </button>
+              <button type="button" onClick={() => setEditingAttendees(false)}
+                style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid #c3e6cb", background: "#fff", color: "#4a7a5a", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid gap-3 md:grid-cols-4" style={{ gap: 12 }}>
@@ -471,6 +773,333 @@ export default function MeetingDetail() {
           );
         })}
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 0a — Pre-meeting prep (company facts + ICP research, always shown)
+      ══════════════════════════════════════════════════════════════════════ */}
+      {company && (
+        <Section title="Meeting Prep" icon={<Briefcase size={15} className="text-[#1f6feb]" />} defaultOpen={true}>
+          <div style={{ display: "grid", gap: 20 }}>
+
+            {/* ── Company snapshot ── */}
+            <div style={{ display: "grid", gap: 12 }}>
+              <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3" }}>Company</p>
+
+              {/* Facts row */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {[
+                  { label: "HQ", value: company.headquarters },
+                  { label: "Region", value: company.region },
+                  { label: "Industry", value: company.industry },
+                  { label: "Vertical", value: company.vertical },
+                  { label: "Employees", value: company.employee_count?.toLocaleString() },
+                  { label: "Funding", value: company.funding_stage },
+                  { label: "ARR", value: company.arr_estimate ? `$${(company.arr_estimate / 1_000_000).toFixed(1)}M` : null },
+                  { label: "ICP", value: company.icp_score != null ? `${company.icp_score} · ${company.icp_tier ?? ""}` : null },
+                  { label: "Ownership", value: company.ownership_stage },
+                ].filter(f => f.value).map(f => (
+                  <div key={f.label} style={{ padding: "6px 12px", borderRadius: 10, background: "#f4f7fb", border: "1px solid #e3eaf3" }}>
+                    <span style={{ fontSize: 10, color: "#8fa3ba", fontWeight: 700, textTransform: "uppercase", marginRight: 5 }}>{f.label}</span>
+                    <span style={{ fontSize: 12, color: "#2b3f55", fontWeight: 600 }}>{f.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Description */}
+              {company.description && (
+                <p style={{ fontSize: 13, color: "#3d5268", lineHeight: 1.7, padding: "12px 16px", background: "#f8fafc", borderRadius: 12, border: "1px solid #e8edf5", margin: 0 }}>
+                  {company.description}
+                </p>
+              )}
+
+              {/* Tech stack */}
+              {techStack && Object.keys(techStack).length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {Object.entries(techStack).map(([cat, tool]) => (
+                    <span key={cat} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 999, background: "#eef2ff", border: "1px solid #c7d2fe", color: "#3730a3", fontWeight: 600 }}>
+                      {cat}: {String(tool)}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Investors */}
+              {(company.pe_investors || company.vc_investors || company.strategic_investors) && (
+                <div style={{ fontSize: 12, color: "#546679", padding: "10px 14px", background: "#f8fafc", borderRadius: 10, border: "1px solid #e3eaf3" }}>
+                  {company.pe_investors && <p style={{ margin: "0 0 2px" }}><span style={{ fontWeight: 700, color: "#2b3f55" }}>PE:</span> {company.pe_investors}</p>}
+                  {company.vc_investors && <p style={{ margin: "0 0 2px" }}><span style={{ fontWeight: 700, color: "#2b3f55" }}>VC:</span> {company.vc_investors}</p>}
+                  {company.strategic_investors && <p style={{ margin: 0 }}><span style={{ fontWeight: 700, color: "#2b3f55" }}>Strategic:</span> {company.strategic_investors}</p>}
+                </div>
+              )}
+            </div>
+
+            {/* ── Divider ── */}
+            {(company.beacon_angle || company.why_now || company.account_thesis || hasIcpData) && (
+              <div style={{ borderTop: "1px solid #e8edf5" }} />
+            )}
+
+            {/* ── Sales prep from ICP research (direct company fields first) ── */}
+            {(company.beacon_angle || company.why_now || company.account_thesis || icpConversationStarter) && (
+              <div style={{ display: "grid", gap: 12 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Sales Prep</p>
+
+                {/* Open with + Beacon angle */}
+                <div style={{ display: "grid", gridTemplateColumns: icpConversationStarter && (company.beacon_angle || company.why_now) ? "1fr 1fr" : "1fr", gap: 12 }}>
+                  {icpConversationStarter && (
+                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #f0f7ff, #e8f2ff)", border: "1px solid #c7dcf8" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#1d4ed8", marginBottom: 6 }}>Open With This</p>
+                      <p style={{ fontSize: 13, color: "#1e3a5f", lineHeight: 1.65, fontStyle: "italic", margin: 0 }}>"{icpConversationStarter}"</p>
+                    </div>
+                  )}
+                  {(company.beacon_angle || company.why_now) && (
+                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #fff8f4, #fff3ec)", border: "1px solid #ffd5be" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#c2410c", marginBottom: 6 }}>Beacon Angle</p>
+                      <p style={{ fontSize: 13, color: "#431407", lineHeight: 1.65, margin: 0 }}>{company.beacon_angle || icpBeaconAngle}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Why now + Account thesis */}
+                {(company.why_now || company.account_thesis) && (
+                  <div style={{ display: "grid", gridTemplateColumns: company.why_now && company.account_thesis ? "1fr 1fr" : "1fr", gap: 12 }}>
+                    {company.why_now && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #fffbeb, #fef9e7)", border: "1px solid #fde68a" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#92400e", marginBottom: 6 }}>Why Now</p>
+                        <p style={{ fontSize: 13, color: "#78350f", lineHeight: 1.65, margin: 0 }}>{company.why_now}</p>
+                      </div>
+                    )}
+                    {company.account_thesis && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #f5f3ff, #ede9fe)", border: "1px solid #ddd6fe" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#6d28d9", marginBottom: 6 }}>Account Thesis</p>
+                        <p style={{ fontSize: 13, color: "#4c1d95", lineHeight: 1.65, margin: 0 }}>{company.account_thesis}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Pain points */}
+                {icpPainPoints.length > 0 && (
+                  <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fafafa", border: "1px solid #e8edf5" }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#b91c1c", marginBottom: 8 }}>Pain Points to Address</p>
+                    <div style={{ display: "grid", gap: 5 }}>
+                      {icpPainPoints.map((p, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <span style={{ color: "#ef4444", fontWeight: 700, flexShrink: 0, marginTop: 1 }}>·</span>
+                          <p style={{ fontSize: 13, color: "#374151", lineHeight: 1.6, margin: 0 }}>{p}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Talking points */}
+                {icpTalkingPoints.length > 0 && (
+                  <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fafafa", border: "1px solid #e8edf5" }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#15803d", marginBottom: 8 }}>Talking Points</p>
+                    <div style={{ display: "grid", gap: 5 }}>
+                      {icpTalkingPoints.map((t, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <span style={{ color: "#22c55e", fontWeight: 700, flexShrink: 0, marginTop: 1 }}>✓</span>
+                          <p style={{ fontSize: 13, color: "#374151", lineHeight: 1.6, margin: 0 }}>{t}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Intent signals row ── */}
+            {(icpHiringSignals.length > 0 || icpFunding || icpCompetitors.length > 0) && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 12 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Signals</p>
+
+                  <div style={{ display: "grid", gridTemplateColumns: icpCompetitors.length > 0 && icpHiringSignals.length > 0 ? "1fr 1fr" : "1fr", gap: 12 }}>
+                    {/* Hiring */}
+                    {icpHiringSignals.length > 0 && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fffbeb", border: "1px solid #fde68a" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#92400e", marginBottom: 8 }}>
+                          Hiring {icpHiringSignals.length} roles — buying signal
+                        </p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {icpHiringSignals.map((r, i) => (
+                            <span key={i} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 999, background: "#fff", border: "1px solid #fde68a", color: "#92400e", fontWeight: 600 }}>{r}</span>
+                          ))}
+                        </div>
+                        {icpFunding && <p style={{ fontSize: 12, color: "#78350f", marginTop: 8, marginBottom: 0 }}><span style={{ fontWeight: 700 }}>Funding:</span> {icpFunding}</p>}
+                      </div>
+                    )}
+
+                    {/* Competitors */}
+                    {icpCompetitors.length > 0 && (
+                      <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff5f5", border: "1px solid #fecaca" }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#b91c1c", marginBottom: 8 }}>In Evaluation</p>
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {icpCompetitors.slice(0, 4).map((c, i) => (
+                            <div key={i} style={{ paddingLeft: 8, borderLeft: "2px solid #fca5a5" }}>
+                              <p style={{ fontSize: 12, fontWeight: 700, color: "#991b1b", margin: 0 }}>{c.name}</p>
+                              {c.summary && <p style={{ fontSize: 11, color: "#7f1d1d", lineHeight: 1.4, margin: "2px 0 0" }}>{c.summary.slice(0, 100)}{c.summary.length > 100 ? "…" : ""}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── Hunter contacts ── */}
+            {icpHunterContacts.length > 0 && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 10 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Contacts Found ({icpHunterContacts.length})</p>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {icpHunterContacts.slice(0, 6).map((c, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5" }}>
+                        <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "#3730a3", flexShrink: 0 }}>
+                          {(c.first_name?.[0] ?? "") + (c.last_name?.[0] ?? "")}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <p style={{ fontSize: 13, fontWeight: 700, color: "#1e3a5f", margin: 0 }}>{c.first_name} {c.last_name}</p>
+                            {c.seniority && (
+                              <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: "#ede9fe", border: "1px solid #ddd6fe", color: "#5b21b6", fontWeight: 700, textTransform: "capitalize" }}>{c.seniority}</span>
+                            )}
+                            {c.department && (
+                              <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", fontWeight: 700, textTransform: "capitalize" }}>{c.department}</span>
+                            )}
+                          </div>
+                          {c.title && <p style={{ fontSize: 11, color: "#64748b", margin: "2px 0 0" }}>{c.title}</p>}
+                          {c.email && <p style={{ fontSize: 11, color: "#94a3b8", margin: "1px 0 0" }}>{c.email}</p>}
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0, alignItems: "flex-end" }}>
+                          {c.linkedin_url && (
+                            <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#0077b5", fontWeight: 600, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}>
+                              LinkedIn <ExternalLink size={10} />
+                            </a>
+                          )}
+                          {c.phone_number && (
+                            <span style={{ fontSize: 11, color: "#64748b" }}>{String(c.phone_number)}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── Hunter company firmographics from cache ── */}
+            {cachedHunterCompany && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 10 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Firmographics</p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {[
+                      { label: "Size", value: cachedHunterCompany.size },
+                      { label: "Revenue", value: cachedHunterCompany.annual_revenue ? `$${(Number(cachedHunterCompany.annual_revenue) / 1_000_000).toFixed(1)}M` : null },
+                      { label: "Country", value: cachedHunterCompany.country },
+                      { label: "Founded", value: cachedHunterCompany.founded_year },
+                      { label: "Type", value: cachedHunterCompany.type },
+                    ].filter(f => f.value).map(f => (
+                      <div key={f.label} style={{ padding: "5px 11px", borderRadius: 10, background: "#f0f7ff", border: "1px solid #c7dcf8" }}>
+                        <span style={{ fontSize: 10, color: "#5a7a99", fontWeight: 700, textTransform: "uppercase", marginRight: 5 }}>{f.label}</span>
+                        <span style={{ fontSize: 12, color: "#1e3a5f", fontWeight: 600 }}>{String(f.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Technologies from Hunter */}
+                  {Array.isArray(cachedHunterCompany.technologies) && cachedHunterCompany.technologies.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {(cachedHunterCompany.technologies as string[]).slice(0, 10).map((t, i) => (
+                        <span key={i} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 999, background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#5b21b6", fontWeight: 600 }}>{t}</span>
+                      ))}
+                    </div>
+                  )}
+                  {/* Social links */}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {cachedHunterCompany.linkedin_url && (
+                      <a href={String(cachedHunterCompany.linkedin_url)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#0077b5", fontWeight: 600, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}>
+                        LinkedIn <ExternalLink size={10} />
+                      </a>
+                    )}
+                    {cachedHunterCompany.twitter && (
+                      <a href={`https://twitter.com/${cachedHunterCompany.twitter}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#1d9bf0", fontWeight: 600, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}>
+                        Twitter <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── Cached Google News ── */}
+            {cachedGoogleNews && cachedGoogleNews.length > 0 && (
+              <>
+                <div style={{ borderTop: "1px solid #e8edf5" }} />
+                <div style={{ display: "grid", gap: 8 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#7d8fa3", margin: 0 }}>Recent News</p>
+                  {cachedGoogleNews.slice(0, 4).map((item, i) => (
+                    <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
+                      style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5", textDecoration: "none" }}>
+                      <Newspaper size={13} style={{ color: "#7d8fa3", marginTop: 2, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: "#1e3a5f", margin: 0, lineHeight: 1.4 }}>{item.title}</p>
+                        {(item.source || item.published) && (
+                          <p style={{ fontSize: 11, color: "#94a3b8", margin: "2px 0 0" }}>
+                            {item.source}{item.source && item.published ? " · " : ""}{item.published ? new Date(item.published).toLocaleDateString() : ""}
+                          </p>
+                        )}
+                      </div>
+                      <ExternalLink size={10} style={{ color: "#94a3b8", flexShrink: 0, marginTop: 3 }} />
+                    </a>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* ── Research More CTA ── */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderRadius: 12, background: "#f4f7fb", border: "1px dashed #c9daf0" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 12, color: "#5a7a99", margin: 0, lineHeight: 1.5 }}>
+                  {intelWasRun
+                    ? "Full intel was run — scroll down for the AI executive briefing, live news, and stakeholder talk tracks."
+                    : researchGaps.length > 0
+                      ? `${researchGaps.length} data gap${researchGaps.length !== 1 ? "s" : ""} found — fetch missing firmographics, contacts, news, and more.`
+                      : "All available data has been fetched. Run full Web Intel for an AI executive briefing."}
+                </p>
+                {researchGaps.length > 0 && !researchingMore && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                    {researchGaps.map(g => (
+                      <span key={g.key} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: "#fff3cd", border: "1px solid #fde68a", color: "#92400e", fontWeight: 600 }}>{g.label}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                {researchGaps.length > 0 && (
+                  <button className="crm-button" onClick={handleResearchMore} disabled={researchingMore || running}>
+                    {researchingMore ? <RefreshCw size={13} className="animate-spin" /> : <Search size={13} />}
+                    {researchingMore ? "Researching…" : `Research More (${researchGaps.length})`}
+                  </button>
+                )}
+                {!intelWasRun && (
+                  <button className="crm-button soft" onClick={handleRunIntelligence} disabled={running || researchingMore}>
+                    {running ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                    {running ? "Running…" : "Full Web Intel"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </Section>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 0 — Executive Briefing (GPT-4o synthesis of all intel)
@@ -663,6 +1292,51 @@ export default function MeetingDetail() {
               ))}
             </div>
 
+            {/* ICP Research snapshot — pain points, talking points, beacon angle from enrichment_cache */}
+            {webResearch.company_snapshot && (webResearch.company_snapshot.pain_points?.length || webResearch.company_snapshot.beacon_angle || webResearch.company_snapshot.conversation_starter || webResearch.company_snapshot.talking_points?.length) && (
+              <div className="rounded-xl border border-[#e0edff] bg-[#f5f9ff] p-4" style={{ display: "grid", gap: 12 }}>
+                <p className="text-[11px] uppercase tracking-wide text-[#24567e] font-semibold">From ICP Research</p>
+                {webResearch.company_snapshot.conversation_starter && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Conversation Starter</p>
+                    <p className="text-[13px] text-[#2d4258] leading-relaxed italic">"{webResearch.company_snapshot.conversation_starter}"</p>
+                  </div>
+                )}
+                {webResearch.company_snapshot.beacon_angle && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Beacon Angle</p>
+                    <p className="text-[13px] text-[#2d4258] leading-relaxed">{webResearch.company_snapshot.beacon_angle}</p>
+                  </div>
+                )}
+                {webResearch.company_snapshot.pain_points && webResearch.company_snapshot.pain_points.length > 0 && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Pain Points</p>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {webResearch.company_snapshot.pain_points.map((p, i) => (
+                        <p key={i} className="text-[13px] text-[#3d5268] leading-relaxed">• {p}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {webResearch.company_snapshot.talking_points && webResearch.company_snapshot.talking_points.length > 0 && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Talking Points</p>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {webResearch.company_snapshot.talking_points.map((t, i) => (
+                        <p key={i} className="text-[13px] text-[#3d5268] leading-relaxed">• {t}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {webResearch.company_snapshot.why_now_summary && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Why Now</p>
+                    <p className="text-[13px] text-[#2d4258] leading-relaxed">{webResearch.company_snapshot.why_now_summary}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Tech stack — from DB */}
             {techStack && Object.keys(techStack).length > 0 && (
               <div>
@@ -780,7 +1454,7 @@ export default function MeetingDetail() {
             <p className="text-[13px] text-[#6f8399]">No contacts found for this company.</p>
             {company && (
               <p className="text-[12px] text-[#8fa5bc]">
-                Go to <Link to={`/companies/${company.id}`} className="font-semibold text-[#4a7fa5] hover:underline">{company.name}</Link> and click "Find Contacts" to discover stakeholders.
+                Go to <Link to={`/account-sourcing/${company.id}`} className="font-semibold text-[#4a7fa5] hover:underline">{company.name}</Link> and click "Find Contacts" to discover stakeholders.
               </p>
             )}
           </div>

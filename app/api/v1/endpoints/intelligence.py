@@ -68,7 +68,7 @@ async def send_outreach_email(sequence_id: UUID, payload: dict, session: DBSessi
         body=body,
     )
 
-    if result.get("status") in ("sent", "mock_sent"):
+    if result.get("status") == "sent":
         seq.status = "sent"
         seq.updated_at = datetime.utcnow()
         session.add(seq)
