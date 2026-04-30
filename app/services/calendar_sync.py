@@ -341,15 +341,30 @@ async def sync_calendar_events(
                 # Never stomp a user-established link. If the rep re-linked
                 # Procore→Procore after an auto-linker got it wrong, keep it.
                 if not getattr(existing, "manually_linked", False):
-                    if existing.company_id != matched_company_id:
+                    # Don't stomp a found link with a NULL match. The same
+                    # event is upserted N times when N Beacon attendees sync
+                    # it; if user A matched the company via their contacts
+                    # and user B's sync produced no match (different visibility
+                    # or stricter ambiguity), B's run would otherwise wipe A's
+                    # link. Only update when the new match is non-NULL.
+                    if matched_company_id is not None and existing.company_id != matched_company_id:
                         existing.company_id = matched_company_id
                         changed = True
-                    if existing.deal_id != matched_deal_id:
+                    if matched_deal_id is not None and existing.deal_id != matched_deal_id:
                         existing.deal_id = matched_deal_id
                         changed = True
-                if attendees_payload and existing.attendees != attendees_payload:
-                    existing.attendees = attendees_payload
-                    changed = True
+                # Attendees: prefer the richer list. If the new sync produced
+                # more matched contacts than the existing list, take the new
+                # one; otherwise keep what we have.
+                if attendees_payload and attendees_payload != existing.attendees:
+                    existing_matched = sum(
+                        1 for a in (existing.attendees or [])
+                        if isinstance(a, dict) and a.get("matched")
+                    )
+                    new_matched = sum(1 for a in attendees_payload if a.get("matched"))
+                    if new_matched >= existing_matched:
+                        existing.attendees = attendees_payload
+                        changed = True
                 if changed:
                     existing.updated_at = now
                     # Only adopt synced_by_user_id when empty — same first-syncer-wins
