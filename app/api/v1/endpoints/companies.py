@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
@@ -20,9 +20,13 @@ router = APIRouter(prefix="/companies", tags=["companies"])
 
 def _visible_company_selector_filter():
     # Global company selectors should only show source-of-truth accounts that
-    # came through Account Sourcing/manual add. Hidden/imported shells stay out
-    # of user-facing pickers until they are upgraded by a real upload.
-    return Company.sourcing_batch_id.isnot(None)
+    # came through Account Sourcing/manual add, plus imported shells that are
+    # already linked to deals. Deal-linked accounts need to stay searchable for
+    # meeting/company mapping and prospect mapping.
+    return or_(
+        Company.sourcing_batch_id.isnot(None),
+        select(Deal.id).where(Deal.company_id == Company.id).exists(),
+    )
 
 
 class DuplicateCheckRequest(BaseModel):

@@ -91,6 +91,7 @@ def _account_sourcing_visibility_filter():
     return or_(
         Company.sourcing_batch_id.isnot(None),
         Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+        select(Deal.id).where(Deal.company_id == Company.id).exists(),
     )
 
 
