@@ -17,9 +17,8 @@ interface Props {
 // Soft cap on cadence length. 6 was the original default for a 3-email +
 // intermixed call/LinkedIn sequence; bumped to 12 so multi-touch cadences
 // (e.g. 4 emails + 3 calls + 3 LinkedIn touches + 2 nudges) fit without
-// hitting a ceiling mid-authoring. Past 12, reps are almost always creating
-// noise, not cadence — so we still guard against runaway sequences.
-const MAX_SEQUENCE_STEPS = 12;
+// hitting a ceiling mid-authoring. Backend caps at 20 (settings.py).
+const MAX_SEQUENCE_STEPS = 20;
 type StepChannel = "email" | "call" | "linkedin";
 type TabKey = `step_${number}`;
 

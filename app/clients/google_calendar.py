@@ -41,19 +41,28 @@ class CalendarEvent:
     html_link: str = ""                  # link to the event in Google Calendar
 
 
-async def _refresh_token_if_needed(token_data: dict, client_id: str, client_secret: str) -> dict:
-    """Refresh the access token if expired. Returns updated token_data."""
-    expiry_str = token_data.get("expiry")
-    if expiry_str:
-        try:
-            expiry = datetime.fromisoformat(expiry_str)
-            if expiry.tzinfo is None:
-                expiry = expiry.replace(tzinfo=timezone.utc)
-            # Refresh if less than 5 minutes remaining
-            if expiry > datetime.now(timezone.utc) + timedelta(minutes=5):
-                return token_data
-        except Exception:
-            pass
+async def _refresh_token_if_needed(token_data: dict, client_id: str, client_secret: str, force: bool = False) -> dict:
+    """Refresh the access token if expired. Returns updated token_data.
+
+    When `force=True`, refreshes regardless of expiry — used when the stored
+    access_token has narrower scopes than the refresh_token can grant (e.g.
+    user reconnected with calendar scope, but their cached access_token from
+    a prior gmail-only consent is still valid by expiry). Forcing the refresh
+    rotates the access_token to one that reflects the current refresh_token's
+    scope grants.
+    """
+    if not force:
+        expiry_str = token_data.get("expiry")
+        if expiry_str:
+            try:
+                expiry = datetime.fromisoformat(expiry_str)
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                # Refresh if less than 5 minutes remaining
+                if expiry > datetime.now(timezone.utc) + timedelta(minutes=5):
+                    return token_data
+            except Exception:
+                pass
 
     refresh_token = token_data.get("refresh_token")
     if not refresh_token:
@@ -77,6 +86,10 @@ async def _refresh_token_if_needed(token_data: dict, client_id: str, client_secr
     updated["expiry"] = (
         datetime.now(timezone.utc) + timedelta(seconds=int(new_tokens.get("expires_in", 3600)))
     ).isoformat()
+    # Persist the actual granted scopes from Google's refresh response so the
+    # cached scopes metadata reflects reality, not the original consent grant.
+    if new_tokens.get("scope"):
+        updated["scopes"] = new_tokens["scope"].split(" ")
     return updated
 
 
@@ -168,12 +181,18 @@ async def fetch_upcoming_events(
         has_calendar = any(CALENDAR_SCOPE in s for s in granted_scopes)
     else:
         has_calendar = CALENDAR_SCOPE in str(granted_scopes)
+    # When the stored access_token's recorded scopes don't include calendar,
+    # force a refresh — the refresh_token may have broader scopes that the
+    # access_token doesn't reflect (happens when consent was upgraded after
+    # the initial gmail-only connect, or when the cached metadata is stale).
     if not has_calendar:
         logger.info(
-            "google_calendar: calendar scope missing from stored metadata; attempting calendar sync anyway"
+            "google_calendar: calendar scope missing from stored metadata; forcing token refresh"
         )
 
-    updated_token = await _refresh_token_if_needed(token_data, client_id, client_secret)
+    updated_token = await _refresh_token_if_needed(
+        token_data, client_id, client_secret, force=not has_calendar
+    )
     access_token = updated_token["token"]
 
     now = datetime.now(timezone.utc)

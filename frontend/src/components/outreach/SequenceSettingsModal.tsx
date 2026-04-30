@@ -6,7 +6,7 @@ import { settingsApi } from "../../lib/api";
 // two components author cadences at different scopes (workspace defaults
 // here, per-prospect overrides there) but the ceiling should match so reps
 // don't see one surface allow more steps than another.
-const MAX_SEQUENCE_STEPS = 12;
+const MAX_SEQUENCE_STEPS = 20;
 
 interface Props {
   open: boolean;
