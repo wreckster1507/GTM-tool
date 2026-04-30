@@ -291,6 +291,126 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "search_email",
+        "description": (
+            "Search the AE's Gmail inbox. Returns thread summaries with "
+            "IDs. Use to find company emails, meeting notes, or any "
+            "relevant thread."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "e.g. 'zywave meeting notes' or "
+                        "'poc kickoff gainsight'"
+                    ),
+                },
+                "limit": {"type": "integer", "default": 5},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_email_thread",
+        "description": (
+            "Read full content of a Gmail thread by thread ID. Returns "
+            "all messages with full body text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"thread_id": {"type": "string"}},
+            "required": ["thread_id"],
+        },
+    },
+    {
+        "name": "inspect_poc_kickoff_template",
+        "description": (
+            "Confirm the Beacon PoC Kickoff template is in Drive. Call "
+            "FIRST before generate_poc_kickoff."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "generate_poc_kickoff",
+        "description": (
+            "Fill the Beacon PoC Kickoff template with data extracted "
+            "from email threads and produce a Google Doc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_name": {"type": "string"},
+                "email_thread_content": {
+                    "type": "string",
+                    "description": (
+                        "Full text from all relevant email threads "
+                        "concatenated"
+                    ),
+                },
+                "meeting_date": {"type": "string"},
+                "prepared_by": {
+                    "type": "string",
+                    "description": "AE name",
+                },
+                "extra_context": {"type": "string"},
+            },
+            "required": ["client_name", "email_thread_content"],
+        },
+    },
+    {
+        "name": "inspect_poc_ppt_template",
+        "description": (
+            "Confirm the Beacon PoC Demo PPT template (originally built "
+            "for Zellis) is reachable in Drive. Call FIRST before "
+            "generate_poc_ppt. Reports slide_count and which slides are "
+            "rewritable (slides 3, 4, 5)."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "generate_poc_ppt",
+        "description": (
+            "Fill the Beacon PoC Demo deck (Zellis-template-based) with "
+            "client-specific content for slides 3, 4, 5. Combines the "
+            "PoC Kickoff document text and the email thread content as "
+            "source material. Slides 1, 2, 6, 7 stay structurally "
+            "identical to the Zellis original — only the literal "
+            "'Zellis' string is swapped to client_name. Produces an "
+            "editable Google Slides deck. Call AFTER "
+            "inspect_poc_ppt_template and AFTER you have the PoC "
+            "Kickoff document text + email content gathered."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_name": {"type": "string"},
+                "poc_kickoff_content": {
+                    "type": "string",
+                    "description": (
+                        "Full text of the PoC Kickoff document for this "
+                        "client (use the doc you just generated, or "
+                        "fetch it). Required — drives slides 4 and 5."
+                    ),
+                },
+                "email_thread_content": {
+                    "type": "string",
+                    "description": (
+                        "Concatenated email thread text for additional "
+                        "context (slide 3 pain points). Optional but "
+                        "recommended."
+                    ),
+                },
+                "prepared_by": {
+                    "type": "string",
+                    "description": "AE name. Optional.",
+                },
+            },
+            "required": ["client_name", "poc_kickoff_content"],
+        },
+    },
+    {
         "name": "generate_document",
         "description": (
             "Create a free-form Word document from markdown content. Use for one-pagers, "
@@ -349,6 +469,18 @@ async def execute_tool(
             return await _execute_inspect_roi(user_id=user_id)
         if name == "generate_roi":
             return await _execute_roi(args, user_id=user_id)
+        if name == "search_email":
+            return await _execute_search_email(args, user_id=user_id)
+        if name == "read_email_thread":
+            return await _execute_read_email(args, user_id=user_id)
+        if name == "inspect_poc_kickoff_template":
+            return await _execute_inspect_poc_kickoff(user_id=user_id)
+        if name == "generate_poc_kickoff":
+            return await _execute_poc_kickoff(args, user_id=user_id)
+        if name == "inspect_poc_ppt_template":
+            return await _execute_inspect_poc_ppt(user_id=user_id)
+        if name == "generate_poc_ppt":
+            return await _execute_poc_ppt(args, user_id=user_id)
         if name == "generate_document":
             return await _execute_generic(args, user_id=user_id)
     except Exception as exc:
@@ -411,30 +543,48 @@ async def _execute_search(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome
 
 
 def _doc_to_artifact(doc: GeneratedDocument) -> dict:
-    artifact = {
+    """Frontend artifact.
+
+    NOTE on `url` vs `drive_url`: the frontend chip in
+    ZippyMessageBubble.tsx prepends API_BASE to `url`, so `url` MUST
+    stay a relative path (e.g. /zippy_outputs/foo.docx) — putting an
+    absolute Google Docs URL there produces a mangled
+    `http://localhost:8000https://docs.google.com/...` href that
+    Chrome rejects as about:blank. The chip reads `drive_url` directly
+    when present and uses `url` only as a download fallback.
+    """
+    return {
         "type": doc.kind,
         "filename": doc.filename,
         "url": doc.url,
+        "drive_url": doc.drive_url or "",
+        "drive_file_id": doc.drive_file_id or "",
         "summary": doc.summary,
         "created_at": doc.created_at.isoformat(),
+        # Backend-only field. The frontend ignores unknown keys; the
+        # agent's _to_api_messages re-injects this body into the next
+        # turn's context so Claude can pass it as poc_kickoff_content
+        # when asked for a follow-up PoC Demo PPT (otherwise the body
+        # is invisible across turns — only assistant text survives).
+        "body_text": doc.body_text or "",
     }
-    if doc.drive_url:
-        artifact["drive_url"] = doc.drive_url
-        artifact["drive_file_id"] = doc.drive_file_id
-    return artifact
 
 
 def _doc_link_text(doc: GeneratedDocument) -> str:
-    """Return the best available link for the user — Google Docs if uploaded, else local download.
+    """Return a single line containing the Google Docs/Sheets link.
 
-    When a Google Doc exists we present it as the canonical artifact. Editing
-    happens in the browser, changes autosave in Drive, so the user never has
-    to download-edit-reupload. The raw .docx download is only surfaced as a
-    fallback when Drive upload failed.
+    The string is shaped so the agent can quote it verbatim into chat —
+    the 'Open and edit in Google Docs:' prefix gives Claude an anchor it
+    is unlikely to paraphrase away. If the upload failed we surface a
+    visible warning instead of a useless local /zippy_outputs/ path that
+    isn't editable in-browser.
     """
     if doc.drive_url:
-        return f"Edit in Google Docs: {doc.drive_url}"
-    return f"Download .docx: {doc.url}"
+        return f"Open and edit in Google Docs: {doc.drive_url}"
+    return (
+        "⚠️ Google Docs upload failed. "
+        "Check your Drive connection in Settings and try again."
+    )
 
 
 async def _execute_inspect_mom(*, user_id: Optional[UUID]) -> ToolOutcome:
@@ -480,7 +630,8 @@ async def _execute_mom(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome:
         )
     return ToolOutcome(
         result_text=(
-            f"MOM generated as an editable Google Doc. {_doc_link_text(doc)}. "
+            f"✅ MOM generated for {data.client_name}.\n"
+            f"{_doc_link_text(doc)}\n"
             f"Summary: {doc.summary}"
         ),
         artifacts=[_doc_to_artifact(doc)],
@@ -525,7 +676,8 @@ async def _execute_nda(args: dict, *, user_id: Optional[UUID] = None) -> ToolOut
     doc = await generate_nda(data, user_id=str(user_id) if user_id else None)
     return ToolOutcome(
         result_text=(
-            f"NDA generated as an editable Google Doc. {_doc_link_text(doc)}. "
+            f"✅ NDA generated ({data.jurisdiction.upper()}).\n"
+            f"{_doc_link_text(doc)}\n"
             f"Summary: {doc.summary}"
         ),
         artifacts=[_doc_to_artifact(doc)],
@@ -579,8 +731,234 @@ async def _execute_roi(args: dict, *, user_id: Optional[UUID] = None) -> ToolOut
     doc = await generate_roi(data, user_id=str(user_id) if user_id else None)
     return ToolOutcome(
         result_text=(
-            f"ROI Analysis generated for {data.client_name}. "
-            f"{_doc_link_text(doc)}. {doc.summary}"
+            f"✅ ROI Analysis generated for {data.client_name}.\n"
+            f"{_doc_link_text(doc)}\n"
+            f"Summary: {doc.summary}"
+        ),
+        artifacts=[_doc_to_artifact(doc)],
+    )
+
+
+async def _execute_search_email(
+    args: dict, *, user_id: Optional[UUID] = None
+) -> ToolOutcome:
+    from app.clients.gmail_client import search_threads
+    query = args.get("query", "")
+    # Cap at 10 — large lists balloon the prompt and the AE only needs
+    # enough threads to disambiguate which conversation to read.
+    limit = min(int(args.get("limit", 5)), 10)
+    try:
+        threads = await search_threads(
+            query=query,
+            page_size=limit,
+            user_id=str(user_id) if user_id else None,
+        )
+        if not threads:
+            return ToolOutcome(result_text=f"No emails found for: {query}")
+        lines = []
+        for t in threads:
+            lines.append(
+                f"Thread ID: {t['id']}\n"
+                f"  Subject: {t.get('subject', '(no subject)')}\n"
+                f"  From: {t.get('sender', '')}\n"
+                f"  Date: {t.get('date', '')}\n"
+                f"  Preview: {t.get('snippet', '')[:200]}"
+            )
+        return ToolOutcome(result_text="\n\n".join(lines))
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc(limit=3)
+        return ToolOutcome(
+            result_text=(
+                f"Gmail call raised: {type(exc).__name__}: {exc}\n\n"
+                f"Traceback (last 3 frames):\n{tb}\n\n"
+                "Show this exception text to the user verbatim — they are "
+                "the developer and need the diagnostic. Then STOP — do not "
+                "retry, do not call search_knowledge_base."
+            ),
+            is_error=True,
+        )
+
+
+async def _execute_read_email(
+    args: dict, *, user_id: Optional[UUID] = None
+) -> ToolOutcome:
+    from app.clients.gmail_client import get_thread_content
+    thread_id = args.get("thread_id", "")
+    try:
+        thread = await get_thread_content(
+            thread_id=thread_id,
+            user_id=str(user_id) if user_id else None,
+        )
+        if not thread:
+            return ToolOutcome(
+                result_text=f"Thread {thread_id} not found.", is_error=True
+            )
+        return ToolOutcome(
+            result_text=thread.get("full_text", "Empty thread.")
+        )
+    except Exception as exc:
+        return ToolOutcome(
+            result_text=f"Failed to read thread: {exc}", is_error=True
+        )
+
+
+async def _execute_inspect_poc_kickoff(
+    *, user_id: Optional[UUID] = None
+) -> ToolOutcome:
+    from app.services.zippy_docs.poc_kickoff import inspect_poc_kickoff_template
+    result = await inspect_poc_kickoff_template(
+        user_id=str(user_id) if user_id else None
+    )
+    if not result.get("found"):
+        return ToolOutcome(
+            result_text=(
+                f"PoC Kickoff template not found: {result.get('error')}. "
+                "Will produce fallback doc if generate_poc_kickoff is called."
+            )
+        )
+    return ToolOutcome(
+        result_text=(
+            f"Template found: {result['template_name']}. "
+            f"Has {result['section_count']} content sections. Ready."
+        )
+    )
+
+
+async def _execute_poc_kickoff(
+    args: dict, *, user_id: Optional[UUID] = None
+) -> ToolOutcome:
+    from app.services.zippy_docs.poc_kickoff import (
+        PoCKickoffInput,
+        generate as generate_poc,
+    )
+    email_content = args.get("email_thread_content", "") or ""
+    # Guard against the agent skipping the read step. Without real email
+    # content the generator can only fill TBDs — better to refuse than
+    # produce a hollow doc the AE will mistake for real output.
+    if len(email_content.strip()) < 200:
+        return ToolOutcome(
+            result_text=(
+                "REFUSED: email_thread_content is empty or too short "
+                f"({len(email_content.strip())} chars). A useful PoC "
+                "Kickoff requires real email content. Required next "
+                "steps:\n"
+                "  1. Call `search_email` with the company name "
+                "(e.g. 'zywave poc kickoff', 'zywave next steps').\n"
+                "  2. Call `read_email_thread` for each relevant "
+                "thread ID returned.\n"
+                "  3. Concatenate all `full_text` values from those "
+                "calls into email_thread_content.\n"
+                "  4. THEN call generate_poc_kickoff again.\n"
+                "Do NOT retry generate_poc_kickoff with the same empty "
+                "input. Do NOT pass placeholder text like 'TBD' to "
+                "satisfy this guard — that defeats the purpose."
+            ),
+            is_error=True,
+        )
+    data = PoCKickoffInput(
+        client_name=args.get("client_name", "Client"),
+        email_thread_content=email_content,
+        meeting_date=args.get("meeting_date"),
+        prepared_by=args.get("prepared_by"),
+        extra_context=args.get("extra_context"),
+    )
+    doc = await generate_poc(
+        data, user_id=str(user_id) if user_id else None
+    )
+    # Pass the rewritten body back to Claude so a follow-up
+    # generate_poc_ppt call can reuse it as poc_kickoff_content
+    # without re-fetching anything. Cap at 18k chars to stay well
+    # under the model's context budget.
+    body_block = ""
+    if doc.body_text:
+        body = doc.body_text[:18000]
+        body_block = (
+            "\n\n=== FULL KICKOFF BODY (verbatim) ===\n"
+            "If the user next asks for a PoC Demo PPT for this "
+            "client, pass THIS exact block as the "
+            "poc_kickoff_content argument to generate_poc_ppt — "
+            "do NOT summarise, do NOT shorten.\n"
+            "------------------------------------\n"
+            f"{body}\n"
+            "------------------------------------"
+        )
+    return ToolOutcome(
+        result_text=(
+            f"✅ PoC Kickoff document generated for {data.client_name}.\n"
+            f"{_doc_link_text(doc)}\n"
+            f"Summary: {doc.summary}"
+            f"{body_block}"
+        ),
+        artifacts=[_doc_to_artifact(doc)],
+    )
+
+
+async def _execute_inspect_poc_ppt(
+    *, user_id: Optional[UUID] = None
+) -> ToolOutcome:
+    from app.services.zippy_docs.poc_ppt import inspect_poc_ppt_template
+    result = await inspect_poc_ppt_template(
+        user_id=str(user_id) if user_id else None
+    )
+    if not result.get("found"):
+        return ToolOutcome(
+            result_text=(
+                f"PoC Demo PPT template not found: {result.get('error')}. "
+                "generate_poc_ppt will produce a fallback deck if called."
+            )
+        )
+    fillable = result.get("fillable_slides", [3, 4, 5])
+    return ToolOutcome(
+        result_text=(
+            f"Template found: {result['template_name']}. "
+            f"Slide count: {result['slide_count']}. "
+            f"Fillable slides: {fillable}. Ready."
+        )
+    )
+
+
+async def _execute_poc_ppt(
+    args: dict, *, user_id: Optional[UUID] = None
+) -> ToolOutcome:
+    from app.services.zippy_docs.poc_ppt import (
+        PoCPPTInput,
+        generate as generate_poc_ppt,
+    )
+    kickoff_content = args.get("poc_kickoff_content", "") or ""
+    if len(kickoff_content.strip()) < 200:
+        return ToolOutcome(
+            result_text=(
+                "REFUSED: poc_kickoff_content is empty or too short "
+                f"({len(kickoff_content.strip())} chars). The PoC Demo "
+                "deck pulls slide 4 (use cases) and slide 5 "
+                "(deliverables, timeline) directly from the kickoff "
+                "doc — without it slides will be hollow. Required next "
+                "steps:\n"
+                "  1. If you just generated a PoC Kickoff for this "
+                "client, pass that document's full text as "
+                "poc_kickoff_content.\n"
+                "  2. Otherwise call search_knowledge_base / "
+                "search_email to retrieve the kickoff text first.\n"
+                "  3. THEN call generate_poc_ppt again.\n"
+                "Do NOT pass placeholder text to satisfy this guard."
+            ),
+            is_error=True,
+        )
+    data = PoCPPTInput(
+        client_name=args.get("client_name", "Client"),
+        poc_kickoff_content=kickoff_content,
+        email_thread_content=args.get("email_thread_content") or "",
+        prepared_by=args.get("prepared_by"),
+    )
+    doc = await generate_poc_ppt(
+        data, user_id=str(user_id) if user_id else None
+    )
+    return ToolOutcome(
+        result_text=(
+            f"✅ PoC Demo deck generated for {data.client_name}.\n"
+            f"{_doc_link_text(doc)}\n"
+            f"Summary: {doc.summary}"
         ),
         artifacts=[_doc_to_artifact(doc)],
     )
@@ -595,7 +973,8 @@ async def _execute_generic(args: dict, *, user_id: Optional[UUID] = None) -> Too
     doc = await generate_generic(data, user_id=str(user_id) if user_id else None)
     return ToolOutcome(
         result_text=(
-            f"Document generated as an editable Google Doc. {_doc_link_text(doc)}."
+            f"✅ Document generated: {data.title}.\n"
+            f"{_doc_link_text(doc)}"
         ),
         artifacts=[_doc_to_artifact(doc)],
     )

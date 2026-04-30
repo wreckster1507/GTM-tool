@@ -1652,7 +1652,9 @@ export interface ZippyCitation {
 export interface ZippyArtifact {
   type: string;
   filename: string;
-  url: string;
+  url: string;              // relative path, prefix with API_BASE
+  drive_url?: string;       // absolute Google Docs URL when uploaded
+  drive_file_id?: string;
   summary: string;
   created_at: string;
 }

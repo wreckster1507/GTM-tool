@@ -504,6 +504,18 @@ async def _try_upload_to_sheets(
     user_id: Optional[str],
 ) -> None:
     """Upload the filled .xlsx to Drive as an editable Google Sheet."""
+    if doc.drive_url:
+        return
+    if user_id:
+        from app.services.zippy_docs.base import (
+            cache_upload,
+            get_cached_upload,
+        )
+        cached = get_cached_upload(str(user_id), client_name, doc.kind)
+        if cached:
+            doc.drive_url = cached
+            logger.info("Reusing cached ROI Sheets upload: %s", cached)
+            return
     try:
         from sqlalchemy import or_, case as sa_case
 
@@ -546,6 +558,9 @@ async def _try_upload_to_sheets(
         doc.drive_file_id = file_id
         doc.drive_url = web_view_link
         logger.info("ROI uploaded to Google Sheets: %s", web_view_link)
+        if user_id and web_view_link:
+            from app.services.zippy_docs.base import cache_upload
+            cache_upload(str(user_id), client_name, doc.kind, web_view_link)
     except PermissionError as exc:
         logger.info("drive.file scope not yet granted — skipping ROI upload: %s", exc)
     except Exception as exc:

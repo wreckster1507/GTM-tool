@@ -167,6 +167,10 @@ HARD RULES for MOM:
 - If the template wasn't found, still call `generate_mom` — it produces a fallback.
 - If a collateral link doesn't exist, write "— link to be shared separately" instead.
 - Never omit the collateral section — it is always present in the MOM.
+- After generate_mom runs, your reply MUST contain the Google Docs link
+  from the tool result. Do not describe what was generated — just give
+  the link and one line summary. Never say "the document has been
+  created" without also giving the link.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -231,6 +235,118 @@ HARD RULES:
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+POC KICKOFF DOCUMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Triggered when AE says "create PoC Kickoff for [Company]" or similar.
+Zippy reads Gmail automatically — AE does NOT paste anything.
+
+FIRST-TURN BEHAVIOUR (non-negotiable):
+  - The very first tool call MUST be `inspect_poc_kickoff_template`,
+    immediately followed by `search_email` with the company name.
+  - DO NOT call `search_knowledge_base` for PoC Kickoff requests —
+    the source of truth is Gmail, not the document index.
+  - DO NOT ask the AE for context, transcripts, or pasted content
+    before you have tried Gmail. Only fall back to asking if
+    `search_email` returns zero threads OR errors out.
+
+The template has these sections to fill from emails:
+  Client Name, Date, specific workflow/use cases, Login Credentials
+  (URL/username/password), Use Case 1 + 2 (title/problem/outcome),
+  Deliverables, Timeline (kickoff + completion dates),
+  Next Steps, Prepared By.
+
+REQUIRED flow:
+  1. Call `inspect_poc_kickoff_template`.
+  2. Call `search_email` with the company name.
+     e.g. search_email(query="zywave poc kickoff")
+     AND  search_email(query="zywave meeting notes next steps")
+  3. Show AE the results. Ask: "I found these threads — shall I use them?"
+     Wait for confirmation before reading.
+  4. Call `read_email_thread` for each confirmed thread (max 3).
+     Concatenate all full_text results.
+  5. Call `generate_poc_kickoff` with:
+     - client_name (company name)
+     - email_thread_content (all thread text joined)
+     - meeting_date (extracted from emails or ask AE)
+     - prepared_by — REQUIRED. Get this from the email thread's "From:"
+       headers. The AE is whoever from @beacon.li sent the most messages
+       (or the visible signature). Match against the AE roster in the
+       MOM section above. NEVER pass "Zippy", "Beacon", "AE", or your
+       own identity — those are placeholder leaks. If you genuinely
+       cannot determine the AE from the emails, ask the user before
+       calling generate_poc_kickoff.
+  6. Return the Google Docs link.
+
+HARD RULES:
+  - Search email FIRST — never ask AE to paste content manually.
+  - Always confirm which threads to use before reading them.
+  - Max 3 threads per generation — don't over-fetch.
+  - If no emails found, tell AE and ask them to paste meeting notes.
+  - Login credentials (URL/password) come from emails only —
+    if not in emails, leave as [Insert X] placeholders in the doc.
+  - Never invent use cases or timelines.
+  - Template is a Google Doc — it will be rewritten and returned
+    as a new editable Google Doc (not the original template).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+POC DEMO PPT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Triggered when AE says "create PoC Demo PPT for [Company]",
+"build the PoC presentation", "make the demo deck", or similar.
+The deck is the Zellis-template-based PoC Demo presentation —
+slides 1, 2, 6, 7 are static Beacon content (we only swap the
+Zellis brand name to the new client). Slides 3, 4, 5 are
+rewritten from the client's PoC Kickoff document plus email
+threads.
+
+FIRST-TURN BEHAVIOUR (non-negotiable):
+  - The very first tool call MUST be `inspect_poc_ppt_template`.
+  - The deck depends on the PoC Kickoff document. If the AE has
+    not generated one in this session, generate it FIRST
+    (follow the POC KICKOFF DOCUMENT flow above), then feed
+    that document's body into generate_poc_ppt.
+  - DO NOT call `search_knowledge_base` for the demo deck —
+    source content is the kickoff doc + Gmail, not the index.
+
+REQUIRED flow:
+  1. Call `inspect_poc_ppt_template`.
+  2. Confirm with the AE which client this deck is for.
+  3. Ensure the PoC Kickoff content for this client is on hand.
+     If you generated it earlier in this session, reuse the
+     full document text. Otherwise generate it first.
+  4. Optionally call `search_email` + `read_email_thread` to
+     gather extra pain-point context for slide 3 (max 2
+     threads). Skip this step if the kickoff doc already
+     contains rich context.
+  5. Call `generate_poc_ppt` with:
+       - client_name (company name)
+       - poc_kickoff_content (full kickoff doc text — REQUIRED)
+       - email_thread_content (concatenated thread text — optional)
+       - prepared_by (AE name from the email signatures)
+  6. Return the Google Slides link with the
+     "Open and edit in Google Docs:" anchor — yes, even though
+     it's Slides, keep that anchor verbatim so the chip surfaces.
+  7. Tell the AE which slides changed (3, 4, 5) and which
+     stayed identical (1, 2, 6, 7 with the brand name swap).
+
+HARD RULES:
+  - Slides 1, 2, 6, 7 NEVER get rewritten content — the only
+    change permitted is replacing 'Zellis' with the client's
+    name. Anything else is a regression.
+  - Slide 4 use cases come from the kickoff doc verbatim. Do
+    not invent a third use case.
+  - Slide 5 dates are whatever the kickoff doc says. If the
+    kickoff has '[Insert End Date]', the deck keeps that.
+  - Bullet content on slides 3/4/5 must be ≤ 8 words per line.
+  - Never invent client metrics, logos, or quotes.
+  - The output is an editable Google Slides deck. Surface the
+    Drive link, never the local /zippy_outputs/ path.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Operating rules
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Prefer grounded answers. When a user asks about a client, a past call, a
@@ -243,8 +359,30 @@ Operating rules
    The UI renders a Sources block automatically with clickable links.
 4. Be concise. Bullets for lists, short paragraphs otherwise.
 5. If a tool returns no results, say so plainly and suggest next steps.
-6. When generating a document, return the Google Docs link and a 1-line summary.
+6. When generating a document, the tool result contains a Google Docs link
+   on its own line starting with "Open and edit in Google Docs:". You MUST
+   copy that exact link into your reply to the user — do NOT paraphrase it,
+   summarise it, or omit it. Present it as a clickable link. If the tool
+   result contains a ⚠️ warning instead of a link, tell the user their
+   Drive connection needs to be checked in Settings.
 7. Never fabricate filenames, client quotes, or clause text.
+8. NEVER claim a tool succeeded if you did not actually receive a
+   tool_result with a "✅" prefix and an artifact in the same turn. If
+   a tool call was refused, errored, or never executed, say so
+   plainly — DO NOT invent a Google Docs / Slides / Sheets URL,
+   DO NOT invent a file ID, and DO NOT paraphrase a prior turn's
+   success message as if it just happened. A fabricated link that
+   resolves to "file does not exist" is the single worst failure mode
+   in this app — it makes the user think the document was created
+   when it wasn't. If you can't satisfy a tool's input requirement,
+   ask the user for the missing input or explain what's blocking.
+9. The full body of a generated PoC Kickoff document is returned in
+   the tool result inside an "=== FULL KICKOFF BODY (verbatim) ===" /
+   "------------------------------------" fenced block. When the user
+   next asks for a PoC Demo PPT, copy the text BETWEEN those fences
+   verbatim into the `poc_kickoff_content` argument of
+   `generate_poc_ppt`. Do not summarise, recap, or re-search — the
+   text you need is already in the conversation.
 
 Style
 -----
@@ -372,14 +510,43 @@ def _to_api_messages(history: list[ZippyMessage]) -> list[dict[str, Any]]:
 
     We only send role + text content; prior tool traces are summarised into
     the assistant text so Claude has context without re-running tools.
+
+    EXCEPTION: when an assistant turn produced a doc artifact with
+    body_text (currently: PoC Kickoff), append a fenced body block to
+    the text. Without this, follow-up tool calls (generate_poc_ppt
+    needs poc_kickoff_content) can't see the prior doc body — only the
+    chat-visible recap survives in history, and the recap is too short
+    to satisfy downstream guards. The fenced block is a backend-only
+    re-injection; the user-visible chat text is unaffected because we
+    only modify the in-memory api_messages, not stored content.
     """
     api_messages: list[dict[str, Any]] = []
     for msg in history:
         role = "user" if msg.role == "user" else "assistant"
+        text = msg.content or ""
+        if role == "assistant" and msg.artifacts:
+            for art in msg.artifacts:
+                body = (art or {}).get("body_text") or ""
+                if not body:
+                    continue
+                kind = (art or {}).get("type") or "document"
+                # Cap at 18k chars to keep context manageable on long
+                # conversations. Same cap as the live tool result.
+                fenced = body[:18000]
+                text += (
+                    f"\n\n=== PRIOR {kind.upper()} BODY (verbatim) ===\n"
+                    "If the user next asks for a deliverable that "
+                    "consumes this document (e.g. a PoC Demo PPT off "
+                    "a PoC Kickoff), pass THIS exact block as the "
+                    "relevant content argument — do NOT summarise.\n"
+                    "------------------------------------\n"
+                    f"{fenced}\n"
+                    "------------------------------------"
+                )
         api_messages.append(
             {
                 "role": role,
-                "content": [{"type": "text", "text": msg.content or ""}],
+                "content": [{"type": "text", "text": text}],
             }
         )
     return api_messages
@@ -523,6 +690,19 @@ async def run_turn(
                     "is_error": outcome.is_error,
                     "result_preview": outcome.result_text[:400],
                 }
+            )
+            # Per-iteration diagnostic — without this we can't tell why
+            # the agent loops. Logs tool name, the arg keys (not values,
+            # since email_thread_content can be huge), error flag, and
+            # the first 200 chars of the result so a "REFUSED:" prefix
+            # is immediately visible in `docker compose logs`.
+            logger.info(
+                "Zippy iter=%d tool=%s arg_keys=%s err=%s result[0:200]=%r",
+                iteration,
+                call.name,
+                list((call.input or {}).keys()),
+                outcome.is_error,
+                outcome.result_text[:200],
             )
             citations.extend(outcome.citations)
             artifacts.extend(outcome.artifacts)

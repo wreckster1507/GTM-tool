@@ -14,8 +14,11 @@ GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-# Combined scope requested during OAuth — both mail and calendar in one consent
-PERSONAL_OAUTH_SCOPES = f"{GMAIL_SCOPE} {CALENDAR_SCOPE} {DRIVE_SCOPE}"
+# drive.file: allows Zippy to create/upload files it generates (MOM, NDA, drafts).
+# Narrower than full `drive` — only covers files the app itself creates.
+DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+# Combined scope requested during OAuth — mail, calendar, drive read + file create
+PERSONAL_OAUTH_SCOPES = f"{GMAIL_SCOPE} {CALENDAR_SCOPE} {DRIVE_SCOPE} {DRIVE_FILE_SCOPE}"
 STATE_ALGORITHM = "HS256"
 
 

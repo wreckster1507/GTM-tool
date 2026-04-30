@@ -54,7 +54,13 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
             {message.artifacts.map((artifact) => (
               <a
                 key={artifact.url}
-                href={`${API_BASE}${artifact.url}`}
+                // Prefer the absolute Google Docs link when the doc has been
+                // uploaded — that's the editable canonical artifact. Fall back
+                // to the local /zippy_outputs/ path (which needs the API_BASE
+                // prefix) only if upload failed. Without this guard, gluing
+                // API_BASE in front of an absolute https:// URL produces a
+                // mangled href that Chrome rejects as about:blank#blocked.
+                href={artifact.drive_url || `${API_BASE}${artifact.url}`}
                 target="_blank"
                 rel="noreferrer"
                 className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-violet-200 bg-violet-50/60 px-3.5 py-2.5 transition hover:border-violet-400 hover:bg-violet-50"
