@@ -20,10 +20,14 @@ const TIER_STYLE: Record<string, CSSProperties> = {
 };
 
 export default function Companies() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [search, setSearch] = useState("");
   const [sortByScore, setSortByScore] = useState(true);
+  // "Mine" toggle: client-side filter to companies where the current user
+  // is either the AE (assigned_to_id) or SDR (sdr_id). Off by default so
+  // the page still serves as a workspace-wide directory.
+  const [mineOnly, setMineOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showImporter, setShowImporter] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -198,6 +202,7 @@ export default function Companies() {
 
   const filtered = companies
     .filter((c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.domain.toLowerCase().includes(search.toLowerCase()))
+    .filter((c) => !mineOnly || (user?.id ? (c.assigned_to_id === user.id || c.sdr_id === user.id) : true))
     .sort((a, b) => sortByScore ? (b.icp_score ?? 0) - (a.icp_score ?? 0) : 0);
 
   return (
@@ -243,6 +248,19 @@ export default function Companies() {
             <SlidersHorizontal className="h-3.5 w-3.5" />
             Rank by ICP
           </button>
+          {user?.id && (
+            <button
+              onClick={() => setMineOnly((m) => !m)}
+              title={mineOnly ? "Showing only your accounts — click to clear" : "Show only accounts you own (AE or SDR)"}
+              className={`h-12 flex items-center gap-2 px-4 rounded-xl border text-[13px] font-semibold transition-all ${
+                mineOnly
+                  ? "bg-[#fff1ec] border-[#ffcbb8] text-[#b94a24]"
+                  : "bg-white border-[#d7e2ee] text-[#4d6178] hover:bg-[#f7fafe]"
+              }`}
+            >
+              {mineOnly ? "Mine ✓" : "Mine"}
+            </button>
+          )}
         </div>
       </div>
 

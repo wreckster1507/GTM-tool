@@ -2486,6 +2486,35 @@ export default function Pipeline() {
               <Search size={12} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
               <input type="text" placeholder={`Search ${tab === "deal" ? "deals" : "prospects"}...`} value={search} onChange={(event) => setSearch(event.target.value)} style={{ width: "100%", height: 32, borderRadius: 8, border: search ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2", background: search ? "#f0f6ff" : "#f8fafc", paddingLeft: 28, paddingRight: 10, fontSize: 12, outline: "none" }} />
             </div>
+            {/* Mine shortcut — one-click filter to deals owned by the current
+                user. Toggles the Assignee filter atomically so the rest of
+                the filter row stays consistent. */}
+            {user?.id && (
+              (() => {
+                const mineActive = assigneeFilters.length === 1 && assigneeFilters[0] === user.id;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => handleAssigneeFilterChange(mineActive ? [] : [user.id!])}
+                    title={mineActive ? "Showing only your deals — click to clear" : "Show only deals assigned to you"}
+                    style={{
+                      height: 32,
+                      padding: "0 12px",
+                      borderRadius: 8,
+                      border: mineActive ? "1.5px solid #ffc9b4" : "1px solid #e2eaf2",
+                      background: mineActive ? "#fff3ec" : "#f8fafc",
+                      color: mineActive ? "#a04a1c" : "#48607b",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {mineActive ? "Mine ✓" : "Mine"}
+                  </button>
+                );
+              })()
+            )}
             <MultiSelectFilter values={stageFilters} onChange={handleStageFilterChange} label="Stage" allLabel="All Stages" options={stageOptions} />
             <MultiSelectFilter values={assigneeFilters} onChange={handleAssigneeFilterChange} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
             <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />

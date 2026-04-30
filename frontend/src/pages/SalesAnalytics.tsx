@@ -1844,6 +1844,36 @@ export default function SalesAnalytics() {
                 )}
               </div>
             </div>
+            {/* Mine shortcut — one-click filter to current user's pipeline.
+                Hidden for developer/admin accounts since their data is
+                excluded from the funnel anyway (hideDeveloper). */}
+            {user?.id && !hideDeveloper && (
+              (() => {
+                const mineActive = repFilter.length === 1 && repFilter[0] === user.id;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setRepFilter(mineActive ? [] : [user.id!])}
+                    title={mineActive ? "Showing only your numbers — click to clear" : "Show only your pipeline"}
+                    style={{
+                      height: 36,
+                      padding: "0 14px",
+                      borderRadius: 10,
+                      border: mineActive ? "1.5px solid #ffc9b4" : "1px solid #d7e2fb",
+                      background: mineActive ? "#fff3ec" : "#fff",
+                      color: mineActive ? "#a04a1c" : "#3555c4",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      alignSelf: "flex-start",
+                    }}
+                  >
+                    {mineActive ? "Mine ✓" : "Mine"}
+                  </button>
+                );
+              })()
+            )}
             <MultiSelectDropdown
               label="Rep filter"
               options={visibleTeamUsers.map((u) => ({ value: u.id, label: u.name }))}
