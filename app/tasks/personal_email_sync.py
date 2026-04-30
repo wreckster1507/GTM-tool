@@ -194,6 +194,7 @@ async def _async_sync_inbox(connection_id: str) -> dict:
                             session=session,
                             events=cal_events,
                             user_email=connection.email_address,
+                            owner_user_id=user.id,
                         )
                         cal_meetings_created = cal_stats["meetings_created"]
                 except Exception as cal_exc:
