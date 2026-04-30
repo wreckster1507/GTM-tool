@@ -329,7 +329,13 @@ async def sync_calendar_events(
                 if existing.meeting_type != meeting_type:
                     existing.meeting_type = meeting_type
                     changed = True
-                if existing.owner_user_id != owner_user_id:
+                # Don't stomp ownership: a calendar event with N Beacon
+                # attendees is upserted by N user syncs. First non-NULL owner
+                # wins; subsequent syncs only fill in if the field is empty.
+                # Without this guard, whoever syncs last "owns" every shared
+                # meeting — typically the user with the most events, which is
+                # silently wrong for everyone else.
+                if existing.owner_user_id is None and owner_user_id is not None:
                     existing.owner_user_id = owner_user_id
                     changed = True
                 # Never stomp a user-established link. If the rep re-linked
@@ -346,7 +352,11 @@ async def sync_calendar_events(
                     changed = True
                 if changed:
                     existing.updated_at = now
-                    existing.synced_by_user_id = owner_user_id
+                    # Only adopt synced_by_user_id when empty — same first-syncer-wins
+                    # rule as owner_user_id. Without this, the "synced by" attribution
+                    # also flips to whoever ran last.
+                    if existing.synced_by_user_id is None and owner_user_id is not None:
+                        existing.synced_by_user_id = owner_user_id
                     existing.synced_at = now
                     session.add(existing)
                     stats["meetings_updated"] += 1
