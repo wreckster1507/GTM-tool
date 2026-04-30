@@ -95,6 +95,33 @@ class Settings(BaseSettings):
         # expects an actual list of origins.
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
+    # === Zippy / Knowledge base / Vector store ===
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str = ""
+    QDRANT_COLLECTION: str = "beacon_knowledge"
+
+    OPENAI_API_KEY: str = ""
+    OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    OPENAI_EMBED_DIMS: int = 1536
+
+    AZURE_OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_ENDPOINT: str = ""
+    AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
+    AZURE_OPENAI_DEPLOYMENT: str = ""
+    AZURE_OPENAI_EMBED_DEPLOYMENT: str = ""
+    AZURE_OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    AZURE_OPENAI_EMBED_DIMS: int = 1536
+
+    NDA_TEMPLATE_DRIVE_ID_INDIA: str = ""
+    NDA_TEMPLATE_DRIVE_ID_US: str = ""
+    NDA_TEMPLATE_DRIVE_ID_SINGAPORE: str = ""
+
+    ZIPPY_MODEL: str = "claude-sonnet-4-20250514"
+    ZIPPY_MAX_TOKENS: int = 4000
+    ZIPPY_TOP_K: int = 8
+    ZIPPY_CHUNK_SIZE: int = 1200
+    ZIPPY_CHUNK_OVERLAP: int = 200
+
     # Resend (email sending)
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "onboarding@resend.dev"

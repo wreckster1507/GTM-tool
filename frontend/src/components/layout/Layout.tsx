@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Briefcase, CalendarDays, CheckSquare, ChevronDown, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
 import Sidebar from "./Sidebar";
 import GlobalSearchModal from "./GlobalSearchModal";
+import { ZippyLauncher } from "../zippy/ZippyLauncher";
 import { useAuth } from "../../lib/AuthContext";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
@@ -62,6 +63,7 @@ export default function Layout() {
   return (
     <div className={`crm-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <GlobalSearchModal open={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} />
+      <ZippyLauncher />
       <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <main className="crm-main">
         <header className="crm-topbar">
