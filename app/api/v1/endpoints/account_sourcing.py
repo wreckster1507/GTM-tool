@@ -22,7 +22,7 @@ from uuid import UUID
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
@@ -88,10 +88,16 @@ def _apply_text_multi_filter(stmt, column, raw_value: str | None):
 
 
 def _account_sourcing_visibility_filter():
-    return or_(
-        Company.sourcing_batch_id.isnot(None),
-        Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
-        select(Deal.id).where(Deal.company_id == Company.id).exists(),
+    hidden_clickup_import = Company.enrichment_sources.contains(
+        {"clickup_import": {"hidden_from_account_sourcing": True}}
+    )
+    return and_(
+        ~hidden_clickup_import,
+        or_(
+            Company.sourcing_batch_id.isnot(None),
+            Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+            select(Deal.id).where(Deal.company_id == Company.id).exists(),
+        ),
     )
 
 

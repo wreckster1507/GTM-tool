@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS = {
     "enabled": True,
     "send_hours_before": 12,
+    "generate_hours_before": 48,
     "auto_generate_if_missing": True,
 }
 
@@ -33,9 +34,13 @@ DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS = {
 def normalize_pre_meeting_settings(value: Any) -> dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
     send_hours_before = int(raw.get("send_hours_before", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_hours_before"]))
+    generate_hours_before = int(raw.get("generate_hours_before", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["generate_hours_before"]))
+    send_hours_before = max(1, min(send_hours_before, 168))
+    generate_hours_before = max(send_hours_before, min(generate_hours_before, 168))
     return {
         "enabled": bool(raw.get("enabled", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["enabled"])),
-        "send_hours_before": max(1, min(send_hours_before, 168)),
+        "send_hours_before": send_hours_before,
+        "generate_hours_before": generate_hours_before,
         "auto_generate_if_missing": bool(
             raw.get(
                 "auto_generate_if_missing",
@@ -57,9 +62,8 @@ async def _get_or_create_settings(session: AsyncSession) -> WorkspaceSettings:
 
 async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> list[UUID]:
     """
-    Only the deal's assigned person receives pre-meeting intel.
-    If no deal, fall back to company assigned rep.
-    This ensures reps only see intel for their own meetings.
+    Send pre-meeting intel to the most accountable rep we can identify.
+    Prefer deal owner, then company owner, then meeting owner/sync owner.
     """
     recipient_ids: list[UUID] = []
     seen: set[UUID] = set()
@@ -79,6 +83,9 @@ async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> lis
         company = await session.get(Company, meeting.company_id)
         if company:
             push(company.assigned_to_id)
+
+    push(meeting.owner_user_id)
+    push(meeting.synced_by_user_id)
 
     return recipient_ids
 
@@ -182,15 +189,15 @@ async def run_due_pre_meeting_intel_once() -> dict[str, int]:
             return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
 
         now = datetime.utcnow()
-        window_end = now + timedelta(hours=config["send_hours_before"])
+        generate_window_end = now + timedelta(hours=config["generate_hours_before"])
+        send_window_end = now + timedelta(hours=config["send_hours_before"])
         meetings = (
             await session.execute(
                 select(Meeting).where(
                     Meeting.status == "scheduled",
                     Meeting.scheduled_at.is_not(None),
                     Meeting.scheduled_at > now,
-                    Meeting.scheduled_at <= window_end,
-                    Meeting.intel_email_sent_at.is_(None),
+                    Meeting.scheduled_at <= generate_window_end,
                 )
             )
         ).scalars().all()
@@ -223,6 +230,9 @@ async def run_due_pre_meeting_intel_once() -> dict[str, int]:
 
                 if not meeting:
                     skipped += 1
+                    continue
+
+                if meeting.intel_email_sent_at or not meeting.scheduled_at or meeting.scheduled_at > send_window_end:
                     continue
 
                 recipient_ids = await _collect_recipient_ids(session, meeting)

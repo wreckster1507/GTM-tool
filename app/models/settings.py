@@ -150,12 +150,13 @@ class WorkspaceSettings(SQLModel, table=True):
         default={
             "enabled": True,
             "send_hours_before": 12,
+            "generate_hours_before": 48,
             "auto_generate_if_missing": True,
         },
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"enabled":true,"send_hours_before":12,"auto_generate_if_missing":true}',
+            server_default='{"enabled":true,"send_hours_before":12,"generate_hours_before":48,"auto_generate_if_missing":true}',
         ),
     )
     prospect_stage_settings: list[dict] = Field(
@@ -342,12 +343,14 @@ class RolePermissionsUpdate(SQLModel):
 class PreMeetingAutomationSettingsRead(SQLModel):
     enabled: bool
     send_hours_before: int
+    generate_hours_before: int
     auto_generate_if_missing: bool
 
 
 class PreMeetingAutomationSettingsUpdate(SQLModel):
     enabled: bool
     send_hours_before: int
+    generate_hours_before: int
     auto_generate_if_missing: bool
 
 

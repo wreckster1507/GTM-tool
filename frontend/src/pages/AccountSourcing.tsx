@@ -354,6 +354,20 @@ export default function AccountSourcing() {
   const { isAdmin, user } = useAuth();
 
   useEffect(() => {
+    if (searchParams.get("new") !== "company") return;
+    const requestedName = (searchParams.get("name") || "").trim();
+    setCreateForm({ companiesText: requestedName });
+    setCreateError("");
+    setShowCreateModal(true);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("new");
+      next.delete("name");
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem("account-sourcing-dismissed-batches", JSON.stringify(dismissedBatchIds));
     } catch {

@@ -741,6 +741,8 @@ async def update_pre_meeting_automation_settings(
 ):
     if body.send_hours_before < 1 or body.send_hours_before > 168:
         raise HTTPException(status_code=422, detail="send_hours_before must be between 1 and 168")
+    if body.generate_hours_before < body.send_hours_before or body.generate_hours_before > 168:
+        raise HTTPException(status_code=422, detail="generate_hours_before must be between send_hours_before and 168")
 
     row = await _get_or_create(session)
     row.pre_meeting_automation_settings = body.model_dump()

@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import Text as sa_Text, func, or_, select
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.models.company import Company
@@ -14,10 +15,21 @@ from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdat
 from app.models.user import User
 from app.repositories.meeting import MeetingRepository
 from app.services.internal_domains import get_internal_domains, is_internal_only
+from app.services.meeting_automation import _collect_recipient_ids
 from app.services.permissions import require_workspace_permission
 from app.schemas.common import PaginatedResponse
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
+
+
+class MeetingPrepMonitor(BaseModel):
+    window_hours: int
+    upcoming_count: int
+    no_company_count: int
+    no_deal_count: int
+    no_intel_count: int
+    no_recipient_count: int
+    unlinked: list[MeetingRead]
 
 
 @router.get("/", response_model=PaginatedResponse[MeetingRead])
@@ -173,6 +185,46 @@ async def list_meetings(
     total = (await session.execute(count_stmt)).scalar_one()
     items = list((await session.execute(stmt)).scalars().all())
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
+
+
+@router.get("/prep-monitor", response_model=MeetingPrepMonitor)
+async def get_meeting_prep_monitor(
+    session: DBSession,
+    current_user: CurrentUser,
+    window_hours: int = Query(default=24, ge=1, le=168),
+):
+    now = datetime.utcnow()
+    window_end = now + timedelta(hours=window_hours)
+    meetings = list((
+        await session.execute(
+            select(Meeting)
+            .where(
+                Meeting.status == "scheduled",
+                Meeting.is_internal.is_(False),
+                Meeting.scheduled_at.is_not(None),
+                Meeting.scheduled_at > now,
+                Meeting.scheduled_at <= window_end,
+            )
+            .order_by(Meeting.scheduled_at.asc())
+        )
+    ).scalars().all())
+
+    no_recipient_count = 0
+
+    for meeting in meetings:
+        if not await _collect_recipient_ids(session, meeting):
+            no_recipient_count += 1
+
+    unlinked = [meeting for meeting in meetings if not meeting.company_id or not meeting.deal_id]
+    return MeetingPrepMonitor(
+        window_hours=window_hours,
+        upcoming_count=len(meetings),
+        no_company_count=sum(1 for meeting in meetings if not meeting.company_id),
+        no_deal_count=sum(1 for meeting in meetings if not meeting.deal_id),
+        no_intel_count=sum(1 for meeting in meetings if not meeting.research_data),
+        no_recipient_count=no_recipient_count,
+        unlinked=unlinked,
+    )
 
 
 def _attendees_key(attendees) -> frozenset:

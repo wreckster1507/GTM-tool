@@ -29,6 +29,7 @@ import type {
   OutreachContentSettings,
   PipelineSummarySettings,
   PreMeetingAutomationSettings,
+  MeetingPrepMonitor,
   ProspectImportResponse,
   RolePermissionsSettings,
   CrmImportResponse,
@@ -885,6 +886,8 @@ export const meetingsApi = {
     return requestPaginated<Meeting>(`/api/v1/meetings/?${search.toString()}`);
   },
   get: (id: string) => request<Meeting>(`/api/v1/meetings/${id}`),
+  prepMonitor: (windowHours = 24) =>
+    request<MeetingPrepMonitor>(`/api/v1/meetings/prep-monitor?window_hours=${windowHours}`),
   getRecordingUrl: (id: string) =>
     request<{ url: string }>(`/api/v1/meetings/${id}/recording-url`),
   create: (data: Partial<Meeting>) =>

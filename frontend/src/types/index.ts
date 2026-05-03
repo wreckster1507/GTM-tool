@@ -619,7 +619,18 @@ export interface RolePermissionsSettings {
 export interface PreMeetingAutomationSettings {
   enabled: boolean;
   send_hours_before: number;
+  generate_hours_before: number;
   auto_generate_if_missing: boolean;
+}
+
+export interface MeetingPrepMonitor {
+  window_hours: number;
+  upcoming_count: number;
+  no_company_count: number;
+  no_deal_count: number;
+  no_intel_count: number;
+  no_recipient_count: number;
+  unlinked: Meeting[];
 }
 
 export interface SyncScheduleSettings {

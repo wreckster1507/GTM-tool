@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-import type { Activity, Company, Deal, Meeting, User as UserType } from "../types/index";
+import type { Activity, Company, Deal, Meeting, MeetingPrepMonitor, User as UserType } from "../types/index";
 import { formatOptionalDate, isValidDateValue } from "../lib/utils";
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 
@@ -239,6 +239,18 @@ function detectTitleCompanyMismatch(
   return titleCompany.id !== linkedCompanyId ? titleCompany : null;
 }
 
+function suggestCompanyNameFromMeetingTitle(title: string): string {
+  const cleaned = title
+    .replace(/\b(introduction|intro|connect|sync|call|meeting|demo|walkthrough|discussion|cadence|kick off|clarification)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const parts = cleaned
+    .split(/\s*(?:<>|<->| x | X | with | and |~|\||-|:|\/)\s*/g)
+    .map((part) => part.replace(/\bbeacon(?:\.li)?\b/gi, "").replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 2);
+  return parts.find((part) => !/^beacon$/i.test(part)) || title.trim();
+}
+
 function MeetingIntelCard({
   meeting,
   company,
@@ -274,7 +286,10 @@ function MeetingIntelCard({
   const hasIntelSent = !!(meeting as any).intel_email_sent_at;
   const isRunning = runningIntel === meeting.id;
   const isUnlinking = unlinking === meeting.id;
+  const hasCompanyLink = !!meeting.company_id;
   const needsReview = !meeting.company_id || !meeting.deal_id;
+  const suggestedCompanyName = useMemo(() => suggestCompanyNameFromMeetingTitle(meeting.title), [meeting.title]);
+  const createAccountHref = `/account-sourcing?new=company&name=${encodeURIComponent(suggestedCompanyName)}&returnTo=${encodeURIComponent(`/pre-meeting-assistance#${meeting.id}`)}`;
   const titleMismatchCompany = detectTitleCompanyMismatch(
     meeting.title,
     meeting.company_id || undefined,
@@ -494,10 +509,30 @@ function MeetingIntelCard({
         </div>
 
         {needsReview && (
-          <div style={{ padding: "8px 12px", borderRadius: 10, background: "#fff8f1", border: "1px solid #ffe0bd", display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff8f1", border: "1px solid #ffe0bd", display: "flex", alignItems: "flex-start", gap: 10 }}>
             <AlertTriangle size={13} style={{ color: colors.orange, marginTop: 1, flexShrink: 0 }} />
-            <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.5 }}>
-              Beacon did not find a confident company and deal link for this meeting yet. Use <span style={{ fontWeight: 700 }}>Re-link</span> to review it instead of trusting an automatic guess.
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.5 }}>
+                {!meeting.company_id
+                  ? "No account is linked to this meeting. Link an existing account, or create the account from Account Sourcing before generating prep."
+                  : "The account is linked, but the opportunity is missing. Open the meeting and link the right deal before relying on the prep."}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                <Link
+                  to={`/meetings/${meeting.id}`}
+                  style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid #ffd3be", background: "#fff", color: "#7a3f1f", fontSize: 11, fontWeight: 800, textDecoration: "none" }}
+                >
+                  Link existing
+                </Link>
+                {!meeting.company_id && (
+                  <Link
+                    to={createAccountHref}
+                    style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid #ffd3be", background: "#fff", color: "#7a3f1f", fontSize: 11, fontWeight: 800, textDecoration: "none" }}
+                  >
+                    Add in Account Sourcing
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1047,13 +1082,24 @@ function MeetingIntelCard({
       <div style={{ padding: "12px 20px", borderTop: `1px solid ${colors.border}`, display: "flex", gap: 8, flexWrap: "wrap", background: expanded ? "#fafbfd" : "#fff" }}>
         <button
           type="button"
-          disabled={isRunning}
+          disabled={isRunning || !hasCompanyLink}
           onClick={() => onRunIntel(meeting.id)}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: isRunning ? "#f5f8fe" : "#fff", color: isRunning ? colors.faint : colors.primary, fontSize: 12, fontWeight: 700, cursor: isRunning ? "wait" : "pointer" }}
+          title={!hasCompanyLink ? "Link or add an account before generating meeting intel." : undefined}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: isRunning || !hasCompanyLink ? "#f5f8fe" : "#fff", color: isRunning || !hasCompanyLink ? colors.faint : colors.primary, fontSize: 12, fontWeight: 700, cursor: isRunning ? "wait" : !hasCompanyLink ? "not-allowed" : "pointer" }}
         >
           {isRunning ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
           {isRunning ? "Generating..." : hasResearch ? "Regenerate intel" : "Run intel now"}
         </button>
+
+        {!hasCompanyLink && (
+          <Link
+            to={createAccountHref}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "1px solid #ffd3be", background: "#fff8f1", color: "#7a3f1f", fontSize: 12, fontWeight: 700, textDecoration: "none" }}
+          >
+            <Building2 size={13} />
+            Add account
+          </Link>
+        )}
 
         <Link
           to={`/meetings/${meeting.id}`}
@@ -1301,6 +1347,7 @@ export default function PreMeetingAssistance() {
   const [totalMeetings, setTotalMeetings] = useState(0);
   const [meetingPages, setMeetingPages] = useState(1);
   const [summary, setSummary] = useState({ total: 0, upcoming: 0, hasIntel: 0, noIntel: 0 });
+  const [prepMonitor, setPrepMonitor] = useState<MeetingPrepMonitor | null>(null);
   const hideDeveloper = isDeveloperUser(user);
 
   useEffect(() => {
@@ -1375,6 +1422,8 @@ export default function PreMeetingAssistance() {
         hasIntel: hasIntelResp.total,
         noIntel: noIntelResp.total,
       });
+      const monitor = await meetingsApi.prepMonitor(24).catch(() => null);
+      setPrepMonitor(monitor);
 
       const companyIds = Array.from(new Set(ms.map((m) => m.company_id).filter(Boolean))) as string[];
       const dealIds = Array.from(new Set(ms.map((m) => m.deal_id).filter(Boolean))) as string[];
@@ -1465,7 +1514,6 @@ export default function PreMeetingAssistance() {
     () => (hideDeveloper ? users.filter((teamUser) => !isDeveloperUser(teamUser)) : users),
     [hideDeveloper, users],
   );
-
   const handleRunIntel = async (meetingId: string) => {
     setRunningIntel(meetingId);
     try {
@@ -1646,6 +1694,55 @@ export default function PreMeetingAssistance() {
           })()}
         </div>
       </section>
+
+      {prepMonitor && (
+        <section className="crm-panel" style={{ padding: 18, display: "grid", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: colors.primary, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Unlinked upcoming meetings
+              </div>
+              <div style={{ marginTop: 4, fontSize: 13, color: colors.sub }}>
+                Next 24h: {prepMonitor.no_company_count} without account, {prepMonitor.no_deal_count} without deal, {prepMonitor.no_intel_count} without intel, {prepMonitor.no_recipient_count} without recipient.
+              </div>
+            </div>
+          </div>
+          {prepMonitor.unlinked.length === 0 ? (
+            <div style={{ padding: "10px 12px", borderRadius: 10, background: colors.greenSoft, color: colors.green, fontSize: 13, fontWeight: 700 }}>
+              No unlinked customer meetings in the next 24 hours.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {prepMonitor.unlinked.slice(0, 8).map((meeting) => {
+                const suggestedCompanyName = suggestCompanyNameFromMeetingTitle(meeting.title);
+                const createAccountHref = `/account-sourcing?new=company&name=${encodeURIComponent(suggestedCompanyName)}&returnTo=${encodeURIComponent(`/pre-meeting-assistance#${meeting.id}`)}`;
+                return (
+                  <div key={meeting.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, alignItems: "center", padding: "10px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <Link to={`/meetings/${meeting.id}`} style={{ fontSize: 13, fontWeight: 800, color: colors.text, textDecoration: "none" }}>
+                        {meeting.title}
+                      </Link>
+                      <div style={{ marginTop: 3, fontSize: 12, color: colors.sub }}>
+                        {formatOptionalDate(meeting.scheduled_at)}
+                        {!meeting.company_id ? " · needs account" : ""}
+                        {!meeting.deal_id ? " · needs deal" : ""}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <Link to={`/meetings/${meeting.id}`} style={{ fontSize: 12, color: colors.primary, fontWeight: 800, textDecoration: "none" }}>Review</Link>
+                      {!meeting.company_id && (
+                        <Link to={createAccountHref} style={{ fontSize: 12, color: colors.orange, fontWeight: 800, textDecoration: "none" }}>
+                          Add account
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Filter bar — primary controls visible, advanced filters behind disclosure */}
       <section className="crm-panel" style={{ padding: 16, display: "grid", gap: 10 }}>

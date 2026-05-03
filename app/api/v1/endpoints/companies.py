@@ -2,18 +2,17 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import NotFoundError
 from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate
 from app.models.deal import Deal, DealRead
 from app.repositories.company import CompanyRepository
 from app.schemas.common import PaginatedResponse
-from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -94,19 +93,13 @@ async def list_companies(
 
 @router.post("/", response_model=CompanyRead, status_code=201)
 async def create_company(payload: CompanyCreate, session: DBSession, _user: CurrentUser):
-    from app.services.company_auto_mapping import backfill_orphans_for_company
-
-    repo = CompanyRepository(session)
-    if await repo.get_by_domain(payload.domain):
-        raise ConflictError(f"Company with domain '{payload.domain}' already exists")
-
-    data = payload.model_dump()
-    company = Company(**data)
-    company.icp_score, company.icp_tier = score_company(company)
-    saved = await repo.save(company)
-    await backfill_orphans_for_company(session, saved)
-    await session.commit()
-    return saved
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Accounts can only be created from Account Sourcing. "
+            "Use /api/v1/account-sourcing/companies/manual or upload a workbook from the Account Sourcing page."
+        ),
+    )
 
 
 @router.get("/{company_id}", response_model=CompanyRead)

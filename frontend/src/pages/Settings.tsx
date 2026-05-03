@@ -749,6 +749,10 @@ export default function SettingsPage() {
       const payload: PreMeetingAutomationSettings = {
         ...preMeetingSettings,
         send_hours_before: Math.max(1, Math.min(168, Number(preMeetingSettings.send_hours_before) || 12)),
+        generate_hours_before: Math.max(
+          Math.max(1, Math.min(168, Number(preMeetingSettings.send_hours_before) || 12)),
+          Math.min(168, Number(preMeetingSettings.generate_hours_before) || 48),
+        ),
       };
       const saved = await settingsApi.updatePreMeetingAutomation(payload);
       setPreMeetingSettings(saved);
@@ -1640,7 +1644,7 @@ export default function SettingsPage() {
             </div>
 
             <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(240px, 0.45fr)", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) repeat(2, minmax(220px, 0.35fr))", gap: 16 }}>
                 <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                     <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable automatic pre-meeting sends</div>
@@ -1669,6 +1673,22 @@ export default function SettingsPage() {
                   />
                   <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
                     Default is <strong>12 hours</strong> before the scheduled meeting start. Use 1-168 hours.
+                  </div>
+                </div>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Prep generation window</div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={168}
+                    value={preMeetingSettings?.generate_hours_before ?? 48}
+                    onChange={(event) => updatePreMeetingField("generate_hours_before", Number(event.target.value))}
+                    disabled={!isAdmin || !preMeetingSettings}
+                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                  />
+                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                    Generate missing prep earlier, then send at the send window. Must be at least the send window.
                   </div>
                 </div>
               </div>

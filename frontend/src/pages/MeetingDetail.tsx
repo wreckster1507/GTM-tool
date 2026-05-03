@@ -70,6 +70,19 @@ function detectTitleCompanyMismatch(
   return titleCompany.id !== linkedCompanyId ? titleCompany : null;
 }
 
+function suggestedAccountNameFromTitle(title: string): string {
+  const cleaned = title
+    .replace(/\[STAGING COPY\]/gi, "")
+    .replace(/\b(introduction|intro|connect|sync|call|meeting|demo|walkthrough|discussion|cadence|kick off|clarification|interview)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const parts = cleaned
+    .split(/\s*(?:<>|<->| x | X | with | and |~|\||-|:|\/)\s*/g)
+    .map((part) => part.replace(/\bbeacon(?:\.li)?\b/gi, "").replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 2);
+  return parts.find((part) => !/^beacon$/i.test(part)) || cleaned || title.trim();
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface CompanyBackground {
@@ -269,6 +282,26 @@ function Section({ title, icon, children, defaultOpen = true, badge }: {
   );
 }
 
+function ReadinessStep({ done, label, detail, action }: {
+  done: boolean;
+  label: string;
+  detail: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "28px minmax(0, 1fr) auto", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 12, border: `1px solid ${done ? "#c7e8d3" : "#ffd9c2"}`, background: done ? "#f4fbf7" : "#fff8f3" }}>
+      <div style={{ width: 28, height: 28, borderRadius: 999, display: "grid", placeItems: "center", background: done ? "#dff6e8" : "#ffe9dc", color: done ? "#15803d" : "#c05621", fontWeight: 900, fontSize: 13 }}>
+        {done ? "✓" : "!"}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 850, color: "#203044" }}>{label}</div>
+        <div style={{ fontSize: 12, color: "#657891", marginTop: 2, lineHeight: 1.45 }}>{detail}</div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
 function SearchSelect<T extends { id: string }>({
   label,
   placeholder,
@@ -427,6 +460,10 @@ export default function MeetingDetail() {
         setCompany(c);
         setContacts(cts);
         setSignals(sig.slice(0, 8));
+      } else {
+        setCompany(null);
+        setContacts([]);
+        setSignals([]);
       }
       // Load research gaps in background — doesn't block page render
       meetingsApi.getResearchGaps(m.id).then(g => setResearchGaps(g.gaps)).catch(() => {});
@@ -503,6 +540,11 @@ export default function MeetingDetail() {
   // ── Run web research only (Wikipedia + DDG news/milestones) ─────────────────
   const handleRunIntelligence = async () => {
     if (!id) return;
+    if (!meeting?.company_id) {
+      setError("Link an account before running meeting intel.");
+      setShowLinkPanel(true);
+      return;
+    }
     setRunning(true);
     setStatusMsg("Running full intel: website, news, Hunter, signals, competitors…");
     setError("");
@@ -542,6 +584,11 @@ export default function MeetingDetail() {
   // ── Generate GPT-4o demo strategy (reads cached research_data) ──────────────
   const handleGenerateDemoStrategy = async () => {
     if (!id) return;
+    if (!meeting?.company_id) {
+      setError("Link an account before creating story and pre-intel.");
+      setShowLinkPanel(true);
+      return;
+    }
     setGeneratingStory(true);
     setError("");
     try {
@@ -764,6 +811,9 @@ export default function MeetingDetail() {
     (Array.isArray(cachedHunterContacts?.contacts) ? cachedHunterContacts.contacts.filter((c: any) => typeof c === "object") : []);
 
   const hasIcpData = !!(icpBeaconAngle || icpConversationStarter || icpPainPoints.length || icpTalkingPoints.length);
+  const accountNameSuggestion = suggestedAccountNameFromTitle(meeting.title);
+  const createAccountHref = `/account-sourcing?new=company&name=${encodeURIComponent(accountNameSuggestion)}&returnTo=${encodeURIComponent(`/meetings/${meeting.id}`)}`;
+  const prepReadyCount = [Boolean(company), Boolean(meeting.deal_id), Boolean(intelWasRun), Boolean(meeting.demo_strategy)].filter(Boolean).length;
 
   return (
     <div className="meeting-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -798,10 +848,10 @@ export default function MeetingDetail() {
       </div>
 
       {/* ── Hero ── */}
-      <div className="crm-panel p-8" style={{ padding: 32 }}>
+      <div className="crm-panel p-8" style={{ padding: 28 }}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <h2 className="text-[28px] font-extrabold text-[#1f2d3d]">{meeting.title}</h2>
+          <div style={{ minWidth: 0, flex: "1 1 520px" }}>
+            <h2 className="text-[28px] font-extrabold text-[#1f2d3d]" style={{ lineHeight: 1.15 }}>{meeting.title}</h2>
             <p className="text-[14px] text-[#647a91] mt-2 flex items-center gap-2 flex-wrap">
               {company ? (
                 <>
@@ -831,6 +881,18 @@ export default function MeetingDetail() {
                 </>
               )}
             </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+              {[
+                { label: "Account", done: Boolean(company) },
+                { label: "Deal", done: Boolean(meeting.deal_id) },
+                { label: "Intel", done: Boolean(intelWasRun) },
+                { label: "Story", done: Boolean(meeting.demo_strategy) },
+              ].map((item) => (
+                <span key={item.label} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 9px", borderRadius: 999, border: `1px solid ${item.done ? "#c7e8d3" : "#ffd9c2"}`, background: item.done ? "#f4fbf7" : "#fff8f3", color: item.done ? "#15803d" : "#b45309", fontSize: 12, fontWeight: 800 }}>
+                  {item.done ? "✓" : "!"} {item.label}
+                </span>
+              ))}
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {statusMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{statusMsg}</span>}
@@ -840,10 +902,63 @@ export default function MeetingDetail() {
             <button className="crm-button soft" onClick={handleOpenLinkPanel}>
               <Link2 size={14} /> {company ? "Re-link" : "Link Company / Deal"}
             </button>
-            <button className="crm-button soft" onClick={handleRunIntelligence} disabled={running}>
+            <button className="crm-button soft" onClick={handleRunIntelligence} disabled={running || !meeting.company_id} title={!meeting.company_id ? "Link an account before running intel." : undefined}>
               {running ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
               {running ? "Searching…" : intelWasRun ? "Re-run Web Intel" : "Run Web Intel"}
             </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+          <div style={{ border: "1px solid #dbe7f5", background: "#f8fbff", borderRadius: 16, padding: 16, display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 900, color: "#1f4e79", textTransform: "uppercase", letterSpacing: "0.06em" }}>Rep prep checklist</div>
+                <div style={{ fontSize: 13, color: "#657891", marginTop: 3 }}>{prepReadyCount}/4 ready before this meeting can produce useful prep.</div>
+              </div>
+              <span style={{ fontSize: 24, fontWeight: 900, color: prepReadyCount >= 3 ? "#15803d" : "#b45309" }}>{prepReadyCount}/4</span>
+            </div>
+            <ReadinessStep
+              done={Boolean(company)}
+              label="Link the account"
+              detail={company ? `Using ${company.name}.` : "Required before account intelligence, story generation, or prep email can be trusted."}
+              action={!company ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={handleOpenLinkPanel} style={{ border: "1px solid #c7d8ee", background: "#fff", color: "#1f4e79", borderRadius: 9, padding: "7px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>Link</button>
+                  <Link to={createAccountHref} style={{ border: "1px solid #ffd0b8", background: "#fff8f3", color: "#b45309", borderRadius: 9, padding: "7px 10px", fontSize: 12, fontWeight: 800, textDecoration: "none" }}>Add</Link>
+                </div>
+              ) : undefined}
+            />
+            <ReadinessStep
+              done={Boolean(meeting.deal_id)}
+              label="Link the deal"
+              detail={meeting.deal_id ? "Deal context is connected." : "Needed for stage, activity history, owner, and next-step context."}
+              action={!meeting.deal_id ? <button type="button" onClick={handleOpenLinkPanel} style={{ border: "1px solid #c7d8ee", background: "#fff", color: "#1f4e79", borderRadius: 9, padding: "7px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>Link</button> : undefined}
+            />
+          </div>
+          <div style={{ border: "1px solid #e3eaf3", background: "#fff", borderRadius: 16, padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: "#35465c", textTransform: "uppercase", letterSpacing: "0.06em" }}>Next best action</div>
+            {!company ? (
+              <>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#1f2d3d", lineHeight: 1.25 }}>Link an account first</div>
+                <div style={{ fontSize: 13, color: "#657891", lineHeight: 1.55 }}>Beacon will not create or guess an account here. Pick the correct existing account, or create it in Account Sourcing.</div>
+              </>
+            ) : !meeting.deal_id ? (
+              <>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#1f2d3d", lineHeight: 1.25 }}>Attach the right deal</div>
+                <div style={{ fontSize: 13, color: "#657891", lineHeight: 1.55 }}>This keeps prep grounded in stage, owner, and real CRM activity.</div>
+              </>
+            ) : !intelWasRun ? (
+              <>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#1f2d3d", lineHeight: 1.25 }}>Run meeting intel</div>
+                <div style={{ fontSize: 13, color: "#657891", lineHeight: 1.55 }}>Pull account context, attendee prep, timing signals, and meeting plan.</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#1f2d3d", lineHeight: 1.25 }}>Prep is ready to review</div>
+                <div style={{ fontSize: 13, color: "#657891", lineHeight: 1.55 }}>Scan the story, stakeholder focus, and account context before the call.</div>
+              </>
+            )}
           </div>
         </div>
 
@@ -901,7 +1016,7 @@ export default function MeetingDetail() {
                 <X size={14} />
               </button>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
               <SearchSelect
                 label="Company"
                 placeholder="Search accounts by name or domain"
@@ -1422,7 +1537,7 @@ export default function MeetingDetail() {
         </Section>
       )}
 
-      {hasMeetingReadiness && (
+      {hasMeetingReadiness && company && (
         <Section title="Meeting Readiness" icon={<Target size={15} className="text-[#2563eb]" />} badge="Prep">
           <div className="space-y-5" style={{ rowGap: 18, display: "grid" }}>
             {committeeCoverage && (
@@ -1561,9 +1676,18 @@ export default function MeetingDetail() {
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 1 — Account Intelligence (existing DB data, shown immediately)
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="Account Intelligence" icon={<Building2 size={15} className="text-[#ff6b35]" />}>
+      <Section title="Account Intelligence" icon={<Building2 size={15} className="text-[#ff6b35]" />} defaultOpen={Boolean(company)}>
         {!company ? (
-          <p className="text-[13px] text-[#6f8399]">No company linked to this meeting.</p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 16px", borderRadius: 12, background: "#fff8f3", border: "1px solid #ffd9c2" }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 850, color: "#7c2d12" }}>No account linked</div>
+              <div style={{ fontSize: 13, color: "#8a5a36", marginTop: 3 }}>Link an existing account or add it through Account Sourcing. Beacon will not create one from this page.</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={handleOpenLinkPanel} className="crm-button soft"><Link2 size={13} /> Link existing</button>
+              <Link to={createAccountHref} className="crm-button soft" style={{ textDecoration: "none" }}><Plus size={13} /> Add in Account Sourcing</Link>
+            </div>
+          </div>
         ) : (
           <div className="space-y-5" style={{ rowGap: 18, display: "grid" }}>
 
@@ -1931,6 +2055,14 @@ export default function MeetingDetail() {
       <Section title="Demo Strategy & Story Lineup" icon={<Sparkles size={15} className="text-[#ff6b35]" />}>
         {meeting.demo_strategy ? (
           <DemoStrategyCards strategy={meeting.demo_strategy} onRegenerate={handleGenerateDemoStrategy} regenerating={generatingStory} />
+        ) : !company ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 16px", borderRadius: 12, background: "#fff8f3", border: "1px solid #ffd9c2" }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 850, color: "#7c2d12" }}>Account required before story generation</div>
+              <div style={{ fontSize: 13, color: "#8a5a36", marginTop: 3 }}>Story and pre-intel need a real linked account. Beacon will not infer or create it from this meeting.</div>
+            </div>
+            <button type="button" onClick={handleOpenLinkPanel} className="crm-button soft"><Link2 size={13} /> Link account</button>
+          </div>
         ) : (
           <div className="rounded-xl border border-dashed border-[#ffd5be] bg-[#fff8f5] px-5 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
@@ -1939,7 +2071,7 @@ export default function MeetingDetail() {
                 GPT-4o will read your account intel and build a tailored demo playbook — opening hook, discovery question, 3 story chapters, objection handling, and next step.
               </p>
             </div>
-            <button className="crm-button primary shrink-0" onClick={handleGenerateDemoStrategy} disabled={generatingStory}>
+            <button className="crm-button primary shrink-0" onClick={handleGenerateDemoStrategy} disabled={generatingStory || !company}>
               {generatingStory ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />}
               {generatingStory ? "Building story…" : "Create Story & Pre-Intel"}
             </button>
