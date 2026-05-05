@@ -310,6 +310,40 @@ def _meeting_reporting_timestamp(row, *, window_end: datetime) -> datetime:
     return row.created_at or row.scheduled_at
 
 
+def _meeting_attendee_rep_ids(row, *, user_ids_by_email: dict[str, UUID]) -> list[UUID]:
+    attendees = row.attendees if isinstance(row.attendees, list) else []
+    rep_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for attendee in attendees:
+        if not isinstance(attendee, dict):
+            continue
+        email = str(attendee.get("email") or "").strip().lower()
+        rep_id = user_ids_by_email.get(email)
+        if rep_id and rep_id not in seen:
+            seen.add(rep_id)
+            rep_ids.append(rep_id)
+    return rep_ids
+
+
+def _meeting_rep_ids(
+    row,
+    *,
+    deal_owner: dict[UUID, UUID | None],
+    user_ids_by_email: dict[str, UUID],
+) -> list[UUID | None]:
+    rep_ids: list[UUID | None] = []
+    seen: set[UUID] = set()
+    primary_id = row.owner_user_id or deal_owner.get(row.deal_id)
+    if primary_id:
+        rep_ids.append(primary_id)
+        seen.add(primary_id)
+    for attendee_rep_id in _meeting_attendee_rep_ids(row, user_ids_by_email=user_ids_by_email):
+        if attendee_rep_id not in seen:
+            seen.add(attendee_rep_id)
+            rep_ids.append(attendee_rep_id)
+    return rep_ids or [None]
+
+
 def _normalize_geography_key(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if not raw:
@@ -497,6 +531,9 @@ async def sales_dashboard(
     contact_owner = {row.id: row.assigned_to_id for row in contact_rows}
     deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
     week_starts = _rolling_week_starts(window_start, window_end)
+    user_rows = (await session.execute(select(User.id, User.name, User.email))).all()
+    users = {row.id: row.name for row in user_rows}
+    user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
 
     activity_rows = (
         await session.execute(
@@ -537,6 +574,7 @@ async def sales_dashboard(
                 Meeting.created_at,
                 Meeting.status,
                 Meeting.external_source,
+                Meeting.attendees,
             ).where(
                 or_(
                     (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
@@ -549,13 +587,13 @@ async def sales_dashboard(
         meetings_rows = [
             row
             for row in meetings_rows
-            if _meeting_rep_id(row, deal_owner=deal_owner) in filter_rep_ids
+            if any(
+                rep_id in filter_rep_ids
+                for rep_id in _meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email)
+            )
         ]
     if filter_geographies:
         meetings_rows = [row for row in meetings_rows if row.deal_id in allowed_deal_ids]
-
-    user_rows = (await session.execute(select(User.id, User.name))).all()
-    users = {row.id: row.name for row in user_rows}
 
     pipeline_by_stage: dict[str, dict[str, float | int | str]] = {}
     pipeline_by_owner: dict[str, dict] = {}
@@ -829,13 +867,7 @@ async def sales_dashboard(
                 + week_counts["meetings"]
             )
 
-    for row in meetings_rows:
-        if row.status == "cancelled":
-            continue
-        source = str(row.external_source or "").strip().lower()
-        if source not in REAL_MEETING_SOURCES:
-            continue
-        row_rep_id = _meeting_rep_id(row, deal_owner=deal_owner)
+    def bump_meeting(row_rep_id: UUID | None, meeting_timestamp: datetime) -> None:
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         meeting_bucket = rep_activity.setdefault(
             rep_key,
@@ -880,7 +912,6 @@ async def sales_dashboard(
                 },
             },
         )
-        meeting_timestamp = _meeting_reporting_timestamp(row, window_end=window_end)
         week_counts = weekly_bucket["weeks"].get(_week_key(_start_of_week(meeting_timestamp)))
         meeting_bucket["meetings"] += 1
         meeting_bucket["total"] = (
@@ -897,6 +928,18 @@ async def sales_dashboard(
                 + week_counts["linkedin_reachouts"]
                 + week_counts["meetings"]
             )
+
+    for row in meetings_rows:
+        if row.status == "cancelled":
+            continue
+        source = str(row.external_source or "").strip().lower()
+        if source not in REAL_MEETING_SOURCES:
+            continue
+        meeting_timestamp = _meeting_reporting_timestamp(row, window_end=window_end)
+        for row_rep_id in _meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email):
+            if filter_rep_ids and row_rep_id not in filter_rep_ids:
+                continue
+            bump_meeting(row_rep_id, meeting_timestamp)
 
     rep_activity_rows = [
         RepActivityRow(
