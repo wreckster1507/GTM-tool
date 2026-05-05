@@ -1192,7 +1192,7 @@ function MultiSelectDropdown({
         : `${selected.length} selected`;
 
   return (
-    <div style={{ display: "grid", gap: 8 }} ref={ref}>
+    <div style={{ display: "grid", gap: 8, position: "relative", zIndex: open ? 200 : 1 }} ref={ref}>
       <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
         {label}
       </label>
@@ -1243,7 +1243,7 @@ function MultiSelectDropdown({
               top: "calc(100% + 6px)",
               left: 0,
               right: 0,
-              zIndex: 50,
+              zIndex: 1000,
               background: "#fff",
               border: "1px solid #dde8f4",
               borderRadius: 14,
@@ -1745,7 +1745,7 @@ export default function PreMeetingAssistance() {
       )}
 
       {/* Filter bar — primary controls visible, advanced filters behind disclosure */}
-      <section className="crm-panel" style={{ padding: 16, display: "grid", gap: 10 }}>
+      <section className="crm-panel" style={{ position: "relative", zIndex: 20, overflow: "visible", padding: 16, display: "grid", gap: 10 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ position: "relative", minWidth: 280, flex: "1 1 280px", maxWidth: 380 }}>
             <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: colors.faint }} />

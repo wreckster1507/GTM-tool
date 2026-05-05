@@ -219,7 +219,7 @@ function MultiSelectDropdown({
   const isActive = selected.length > 0;
 
   return (
-    <div style={{ position: "relative" }} ref={ref}>
+    <div style={{ position: "relative", zIndex: open ? 200 : 1 }} ref={ref}>
       <button
         type="button"
         onClick={() => { setOpen((o) => !o); setQuery(""); }}
@@ -258,7 +258,7 @@ function MultiSelectDropdown({
           position: "absolute",
           top: "calc(100% + 4px)",
           left: 0,
-          zIndex: 50,
+          zIndex: 1000,
           minWidth: 200,
           background: "#fff",
           border: "1px solid #dde8f4",
@@ -545,7 +545,7 @@ export default function Meetings() {
           a "More filters" disclosure.  Most reps only need search / status / assignee
           / show-internal; keeping the bar dense was visual noise we lived with too
           long. */}
-      <div style={{ ...styles.panel, padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ ...styles.panel, position: "relative", zIndex: 20, overflow: "visible", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {/* Free-text search: matches meeting title, linked company name,
               and any text inside the attendees JSON (names + emails). */}
