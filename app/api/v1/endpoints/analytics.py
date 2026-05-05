@@ -300,6 +300,16 @@ def _activity_rep_id(
     return deal_owner.get(row.deal_id) or contact_owner.get(row.contact_id) or row.created_by_id
 
 
+def _meeting_rep_id(row, *, deal_owner: dict[UUID, UUID | None]) -> UUID | None:
+    return row.owner_user_id or deal_owner.get(row.deal_id)
+
+
+def _meeting_reporting_timestamp(row, *, window_end: datetime) -> datetime:
+    if row.scheduled_at and row.scheduled_at <= window_end:
+        return row.scheduled_at
+    return row.created_at or row.scheduled_at
+
+
 def _normalize_geography_key(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if not raw:
@@ -514,8 +524,9 @@ async def sales_dashboard(
     if filter_geographies:
         activity_rows = [row for row in activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
 
-    # Meetings: use scheduled_at as the primary signal (when the meeting actually happened)
-    # Fall back to created_at only when scheduled_at is missing
+    # Meetings are counted when they happened, and upcoming scheduled meetings
+    # are counted when they were booked so reps see newly scheduled meetings in
+    # the current analytics window instead of waiting until the meeting date.
     meetings_rows = (
         await session.execute(
             select(
@@ -529,7 +540,7 @@ async def sales_dashboard(
             ).where(
                 or_(
                     (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
-                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
+                    (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
                 )
             )
         )
@@ -538,7 +549,7 @@ async def sales_dashboard(
         meetings_rows = [
             row
             for row in meetings_rows
-            if (deal_owner.get(row.deal_id) or row.owner_user_id) in filter_rep_ids
+            if _meeting_rep_id(row, deal_owner=deal_owner) in filter_rep_ids
         ]
     if filter_geographies:
         meetings_rows = [row for row in meetings_rows if row.deal_id in allowed_deal_ids]
@@ -824,7 +835,7 @@ async def sales_dashboard(
         source = str(row.external_source or "").strip().lower()
         if source not in REAL_MEETING_SOURCES:
             continue
-        row_rep_id = deal_owner.get(row.deal_id) or row.owner_user_id
+        row_rep_id = _meeting_rep_id(row, deal_owner=deal_owner)
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         meeting_bucket = rep_activity.setdefault(
             rep_key,
@@ -869,7 +880,7 @@ async def sales_dashboard(
                 },
             },
         )
-        meeting_timestamp = row.scheduled_at or row.created_at
+        meeting_timestamp = _meeting_reporting_timestamp(row, window_end=window_end)
         week_counts = weekly_bucket["weeks"].get(_week_key(_start_of_week(meeting_timestamp)))
         meeting_bucket["meetings"] += 1
         meeting_bucket["total"] = (

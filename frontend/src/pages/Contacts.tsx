@@ -595,7 +595,16 @@ export default function Contacts() {
   }, []);
 
   useEffect(() => {
-    authApi.listUsers().then(setTeamUsers).catch(() => setTeamUsers([]));
+    authApi
+      .listAllUsers()
+      .then((users) => {
+        setTeamUsers(
+          users
+            .filter((u) => u.is_active)
+            .sort((left, right) => (left.name || left.email).localeCompare(right.name || right.email))
+        );
+      })
+      .catch(() => setTeamUsers([]));
   }, []);
 
   // Seed the company filter with common CRM companies; the searchable selector
