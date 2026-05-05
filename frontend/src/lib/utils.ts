@@ -49,6 +49,16 @@ export function formatOptionalDate(dateStr?: string | null, fallback = "No date 
   return isValidDateValue(dateStr) ? formatDate(dateStr) : "Invalid date";
 }
 
+export function gmailComposeUrl(email: string, subject?: string, body?: string): string {
+  const params = new URLSearchParams({
+    view: "cm",
+    to: email,
+  });
+  if (subject) params.set("su", subject);
+  if (body) params.set("body", body);
+  return `https://mail.google.com/mail/?${params.toString()}`;
+}
+
 export function getInitials(name: string): string {
   return name
     .split(/[\s-_]/)

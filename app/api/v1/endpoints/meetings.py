@@ -492,7 +492,7 @@ async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: 
 
     def _unwrap(key):
         entry = ec.get(key)
-        return entry.get("data") if isinstance(entry, dict) else None
+        return entry.get("data") if isinstance(entry, dict) else entry
 
     def _age_days(key) -> float:
         entry = ec.get(key)
@@ -532,7 +532,7 @@ async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: 
     if not _unwrap("web_scrape") and domain and not domain.endswith(".unknown"):
         gaps.append({"key": "web_scrape", "label": "Website content (pricing, product, careers)"})
 
-    if not ec.get("competitive_landscape_v2") and clean_name:
+    if not _unwrap("competitive_landscape_v2") and clean_name:
         gaps.append({"key": "competitive_landscape", "label": "Competitive landscape"})
 
     icp_raw = _unwrap("icp_analysis")

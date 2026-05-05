@@ -33,7 +33,7 @@ import {
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
 import type { Company, Contact, DealStageSetting } from "../types";
-import { formatDate, formatDomain, getAccountPrioritySnapshot } from "../lib/utils";
+import { formatDate, formatDomain, getAccountPrioritySnapshot, gmailComposeUrl } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
 import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
@@ -178,7 +178,16 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
           ) : null}
 
           <div style={{ display: "inline-flex", gap: 10 }}>
-            {contact.email ? <a href={`mailto:${contact.email}`}><Mail size={14} /></a> : null}
+            {contact.email ? (
+              <a
+                href={gmailComposeUrl(contact.email)}
+                target="_blank"
+                rel="noreferrer"
+                title={`Email ${contact.email} in Gmail`}
+              >
+                <Mail size={14} />
+              </a>
+            ) : null}
             {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer"><span><Globe size={14} /></span></a> : null}
             {contact.phone ? (
               <button
@@ -218,6 +227,13 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
             />
           </div>
           <div style={{ display: "inline-flex", gap: 8 }}>
+            <Link
+              to={`/account-sourcing/contacts/${contact.id}`}
+              style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.primary, borderRadius: 10, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+              title="Open full prospect card"
+            >
+              <ExternalLink size={12} /> Open prospect
+            </Link>
             <button
               onClick={async () => {
                 setRe(true);

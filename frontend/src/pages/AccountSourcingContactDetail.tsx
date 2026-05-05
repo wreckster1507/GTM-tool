@@ -26,7 +26,7 @@ import {
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
-import { avatarColor, formatDate, formatDomain, getAccountPrioritySnapshot, getInitials, isPlaceholderDomain } from "../lib/utils";
+import { avatarColor, formatDate, formatDomain, getAccountPrioritySnapshot, getInitials, gmailComposeUrl, isPlaceholderDomain } from "../lib/utils";
 import type { Activity, Company, Contact, Deal } from "../types";
 import { MessageSquare } from "lucide-react";
 import {
@@ -369,7 +369,7 @@ export default function AccountSourcingContactDetail() {
                   ) : null}
                   <div style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
                     {company ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
-                    {contact.email ? <ContactActionButton icon={<Mail size={14} />} href={`mailto:${contact.email}`} label={`Email ${contact.email}`} tone="primary" /> : null}
+                    {contact.email ? <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label={`Email ${contact.email}`} tone="primary" /> : null}
                     {contact.phone ? (
                       <ContactActionButton
                         icon={<Phone size={14} />}
@@ -742,7 +742,7 @@ export default function AccountSourcingContactDetail() {
               <KV label="Momentum" value={`${getProspectTrackingScore(contact)} · ${getProspectTrackingSummary(contact)}`} />
               <KV label="Name" value={fullName} />
               <KV label="Title" value={contact.title} />
-              <KV label="Email" value={contact.email ? <ContactActionButton icon={<Mail size={14} />} href={`mailto:${contact.email}`} label={contact.email} tone="primary" /> : undefined} />
+              <KV label="Email" value={contact.email ? <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label={contact.email} tone="primary" /> : undefined} />
               <KV
                 label="Phone"
                 value={contact.phone ? (

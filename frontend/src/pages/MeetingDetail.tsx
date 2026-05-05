@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, BrainCircuit, ExternalLink, RefreshCw, Sparkles,
-  Users, Newspaper, BookOpen, Shield, ChevronDown, ChevronUp,
+  ArrowLeft, ExternalLink, RefreshCw, Sparkles,
+  Users, Newspaper, Shield, ChevronDown, ChevronUp,
   Building2, TrendingUp, Lightbulb, Search, PlayCircle,
   Swords, MessageSquareWarning, ArrowRight, Briefcase, Zap,
   Globe, Target, Mail, UserPlus, FileText, Crosshair, Trash2,
   Link2, Link2Off, Plus, X, Save,
 } from "lucide-react";
-import { accountSourcingApi, companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
+import { accountSourcingApi, companiesApi, contactsApi, dealsApi, meetingsApi, signalsApi } from "../lib/api";
 import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
 import { formatCurrency, formatDate, formatOptionalDate, avatarColor, getInitials, isValidDateValue } from "../lib/utils";
@@ -184,7 +184,7 @@ interface WebResearch {
   google_news?: GoogleNewsItem[];
   hunter_contacts?: HunterContacts | null;
   hunter_company?: Record<string, unknown> | null;
-  competitive_landscape?: Array<{ title: string; url: string; snippet: string }>;
+  competitive_landscape?: Array<{ title?: string; name?: string; competitor?: string; url?: string; snippet?: string; summary?: string }>;
   attendee_intelligence?: AttendeeIntelligence | null;
   why_now_signals?: WhyNowSignal[];
   meeting_recommendations?: string[];
@@ -203,18 +203,35 @@ const STORY_SECTIONS = [
   { icon: ArrowRight,           color: "#15803d", bg: "#f0fdf4", border: "#bbf7d0", label: "Next Step" },
 ];
 
-/** Parse GPT-4o numbered output into { title, body }[] sections */
 function parseDemoSections(text: string): { title: string; body: string }[] {
-  // Split on lines starting with a digit+dot (1. 2. etc.)
-  const chunks = text.split(/\n(?=\d+\.\s)/);
-  return chunks.map((chunk) => {
-    const firstNewline = chunk.indexOf("\n");
-    const heading = firstNewline === -1 ? chunk : chunk.slice(0, firstNewline);
-    const body = firstNewline === -1 ? "" : chunk.slice(firstNewline + 1).trim();
-    // Strip leading "1. " and markdown bold markers from the heading
-    const title = heading.replace(/^\d+\.\s*/, "").replace(/\*\*/g, "").replace(/:$/, "").trim();
-    return { title, body };
-  }).filter((s) => s.title);
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[-_]{3,}$/.test(line))
+    .filter((line) => !/^#\s+demo strategy/i.test(line));
+
+  const sections: { title: string; lines: string[] }[] = [];
+  for (const line of lines) {
+    const heading =
+      line.match(/^#{2,4}\s*(?:\d+\.\s*)?(.+)$/)?.[1] ??
+      line.match(/^\d+\.\s*(.+)$/)?.[1];
+    if (heading) {
+      sections.push({ title: cleanMarkdownLine(heading), lines: [] });
+      continue;
+    }
+    if (!sections.length) {
+      sections.push({ title: "Strategy", lines: [] });
+    }
+    sections[sections.length - 1].lines.push(cleanMarkdownLine(line));
+  }
+
+  return sections
+    .map((section) => ({
+      title: section.title.replace(/\s*\([^)]*\)\s*$/g, "").trim(),
+      body: section.lines.filter(Boolean).join("\n"),
+    }))
+    .filter((section) => section.title && section.body)
+    .slice(0, 6);
 }
 
 function DemoStrategyCards({ strategy, onRegenerate, regenerating }: {
@@ -225,37 +242,78 @@ function DemoStrategyCards({ strategy, onRegenerate, regenerating }: {
   const sections = parseDemoSections(strategy);
 
   return (
-    <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-2">
+    <div className="demo-strategy-wrap">
+      <div className="demo-strategy-grid">
         {sections.map((sec, i) => {
           const cfg = STORY_SECTIONS[i] ?? STORY_SECTIONS[0];
           const Icon = cfg.icon;
           return (
             <div
               key={i}
-              className="rounded-xl border p-4"
+              className="demo-strategy-card"
               style={{ background: cfg.bg, borderColor: cfg.border }}
             >
-              <div className="flex items-center gap-2 mb-2">
+              <div className="demo-strategy-kicker">
                 <Icon size={14} style={{ color: cfg.color }} />
-                <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: cfg.color }}>
+                <span style={{ color: cfg.color }}>
                   {cfg.label}
                 </span>
               </div>
-              <p className="text-[12px] font-semibold text-[#2b3f55] mb-1">{sec.title}</p>
-              <div className="text-[13px] text-[#3d5268] leading-relaxed whitespace-pre-wrap">
-                {sec.body.replace(/\*\*/g, "").replace(/^\s*[-–]\s*/gm, "• ")}
+              <p className="demo-strategy-title">{sec.title}</p>
+              <div className="demo-strategy-body">
+                {sec.body.split("\n").filter(Boolean).map((line, idx) => (
+                  <p key={idx}>{line.replace(/^\s*[-–•]\s*/, "• ")}</p>
+                ))}
               </div>
             </div>
           );
         })}
       </div>
-      <div className="flex justify-end pt-1">
+      <div className="flex justify-end pt-2">
         <button className="crm-button soft text-[12px]" onClick={onRegenerate} disabled={regenerating}>
           {regenerating ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
           {regenerating ? "Regenerating…" : "Regenerate Story"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function cleanMarkdownLine(line: string): string {
+  return line
+    .replace(/^\s*[>*-]\s*/, "")
+    .replace(/\*\*/g, "")
+    .replace(/\*/g, "")
+    .replace(/^#+\s*/, "")
+    .replace(/^["“”]+|["“”]+$/g, "")
+    .trim();
+}
+
+function MarkdownBrief({ text }: { text: string }) {
+  const sections = text
+    .split(/\n(?=##\s+)/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="intel-brief-grid">
+      {sections.map((block, i) => {
+        const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+        const heading = cleanMarkdownLine(lines[0] ?? `Section ${i + 1}`);
+        const bodyLines = lines.slice(1)
+          .map(cleanMarkdownLine)
+          .filter((line) => line && !/^[-_]{3,}$/.test(line));
+        return (
+          <section key={`${heading}-${i}`} className="intel-brief-card">
+            <h3>{heading}</h3>
+            <div className="intel-brief-body">
+              {bodyLines.map((line, idx) => (
+                <p key={idx}>{line}</p>
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -268,8 +326,8 @@ function Section({ title, icon, children, defaultOpen = true, badge }: {
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="crm-panel overflow-hidden">
-      <button className="flex items-center justify-between w-full px-6 py-4 text-left" style={{ padding: "16px 22px" }} onClick={() => setOpen(!open)}>
+    <div className="crm-panel meeting-section overflow-hidden">
+      <button className="meeting-section-header flex items-center justify-between w-full text-left" onClick={() => setOpen(!open)}>
         <div className="flex items-center gap-2">
           {icon}
           <span className="text-[15px] font-bold text-[#2b3f55]">{title}</span>
@@ -277,7 +335,7 @@ function Section({ title, icon, children, defaultOpen = true, badge }: {
         </div>
         {open ? <ChevronUp size={14} className="text-[#7a8ea4]" /> : <ChevronDown size={14} className="text-[#7a8ea4]" />}
       </button>
-      {open && <div className="px-6 pb-6" style={{ padding: "0 22px 22px" }}>{children}</div>}
+      {open && <div className="meeting-section-body">{children}</div>}
     </div>
   );
 }
@@ -413,15 +471,11 @@ export default function MeetingDetail() {
   const [company, setCompany]     = useState<Company | null>(null);
   const [contacts, setContacts]   = useState<Contact[]>([]);
   const [signals, setSignals]     = useState<Signal[]>([]);
-  const [accountBrief, setAccountBrief] = useState<string | null>(null);
-  const [loadingBrief, setLoadingBrief] = useState(false);
 
   const [loading, setLoading]         = useState(true);
   const [running, setRunning]         = useState(false);
   const [researchingMore, setResearchingMore] = useState(false);
   const [generatingStory, setGeneratingStory] = useState(false);
-  const [scoring, setScoring]         = useState(false);
-  const [rawNotes, setRawNotes]       = useState("");
   const [error, setError]             = useState("");
   const [statusMsg, setStatusMsg]     = useState("");
   const [researchGaps, setResearchGaps] = useState<Array<{ key: string; label: string }>>([]);
@@ -449,7 +503,6 @@ export default function MeetingDetail() {
     try {
       const m = await meetingsApi.get(id);
       setMeeting(m);
-      setRawNotes(m.raw_notes ?? "");
 
       if (m.company_id) {
         const [c, cts, sig] = await Promise.all([
@@ -489,7 +542,6 @@ export default function MeetingDetail() {
   const hasGoogleNews = (webResearch.google_news?.length ?? 0) > 0;
   const hasHunterContacts = (webResearch.hunter_contacts?.contacts?.length ?? 0) > 0;
   const hasWebsiteAnalysis = !!webResearch.website_analysis && Object.keys(webResearch.website_analysis).length > 0;
-  const hasCompetitors = (webResearch.competitive_landscape?.length ?? 0) > 0;
   const hasExecutiveBriefing = !!webResearch.executive_briefing;
   const stakeholderCards = webResearch.attendee_intelligence?.stakeholder_cards ?? [];
   const committeeCoverage = webResearch.attendee_intelligence?.committee_coverage;
@@ -522,20 +574,6 @@ export default function MeetingDetail() {
       tone: signals.length > 0 ? "orange" : "neutral",
     },
   ] as const;
-
-  // ── Fetch account brief from intelligence endpoint ──────────────────────────
-  const handleGetAccountBrief = async () => {
-    if (!company) return;
-    setLoadingBrief(true);
-    try {
-      const r = await intelligenceApi.getAccountBrief(company.id);
-      setAccountBrief(r.brief ?? "No brief generated.");
-    } catch {
-      setAccountBrief("Failed to generate brief — check API.");
-    } finally {
-      setLoadingBrief(false);
-    }
-  };
 
   // ── Run web research only (Wikipedia + DDG news/milestones) ─────────────────
   const handleRunIntelligence = async () => {
@@ -598,21 +636,6 @@ export default function MeetingDetail() {
       setError(e instanceof Error ? e.message : "Demo strategy generation failed");
     } finally {
       setGeneratingStory(false);
-    }
-  };
-
-  // ── Post-debrief scoring ─────────────────────────────────────────────────────
-  const handlePostScore = async () => {
-    if (!id) return;
-    if (!rawNotes.trim()) { setError("Paste raw meeting notes before scoring."); return; }
-    setScoring(true); setError("");
-    try {
-      await meetingsApi.postScore(id, rawNotes);
-      await loadAll();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to score meeting");
-    } finally {
-      setScoring(false);
     }
   };
 
@@ -787,7 +810,7 @@ export default function MeetingDetail() {
   const cachedAiSummary = _unwrapEc("ai_summary") as Record<string, any> | null;
   const cachedIntent = _unwrapEc("intent_signals") as Record<string, any> | null;
   const cachedHunterContacts = _unwrapEc("hunter_contacts") as any;
-  const cachedCompetitive = ec["competitive_landscape_v2"] as any[] | null;
+  const cachedCompetitive = _unwrapEc("competitive_landscape_v2") as any[] | null;
   const cachedHunterCompany = _unwrapEc("hunter_company") as Record<string, any> | null;
   const cachedGoogleNews = _unwrapEc("google_news") as Array<{ title: string; url: string; published?: string; source?: string }> | null;
 
@@ -805,6 +828,19 @@ export default function MeetingDetail() {
   const icpCompetitors: Array<{ name: string; summary?: string }> = (cachedCompetitive ?? [])
     .filter((c: any) => typeof c === "object")
     .map((c: any) => ({ name: c.name ?? c.competitor ?? "", summary: c.summary ?? "" }));
+  const competitiveItems = [
+    ...(webResearch.competitive_landscape ?? []),
+    ...icpCompetitors,
+  ]
+    .map((item: any) => ({
+      title: item.title ?? item.name ?? item.competitor ?? "",
+      snippet: item.snippet ?? item.summary ?? "",
+      url: item.url ?? "",
+    }))
+    .filter((item) => item.title || item.snippet)
+    .filter((item, index, arr) => arr.findIndex((other) => other.title.toLowerCase() === item.title.toLowerCase()) === index)
+    .slice(0, 6);
+  const hasCompetitors = competitiveItems.length > 0;
   // hunter_contacts.data may be a flat array OR {contacts:[]} shape — handle both
   const icpHunterContacts: Array<{ first_name?: string; last_name?: string; title?: string; email?: string; linkedin_url?: string; seniority?: string; department?: string; phone_number?: string }> =
     Array.isArray(cachedHunterContacts) ? cachedHunterContacts.filter((c: any) => typeof c === "object") :
@@ -1512,55 +1548,35 @@ export default function MeetingDetail() {
           SECTION 0 — Executive Briefing (GPT-4o synthesis of all intel)
       ══════════════════════════════════════════════════════════════════════ */}
       {hasExecutiveBriefing && (
-        <Section title="Executive Briefing" icon={<Briefcase size={15} className="text-[#ff6b35]" />} badge="AI">
-          <div className="rounded-xl border border-[#ffd5be] bg-[#fff8f5] p-5">
-            <div className="prose prose-sm max-w-none text-[14px] text-[#2d4258] leading-relaxed whitespace-pre-wrap">
-              {webResearch.executive_briefing!.split(/\n(?=##\s)/).map((block, i) => {
-                const lines = block.trim().split("\n");
-                const heading = lines[0]?.replace(/^##\s*/, "");
-                const body = lines.slice(1).join("\n").trim();
-                return (
-                  <div key={i} className={i > 0 ? "mt-4" : ""}>
-                    {heading && (
-                      <p className="text-[12px] uppercase tracking-wide font-bold text-[#b05a2a] mb-1.5">{heading}</p>
-                    )}
-                    <div className="text-[13px] text-[#3d5268] leading-relaxed">
-                      {body.split("\n").map((line, j) => (
-                        <p key={j} className={line.startsWith("-") || line.startsWith("•") ? "pl-3" : ""}>{line}</p>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+        <Section title="Sales Briefing" icon={<Briefcase size={15} className="text-[#ff6b35]" />} badge="Pre-call">
+          <MarkdownBrief text={webResearch.executive_briefing!} />
         </Section>
       )}
 
       {hasMeetingReadiness && company && (
         <Section title="Meeting Readiness" icon={<Target size={15} className="text-[#2563eb]" />} badge="Prep">
-          <div className="space-y-5" style={{ rowGap: 18, display: "grid" }}>
+          <div className="meeting-readiness">
             {committeeCoverage && (
-              <div className="rounded-xl border border-[#dbe7f5] bg-[#f7fbff] p-4">
-                <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <div className="readiness-coverage-card">
+                <div className="readiness-card-header">
                   <div>
-                    <p className="text-[11px] uppercase tracking-wide text-[#6e88a5] font-semibold">Committee Coverage</p>
-                    <p className="text-[14px] font-bold text-[#24364b] mt-1">
+                    <p className="intel-label">Committee Coverage</p>
+                    <p className="readiness-coverage-title">
                       {committeeCoverage.coverage_score ?? 0}% of the core buying group is covered
                     </p>
                   </div>
                   {typeof committeeCoverage.coverage_score === "number" && (
-                    <span className="crm-chip tabular">{committeeCoverage.coverage_score}%</span>
+                    <span className="readiness-score-pill tabular">{committeeCoverage.coverage_score}%</span>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="readiness-chip-row">
                   {(committeeCoverage.discovered_roles ?? []).map((item) => (
-                    <span key={item.role} className="inline-flex items-center rounded-full border border-[#c7daf0] bg-white px-3 py-1 text-[11px] font-semibold text-[#2d5f8e]">
+                    <span key={item.role} className="readiness-chip is-covered">
                       {item.label}
                     </span>
                   ))}
                   {(committeeCoverage.meeting_gaps ?? []).map((item) => (
-                    <span key={item.role} className="inline-flex items-center rounded-full border border-[#ffd6c7] bg-[#fff5f0] px-3 py-1 text-[11px] font-semibold text-[#b4532a]">
+                    <span key={item.role} className="readiness-chip is-missing">
                       Missing: {item.label}
                     </span>
                   ))}
@@ -1569,19 +1585,19 @@ export default function MeetingDetail() {
             )}
 
             {whyNowSignals.length > 0 && (
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-2">Why Now</p>
-                <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
+              <div className="readiness-block">
+                <p className="intel-label">Why Now</p>
+                <div className="readiness-signal-grid">
                   {whyNowSignals.map((item, i) => (
-                    <div key={`${item.title}-${i}`} className="rounded-xl border border-[#e3eaf3] bg-white px-4 py-3">
-                      <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold">{item.title}</p>
-                      <p className="text-[13px] text-[#2d4258] leading-relaxed mt-1">{item.detail}</p>
+                    <div key={`${item.title}-${i}`} className="readiness-signal-card">
+                      <p className="readiness-signal-title">{item.title}</p>
+                      <p className="readiness-signal-copy">{item.detail}</p>
                       {item.url && (
                         <a
                           href={item.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-[#4a7fa5] hover:underline"
+                          className="readiness-source-link"
                         >
                           Source <ExternalLink size={10} />
                         </a>
@@ -1593,61 +1609,61 @@ export default function MeetingDetail() {
             )}
 
             {stakeholderCards.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                  <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold">Stakeholder Focus</p>
-                  <span className="text-[11px] text-[#7d8fa3]">
+              <div className="readiness-block">
+                <div className="readiness-subheader">
+                  <p className="intel-label">Stakeholder Focus</p>
+                  <span className="readiness-subnote">
                     {webResearch.attendee_intelligence?.has_explicit_attendees
                       ? "Using saved meeting attendees plus suggested gaps"
                       : "No attendees saved yet, using best-fit stakeholder recommendations"}
                   </span>
                 </div>
-                <div className="grid gap-3 md:grid-cols-2" style={{ gap: 12 }}>
+                <div className="stakeholder-focus-grid">
                   {stakeholderCards.map((card, i) => {
                     const personaKey = canonicalPersona(card.persona);
                     const ps = PERSONA_STYLE[personaKey];
                     return (
-                      <div key={`${card.name}-${i}`} className="rounded-xl border border-[#e1e8f1] bg-white p-4">
-                        <div className="flex items-start justify-between gap-3">
+                      <div key={`${card.name}-${i}`} className="stakeholder-focus-card">
+                        <div className="stakeholder-focus-header">
                           <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-[14px] font-bold text-[#24364b]">{card.name}</p>
+                            <div className="stakeholder-focus-name-row">
+                              <p className="stakeholder-focus-name">{card.name}</p>
                               <span
-                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                className="stakeholder-persona-pill"
                                 style={{ color: ps.color, background: ps.bg, border: `1px solid ${ps.border}` }}
                               >
                                 {PERSONA_LABEL[personaKey]}
                               </span>
                               {card.status && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-[#d7e2ee] bg-[#f8fbff] text-[10px] font-bold text-[#61788f] capitalize">
+                                <span className="stakeholder-status-pill">
                                   {card.status}
                                 </span>
                               )}
                             </div>
-                            <p className="text-[12px] text-[#6f8399] mt-1">{card.title ?? card.role_label ?? "Stakeholder"}</p>
+                            <p className="stakeholder-focus-title">{card.title ?? card.role_label ?? "Stakeholder"}</p>
                           </div>
                           {card.linkedin_url && (
-                            <a href={card.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-[#0077b5] font-semibold hover:underline shrink-0">
+                            <a href={card.linkedin_url} target="_blank" rel="noopener noreferrer" className="stakeholder-linkedin">
                               LinkedIn <ExternalLink size={10} />
                             </a>
                           )}
                         </div>
                         {card.likely_focus && (
-                          <p className="text-[12px] text-[#30465d] leading-relaxed mt-3">
+                          <p className="stakeholder-focus-copy">
                             <span className="font-bold text-[#24364b]">Focus:</span> {card.likely_focus}
                           </p>
                         )}
                         {card.talk_track && (
-                          <p className="text-[12px] text-[#30465d] leading-relaxed mt-2">
+                          <p className="stakeholder-focus-copy">
                             <span className="font-bold text-[#24364b]">Talk track:</span> {card.talk_track}
                           </p>
                         )}
                         {(card.questions_to_ask?.length ?? 0) > 0 && (
-                          <div className="mt-3">
-                            <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-1">Questions To Ask</p>
-                            <div className="space-y-1">
+                          <div className="stakeholder-question-block">
+                            <p className="intel-label">Questions To Ask</p>
+                            <div className="stakeholder-question-list">
                               {card.questions_to_ask!.map((question, idx) => (
-                                <p key={idx} className="text-[12px] text-[#41556b] leading-relaxed">• {question}</p>
+                                <p key={idx}>{question}</p>
                               ))}
                             </div>
                           </div>
@@ -1660,11 +1676,11 @@ export default function MeetingDetail() {
             )}
 
             {meetingRecommendations.length > 0 && (
-              <div className="rounded-xl border border-[#ffe0cf] bg-[#fff8f4] p-4">
-                <p className="text-[11px] uppercase tracking-wide text-[#b05a2a] font-semibold mb-2">Recommended Meeting Plan</p>
-                <div className="space-y-1.5">
+              <div className="meeting-plan-card">
+                <p className="meeting-plan-title">Recommended Meeting Plan</p>
+                <div className="meeting-plan-list">
                   {meetingRecommendations.map((item, i) => (
-                    <p key={i} className="text-[13px] text-[#3d5268] leading-relaxed">• {item}</p>
+                    <p key={i}>{item}</p>
                   ))}
                 </div>
               </div>
@@ -1689,10 +1705,10 @@ export default function MeetingDetail() {
             </div>
           </div>
         ) : (
-          <div className="space-y-5" style={{ rowGap: 18, display: "grid" }}>
+          <div className="account-intel">
 
             {/* Company facts grid — from DB, instant */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3" style={{ gap: 12 }}>
+            <div className="account-metric-grid">
               {[
                 { label: "Industry",      value: company.industry },
                 { label: "Employees",     value: company.employee_count?.toLocaleString() },
@@ -1701,9 +1717,9 @@ export default function MeetingDetail() {
                 { label: "ICP Score",     value: company.icp_score != null ? `${company.icp_score} (${company.icp_tier})` : null },
                 { label: "DAP Tool",      value: company.has_dap ? (company.dap_tool ?? "Yes — unknown tool") : "No DAP detected" },
               ].filter(i => i.value).map(item => (
-                <div key={item.label} className="rounded-xl border border-[#e3eaf3] bg-[#f9fbfe] px-4 py-3" style={{ padding: "13px 15px" }}>
-                  <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold">{item.label}</p>
-                  <p className="text-[13px] font-bold text-[#2b3f55] mt-1 capitalize">{item.value}</p>
+                <div key={item.label} className="account-metric-card">
+                  <p className="intel-label">{item.label}</p>
+                  <p className="account-metric-value">{item.value}</p>
                 </div>
               ))}
             </div>
@@ -1755,11 +1771,11 @@ export default function MeetingDetail() {
 
             {/* Tech stack — from DB */}
             {techStack && Object.keys(techStack).length > 0 && (
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-2">Tech Stack</p>
-                <div className="flex flex-wrap gap-2">
+              <div className="account-tech-stack">
+                <p className="intel-label">Tech Stack</p>
+                <div className="account-tag-row">
                   {Object.entries(techStack).map(([name, tool]) => (
-                    <span key={name} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#d8e3ee] bg-white text-[12px]">
+                    <span key={name} className="account-tag">
                       <span className="text-[#7a8ea4] capitalize">{name}:</span>
                       <span className="font-semibold text-[#2e4358]">{tool}</span>
                     </span>
@@ -1770,22 +1786,22 @@ export default function MeetingDetail() {
 
             {/* Company background — scraped from own website + GPT-4o */}
             {webResearch.company_background && (
-              <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] p-4">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold">Company Background</p>
+              <div className="account-background-card">
+                <div className="account-card-heading">
+                  <p className="intel-label">Company Background</p>
                   {webResearch.company_background.url && (
                     <a href={webResearch.company_background.url} target="_blank" rel="noopener noreferrer"
-                      className="text-[11px] text-[#4a7fa5] hover:underline flex items-center gap-1">
+                      className="account-source-link">
                       Source <ExternalLink size={10} />
                     </a>
                   )}
                 </div>
                 {webResearch.company_background.description && (
-                  <p className="text-[12px] text-[#546679] mb-1">{webResearch.company_background.description}</p>
+                  <p className="account-background-summary">{webResearch.company_background.description}</p>
                 )}
-                <p className="text-[14px] text-[#2d4258] leading-relaxed">{webResearch.company_background.extract}</p>
+                <p className="account-background-copy">{webResearch.company_background.extract}</p>
                 {webResearch.company_background.founded && (
-                  <span className="inline-flex items-center mt-2 px-2 py-0.5 rounded-full bg-[#edf5ff] border border-[#c9e0f8] text-[11px] text-[#24567e] font-semibold">
+                  <span className="account-founded-pill">
                     Founded {webResearch.company_background.founded}
                   </span>
                 )}
@@ -2032,19 +2048,29 @@ export default function MeetingDetail() {
           SECTION 2f — Competitive Landscape
       ══════════════════════════════════════════════════════════════════════ */}
       {hasCompetitors && (
-        <Section title="Competitive Landscape" icon={<Crosshair size={15} className="text-[#ef4444]" />} defaultOpen={false}>
-          <div className="space-y-2" style={{ rowGap: 8, display: "grid" }}>
-            {webResearch.competitive_landscape!.map((item, i) => (
-              <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
-                className="flex items-start gap-3 rounded-xl border border-[#e3eaf3] bg-white px-4 py-3 hover:border-[#ef4444] transition-colors">
-                <Target size={13} className="text-[#f87171] mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[13px] font-semibold text-[#24364b]">{item.title}</p>
-                  {item.snippet && <p className="text-[12px] text-[#6f8399] mt-0.5 line-clamp-2">{item.snippet}</p>}
+        <Section title="Competitive Landscape" icon={<Crosshair size={15} className="text-[#ef4444]" />}>
+          <div className="intel-competitor-grid">
+            {competitiveItems.map((item, i) => {
+              const content = (
+                <>
+                  <Target size={14} className="text-[#ef4444] mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="intel-competitor-title">{item.title}</p>
+                    {item.snippet && <p className="intel-competitor-copy">{item.snippet}</p>}
+                  </div>
+                  {item.url && <ExternalLink size={12} className="text-[#9eb0c3] shrink-0 mt-0.5" />}
+                </>
+              );
+              return item.url ? (
+                <a key={`${item.title}-${i}`} href={item.url} target="_blank" rel="noopener noreferrer" className="intel-competitor-card">
+                  {content}
+                </a>
+              ) : (
+                <div key={`${item.title}-${i}`} className="intel-competitor-card">
+                  {content}
                 </div>
-                <ExternalLink size={11} className="text-[#9eb0c3] shrink-0 mt-0.5" />
-              </a>
-            ))}
+              );
+            })}
           </div>
         </Section>
       )}
@@ -2120,71 +2146,6 @@ export default function MeetingDetail() {
           </div>
         </Section>
       )}
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          SECTION 6 — AI Account Brief (on-demand account planning brief)
-      ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="AI Account Brief" icon={<BrainCircuit size={15} className="text-[#ff6b35]" />} defaultOpen={false}>
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-[13px] text-[#6f8399]">
-            Builds a quick account-planning brief from company context, signals, stakeholders, and website research.
-          </p>
-          <button className="crm-button soft" onClick={handleGetAccountBrief} disabled={loadingBrief || !company}>
-            {loadingBrief ? <RefreshCw size={13} className="animate-spin" /> : <BrainCircuit size={13} />}
-            {loadingBrief ? "Generating…" : "Generate Brief"}
-          </button>
-        </div>
-        {accountBrief ? (
-          <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] p-4 space-y-2">
-            {accountBrief.split("\n").filter(Boolean).map((line, i) => (
-              <p key={i} className="text-[14px] text-[#2d4258] leading-relaxed">{line}</p>
-            ))}
-          </div>
-        ) : (
-          <p className="text-[13px] text-[#6f8399]">Not generated yet.</p>
-        )}
-      </Section>
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          SECTION 7 — Post-Debrief & Scoring
-      ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="Post-Debrief & Scoring" icon={<BookOpen size={15} className="text-[#4a627c]" />} defaultOpen={false}>
-        <textarea
-          className="w-full min-h-40 rounded-xl border border-[#d7e2ee] bg-white p-4 text-[14px] text-[#223145] outline-none focus:border-[#c2d3e5] mb-3"
-          placeholder="Paste raw meeting notes here — AI will score the call, identify wins/losses, and draft the MoM email."
-          value={rawNotes}
-          onChange={(e) => setRawNotes(e.target.value)}
-        />
-        <div className="flex justify-end">
-          <button className="crm-button primary" onClick={handlePostScore} disabled={scoring}>
-            {scoring ? "Scoring…" : "Score Meeting & Draft MoM"}
-          </button>
-        </div>
-        {(meeting.meeting_score != null || meeting.what_went_right || meeting.mom_draft) && (
-          <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] p-5 space-y-3 mt-4">
-            {meeting.meeting_score != null && (
-              <p className="text-[14px]"><span className="font-bold">Score:</span>{" "}
-                <span className="tabular font-extrabold text-[#ff6b35]">{meeting.meeting_score}/100</span>
-              </p>
-            )}
-            {meeting.what_went_right && (
-              <p className="text-[14px]"><span className="font-bold text-[#1b6f53]">✓ What went right:</span> {meeting.what_went_right}</p>
-            )}
-            {meeting.what_went_wrong && (
-              <p className="text-[14px]"><span className="font-bold text-[#8f2f11]">✗ What went wrong:</span> {meeting.what_went_wrong}</p>
-            )}
-            {meeting.next_steps && (
-              <p className="text-[14px]"><span className="font-bold">→ Next steps:</span> {meeting.next_steps}</p>
-            )}
-            {meeting.mom_draft && (
-              <div>
-                <p className="text-[13px] font-bold uppercase tracking-wide text-[#7a8ea4] mb-2">MoM Email Draft</p>
-                <pre className="whitespace-pre-wrap text-[13px] text-[#2d4258] font-sans leading-relaxed">{meeting.mom_draft}</pre>
-              </div>
-            )}
-          </div>
-        )}
-      </Section>
 
       {error && <p className="text-[12px] text-[#b94a24] font-semibold px-1">{error}</p>}
     </div>

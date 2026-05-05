@@ -761,19 +761,41 @@ async def run_pre_meeting_intelligence(
     if isinstance(_cached_intent, dict):
         hiring_signals = _cached_intent.get("ps_hiring") or []
         funding_signals = _cached_intent.get("funding") or []
+        product_signals = _cached_intent.get("product") or _cached_intent.get("growth") or []
         intent_signals = {
-            "hiring": [s.get("title", "") for s in hiring_signals if isinstance(s, dict) and s.get("title")][:10],
-            "funding": funding_signals[0].get("snippet") if funding_signals and isinstance(funding_signals[0], dict) else None,
-            "growth": None,
+            "hiring": [
+                {"title": s.get("title", ""), "snippet": s.get("snippet", ""), "url": s.get("url", "")}
+                for s in hiring_signals
+                if isinstance(s, dict) and s.get("title")
+            ][:10],
+            "funding": [
+                {"title": s.get("title", ""), "snippet": s.get("snippet", ""), "url": s.get("url", "")}
+                for s in funding_signals
+                if isinstance(s, dict) and (s.get("title") or s.get("snippet"))
+            ][:5],
+            "product": [
+                {"title": s.get("title", ""), "snippet": s.get("snippet", ""), "url": s.get("url", "")}
+                for s in product_signals
+                if isinstance(s, dict) and (s.get("title") or s.get("snippet"))
+            ][:5],
         }
 
     hunter_contacts: dict | None = None
     if isinstance(_cached_hunter_contacts_raw, list) and _cached_hunter_contacts_raw:
         hunter_contacts = {"contacts": [c for c in _cached_hunter_contacts_raw if isinstance(c, dict)]}
 
+    if isinstance(_cached_competitive_raw, dict) and "data" in _cached_competitive_raw:
+        _cached_competitive_raw = _cached_competitive_raw.get("data")
+
     if isinstance(_cached_competitive_raw, list) and _cached_competitive_raw:
         competitive_landscape = [
-            {"name": c.get("name") or c.get("competitor", ""), "summary": c.get("summary", "")}
+            {
+                "name": c.get("name") or c.get("competitor") or c.get("title", ""),
+                "title": c.get("title") or c.get("name") or c.get("competitor", ""),
+                "summary": c.get("summary") or c.get("snippet", ""),
+                "snippet": c.get("snippet") or c.get("summary", ""),
+                "url": c.get("url") or c.get("link") or "",
+            }
             for c in _cached_competitive_raw
             if isinstance(c, dict)
         ]
@@ -839,7 +861,7 @@ async def run_pre_meeting_intelligence(
         if not name:
             return []
         return await web.search(
-            f'"{name}" competitors OR alternatives OR "vs" {datetime.utcnow().year}',
+            f'"{name}" competitors alternatives AP automation invoice lifecycle management Coupa Tipalti SAP Concur Medius {datetime.utcnow().year}',
             max_results=5,
         )
 
@@ -1250,7 +1272,7 @@ async def run_research_more(
         entry = ec.get(key)
         if isinstance(entry, dict):
             return entry.get("data")
-        return None
+        return entry
 
     def _age_days(key) -> float:
         entry = ec.get(key)
@@ -1304,10 +1326,10 @@ async def run_research_more(
         tasks_to_run.append(("web_scrape", web.company_website_summary(domain, name, ai)))
 
     # ── Gap: competitive_landscape missing ──
-    if not ec.get("competitive_landscape_v2") and name:
+    if not _unwrap("competitive_landscape_v2") and name:
         gaps.append("competitive_landscape")
         tasks_to_run.append(("competitive_landscape_v2", web.search(
-            f'"{name}" competitors OR alternatives OR "vs" {now.year}', max_results=5
+            f'"{name}" competitors alternatives AP automation invoice lifecycle management Coupa Tipalti SAP Concur Medius {now.year}', max_results=5
         )))
 
     # ── Gap: conversation_starter / why_now missing from icp_analysis ──
@@ -1366,12 +1388,18 @@ async def run_research_more(
             ec["web_scrape"] = {"data": result, "fetched_at": now.isoformat()}
             filled.append("web_scrape")
 
-        elif key == "competitive_landscape_v2" and isinstance(result, list):
+        elif key == "competitive_landscape_v2" and isinstance(result, list) and result:
             structured = [
-                {"name": r.get("title", ""), "summary": r.get("snippet", "")}
+                {
+                    "name": r.get("title", ""),
+                    "title": r.get("title", ""),
+                    "summary": r.get("snippet", ""),
+                    "snippet": r.get("snippet", ""),
+                    "url": r.get("url", ""),
+                }
                 for r in result if isinstance(r, dict)
             ]
-            ec["competitive_landscape_v2"] = structured
+            ec["competitive_landscape_v2"] = {"data": structured, "fetched_at": now.isoformat()}
             filled.append("competitive_landscape")
 
         elif key == "icp_fields" and isinstance(result, dict):
@@ -1605,7 +1633,9 @@ async def _generate_executive_briefing(
     ) or "None."
 
     comp_lines = "\n".join(
-        f"- {c.get('title', '')}" for c in (competitive_landscape or [])[:3]
+        f"- {c.get('title') or c.get('name') or c.get('competitor', '')}: {c.get('snippet') or c.get('summary', '')}"
+        for c in (competitive_landscape or [])[:5]
+        if c.get("title") or c.get("name") or c.get("competitor")
     ) or "No competitor mentions found."
 
     # ── Stakeholders ──────────────────────────────────────────────────────────
@@ -1708,6 +1738,8 @@ async def _generate_executive_briefing(
         "For each key stakeholder: name, role, what they likely care about, and how to tailor your message to them.\n\n"
         "## Deal Momentum & Engagement\n"
         "Call pickup rate, email response patterns, Instantly engagement. Are they warm or cold? Any signs of multi-threading?\n\n"
+        "## Competitive Framing\n"
+        "Name the relevant alternatives likely in the account. Explain how Beacon should be framed against them in one practical sales angle.\n\n"
         "## Risks & Objections to Prepare For\n"
         "What could stall or kill this deal? How to address each.\n\n"
         "## Meeting Strategy\n"
