@@ -38,6 +38,7 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.sourcing_batch import SourcingBatch
 from app.services.icp_scorer import score_company
+from app.services.log_safety import safe_error_message
 from app.services.prospect_hygiene import is_valid_prospect_candidate
 from app.services.account_sourcing_tabular import (
     parse_csv,
@@ -2197,8 +2198,12 @@ async def enrich_company_tiered(
             resolution_detail = "Domain resolution timed out; continuing without a resolved domain"
             logger.warning(f"Domain resolution timed out for '{company.name}'")
         except Exception as exc:
-            resolution_detail = f"Domain resolution failed: {exc}"
-            logger.warning(f"Domain resolution failed for '{company.name}': {exc}")
+            resolution_detail = f"Domain resolution failed: {safe_error_message(exc)}"
+            logger.warning(
+                "Domain resolution failed for '%s': %s",
+                company.name,
+                safe_error_message(exc),
+            )
 
         _pipeline_stamp(
             cache,
@@ -2235,13 +2240,21 @@ async def enrich_company_tiered(
         _pipeline_stamp(cache, "free_research", "completed", f"Collected {free_research_mode}")
 
     if isinstance(scraped_result, Exception):
-        logger.error(f"Website scrape failed for {company.domain}: {scraped_result}")
+        logger.error(
+            "Website scrape failed for %s: %s",
+            company.domain,
+            safe_error_message(scraped_result),
+        )
     else:
         scraped = scraped_result
         cache["web_scrape"] = {"data": scraped, "fetched_at": datetime.utcnow().isoformat()}
 
     if isinstance(intent_result, Exception):
-        logger.error(f"Intent signal search failed for {company.name}: {intent_result}")
+        logger.error(
+            "Intent signal search failed for %s: %s",
+            company.name,
+            safe_error_message(intent_result),
+        )
     else:
         intent = intent_result
         cache["intent_signals"] = {"data": intent, "fetched_at": datetime.utcnow().isoformat()}
@@ -2306,7 +2319,11 @@ async def enrich_company_tiered(
                 _pipeline_stamp(cache, "paid_enrichment", "timeout", "Apollo enrichment timed out; continuing")
 
         if isinstance(apollo_company_result, Exception):
-            logger.error(f"Apollo company enrichment failed for {company.domain}: {apollo_company_result}")
+            logger.error(
+                "Apollo company enrichment failed for %s: %s",
+                company.domain,
+                safe_error_message(apollo_company_result),
+            )
         elif apollo_company_result:
             apollo_data = apollo_company_result
             cache["apollo_company"] = {"data": apollo_data, "fetched_at": datetime.utcnow().isoformat()}
@@ -2351,7 +2368,11 @@ async def enrich_company_tiered(
             }
 
             if isinstance(hunter_company_result, Exception):
-                logger.error(f"Hunter company enrichment failed for {company.domain}: {hunter_company_result}")
+                logger.error(
+                    "Hunter company enrichment failed for %s: %s",
+                    company.domain,
+                    safe_error_message(hunter_company_result),
+                )
             elif hunter_company_result:
                 cache["hunter_company"] = {"data": hunter_company_result, "fetched_at": datetime.utcnow().isoformat()}
                 logger.info(f"Hunter enriched company: {company.domain}")
@@ -2429,8 +2450,8 @@ async def enrich_company_tiered(
             logger.error(f"Claude summarization timed out for {company.name}")
             _pipeline_stamp(cache, "ai_summary", "timeout", "AI summary timed out")
         except Exception as e:
-            logger.error(f"Claude summarization failed for {company.name}: {e}")
-            _pipeline_stamp(cache, "ai_summary", "failed", str(e))
+            logger.error("Claude summarization failed for %s: %s", company.name, safe_error_message(e))
+            _pipeline_stamp(cache, "ai_summary", "failed", safe_error_message(e))
 
     # ── Committee coverage & prospecting priorities ─────────────────────────
     _pipeline_stamp(cache, "committee_analysis", "started", "Building committee coverage and priorities")
@@ -2446,8 +2467,12 @@ async def enrich_company_tiered(
         }
         _pipeline_stamp(cache, "committee_analysis", "completed", "Built committee coverage and prospecting priorities")
     except Exception as e:
-        logger.error(f"Committee coverage analysis failed for {company.name}: {e}")
-        _pipeline_stamp(cache, "committee_analysis", "failed", str(e))
+        logger.error(
+            "Committee coverage analysis failed for %s: %s",
+            company.name,
+            safe_error_message(e),
+        )
+        _pipeline_stamp(cache, "committee_analysis", "failed", safe_error_message(e))
 
     # ── Persist ─────────────────────────────────────────────────────────────
     contacts = (
@@ -2529,7 +2554,7 @@ async def re_enrich_contact_service(contact_id: UUID, session: AsyncSession) -> 
             contact.sequence_status = "ready" if contact.email else "research_needed"
             contact.instantly_status = "ready" if contact.email else "missing_email"
     except Exception as e:
-        logger.error(f"Contact re-enrich failed for {contact_id}: {e}")
+        logger.error("Contact re-enrich failed for %s: %s", contact_id, safe_error_message(e))
 
     # Classify persona
     from app.clients.claude_enrichment import classify_contact_persona
@@ -2544,7 +2569,7 @@ async def re_enrich_contact_service(contact_id: UUID, session: AsyncSession) -> 
         )
         contact.persona = _canonical_persona(contact.persona, contact.persona_type)
     except Exception as e:
-        logger.error(f"Persona classification failed for {contact_id}: {e}")
+        logger.error("Persona classification failed for %s: %s", contact_id, safe_error_message(e))
 
     if contact.company_id:
         company = await session.get(Company, contact.company_id)
@@ -2601,9 +2626,9 @@ async def process_batch(batch_id: UUID, session: AsyncSession) -> SourcingBatch 
                 await enrich_company_tiered(company.id, company_session)
             logger.info(f"Batch {batch_id}: finished company {index}/{total_companies} -> {company.name}")
         except Exception as e:
-            logger.error(f"Batch enrichment failed for {company.name}: {e}")
+            logger.error("Batch enrichment failed for %s: %s", company.name, safe_error_message(e))
             errors = batch.error_log or []
-            errors.append({"company": company.name, "error": str(e)})
+            errors.append({"company": company.name, "error": safe_error_message(e)})
             batch.error_log = errors
             failed += 1
 
@@ -2732,7 +2757,7 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
             created += 1
 
         except Exception as e:
-            logger.warning(f"Skipping contact {first} {last}: {e}")
+            logger.warning("Skipping contact %s %s: %s", first, last, safe_error_message(e))
             continue
 
     if created:
@@ -2794,7 +2819,11 @@ async def _verify_top_contact_emails(
             if is_deliverable:
                 verified_count += 1
         except Exception as e:
-            logger.warning(f"Email verification failed for {contact.email}: {e}")
+            logger.warning(
+                "Email verification failed for %s: %s",
+                contact.email,
+                safe_error_message(e),
+            )
             continue
 
     if to_verify:

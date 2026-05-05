@@ -30,6 +30,8 @@ from uuid import UUID
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.log_safety import safe_error_message
+
 logger = logging.getLogger(__name__)
 
 _COMMITTEE_ROLE_LABELS = {
@@ -885,7 +887,7 @@ async def run_pre_meeting_intelligence(
     def _safe(key, default=None):
         val = task_map.get(key)
         if isinstance(val, Exception):
-            logger.warning(f"Pre-meeting intel task '{key}' failed: {val}")
+            logger.warning("Pre-meeting intel task '%s' failed: %s", key, safe_error_message(val))
             return default
         return val if val is not None else default
 
@@ -965,7 +967,7 @@ async def run_pre_meeting_intelligence(
                 "summary": (bc.content or "")[:300],
             })
     except Exception as e:
-        logger.warning(f"Battlecard search failed: {e}")
+        logger.warning("Battlecard search failed: %s", safe_error_message(e))
 
     # ── 11. Knowledge base context ─────────────────────────────────────────────
     from app.services.knowledge_context import get_knowledge_context
@@ -1367,7 +1369,7 @@ async def run_research_more(
 
     for key, result in task_results.items():
         if isinstance(result, Exception):
-            logger.warning(f"Research-more task '{key}' failed: {result}")
+            logger.warning("Research-more task '%s' failed: %s", key, safe_error_message(result))
             continue
         if result is None:
             continue
@@ -1466,7 +1468,7 @@ async def _generate_missing_icp_fields(
             cleaned = result.strip().strip("```json").strip("```").strip()
             return _json.loads(cleaned)
     except Exception as e:
-        logger.warning(f"Missing ICP fields generation failed: {e}")
+        logger.warning("Missing ICP fields generation failed: %s", safe_error_message(e))
     return {}
 
 
@@ -1515,7 +1517,7 @@ async def _fetch_google_news_rss(company_name: str, domain: str = "") -> list[di
                 break
         return results
     except Exception as e:
-        logger.warning(f"Google News RSS failed for '{company_name}': {e}")
+        logger.warning("Google News RSS failed for '%s': %s", company_name, safe_error_message(e))
         return []
 
 
@@ -1556,7 +1558,7 @@ async def _analyse_website_pages(ai, company_name: str, raw_text: str) -> dict |
                     parsed[key] = value
         return parsed if parsed else None
     except Exception as e:
-        logger.warning(f"Website analysis failed for {company_name}: {e}")
+        logger.warning("Website analysis failed for %s: %s", company_name, safe_error_message(e))
         return None
 
 
@@ -1805,5 +1807,5 @@ DEAL STATUS:{deal_lines or '  No deal linked.'}
         result = await ai.complete(system, user, max_tokens=1200)
         return result
     except Exception as e:
-        logger.warning(f"Executive briefing generation failed: {e}")
+        logger.warning("Executive briefing generation failed: %s", safe_error_message(e))
         return None

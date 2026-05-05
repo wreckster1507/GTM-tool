@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from app.config import settings
+from app.services.log_safety import safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,12 @@ async def _collect_all_data(
     collected: dict[str, Any] = {}
     for key, result in zip(keys, results):
         if isinstance(result, Exception):
-            logger.warning(f"Research task '{key}' failed for {company_name}: {result}")
+            logger.warning(
+                "Research task '%s' failed for %s: %s",
+                key,
+                company_name,
+                safe_error_message(result),
+            )
             collected[key] = [] if key != "scraped" else {"text": "", "pages_scraped": 0}
         else:
             collected[key] = result
@@ -308,7 +314,7 @@ async def _hunter_domain_search(domain: str, api_key: str) -> list[dict]:
                 if e.get("value") and e.get("first_name")
             ]
     except Exception as exc:
-        logger.warning(f"Hunter domain search failed for {domain}: {exc}")
+        logger.warning("Hunter domain search failed for %s: %s", domain, safe_error_message(exc))
         return []
 
 
@@ -714,7 +720,7 @@ async def _run_icp_analysis(
         return payload
 
     except Exception as e:
-        logger.error(f"Claude ICP analysis failed for {company_name}: {e}")
+        logger.error("Claude ICP analysis failed for %s: %s", company_name, safe_error_message(e))
         return None
 
 
@@ -1573,7 +1579,11 @@ async def research_company_and_update(
     try:
         await session.commit()
     except Exception as exc:
-        logger.warning(f"Failed to persist ICP research for {company.name}: {exc}")
+        logger.warning(
+            "Failed to persist ICP research for %s: %s",
+            company.name,
+            safe_error_message(exc),
+        )
         await session.rollback()
         return None
 
@@ -1754,7 +1764,12 @@ async def _collect_free_data(
     collected: dict[str, Any] = {}
     for key, result in zip(keys, results):
         if isinstance(result, Exception):
-            logger.warning(f"Free research task '{key}' failed for {company_name}: {result}")
+            logger.warning(
+                "Free research task '%s' failed for %s: %s",
+                key,
+                company_name,
+                safe_error_message(result),
+            )
             collected[key] = [] if key != "scraped" else {"text": "", "pages_scraped": 0}
         else:
             collected[key] = result
@@ -1988,7 +2003,11 @@ async def research_company_and_update_free(
     try:
         await session.commit()
     except Exception as exc:
-        logger.warning(f"Failed to persist free ICP research for {company.name}: {exc}")
+        logger.warning(
+            "Failed to persist free ICP research for %s: %s",
+            company.name,
+            safe_error_message(exc),
+        )
         await session.rollback()
         return None
 

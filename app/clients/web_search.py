@@ -17,6 +17,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
+from app.services.log_safety import safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class WebSearchClient:
                     )
                 return results
         except Exception as e:
-            logger.warning(f"Serper search failed for '{query}': {e}")
+            logger.warning("Serper search failed for '%s': %s", query, safe_error_message(e))
             return []
 
     async def recent_news(self, company_name: str, domain: str) -> list[dict]:
@@ -234,7 +235,7 @@ class WebSearchClient:
                 return None
             return _parse_ai_company_profile(response, company_name, source_url)
         except Exception as e:
-            logger.warning(f"GPT-4o company summary failed for {domain}: {e}")
+            logger.warning("GPT-4o company summary failed for %s: %s", domain, safe_error_message(e))
             return None
 
 

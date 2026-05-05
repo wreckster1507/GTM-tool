@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.company import Company
+from app.services.log_safety import safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +304,7 @@ async def _provider_name_match(domain: str, company_name: str) -> int:
             if isinstance(apollo_name, str) and _names_roughly_match(company_name, apollo_name):
                 score += 30
     except Exception as exc:
-        logger.debug(f"Apollo verification skipped for {domain}: {exc}")
+        logger.debug("Apollo verification skipped for %s: %s", domain, safe_error_message(exc))
 
     try:
         from app.clients.hunter import HunterClient
@@ -315,7 +316,7 @@ async def _provider_name_match(domain: str, company_name: str) -> int:
             if isinstance(hunter_name, str) and _names_roughly_match(company_name, hunter_name):
                 score += 25
     except Exception as exc:
-        logger.debug(f"Hunter verification skipped for {domain}: {exc}")
+        logger.debug("Hunter verification skipped for %s: %s", domain, safe_error_message(exc))
 
     return score
 
