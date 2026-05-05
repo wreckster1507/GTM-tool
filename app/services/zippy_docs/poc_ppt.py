@@ -58,6 +58,10 @@ class PoCPPTInput:
     poc_kickoff_content: str = ""
     meeting_date: Optional[str] = None
     extra_context: Optional[str] = None
+    # AE attribution — surfaced on the title slide if the template has a
+    # "Prepared by" placeholder. Optional; the schema advertises it so
+    # the agent will pass it whenever it knows the rep's name.
+    prepared_by: Optional[str] = None
 
 
 # ── Drive template discovery ────────────────────────────────────────────────
@@ -302,6 +306,7 @@ async def generate(
             "date": data.meeting_date or human_today(),
             "content": combined_content[:25000],
             "extra_context": data.extra_context or "",
+            "prepared_by": data.prepared_by or "",
         }
 
         client = get_anthropic_client()

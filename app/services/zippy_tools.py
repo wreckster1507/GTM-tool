@@ -23,6 +23,9 @@ from app.services.zippy_docs.mom import inspect_mom_template
 from app.services.zippy_docs.nda import NDAInput
 from app.services.zippy_docs.nda import generate as generate_nda
 from app.services.zippy_docs.nda import inspect_template as inspect_nda_template
+from app.services.zippy_docs.proposal import ProposalInput
+from app.services.zippy_docs.proposal import generate as generate_proposal
+from app.services.zippy_docs.proposal import inspect_proposal_template
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +235,66 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "inspect_proposal_template",
+        "description": (
+            "Open Beacon's Business Proposal template from Drive and confirm "
+            "it's reachable. Returns block count and available variants (lite/main). "
+            "ALWAYS call this FIRST before generate_proposal."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "generate_proposal",
+        "description": (
+            "Generate a Business Proposal for a prospect by rewriting Beacon's "
+            "Drive template with client context from Gmail threads, transcripts, "
+            "and user inputs. Uploads the result as an editable Google Doc and "
+            "returns the link. Also handles update requests - pass change_request "
+            "to regenerate with specific changes applied."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_name": {"type": "string"},
+                "variant": {
+                    "type": "string",
+                    "enum": ["lite", "main"],
+                    "description": "'lite' = 7-section concise version. 'main' = full 9-section version. Default: main.",
+                },
+                "email_thread_content": {
+                    "type": "string",
+                    "description": "Combined text of all email threads for this prospect from search_email + read_email_thread.",
+                },
+                "transcript": {
+                    "type": "string",
+                    "description": "Meeting transcript, POC outcomes, or free-form notes.",
+                },
+                "prepared_by": {"type": "string", "description": "AE full name."},
+                "prepared_by_title": {"type": "string", "description": "AE title, e.g. 'Account Executive'."},
+                "prepared_by_phone": {"type": "string"},
+                "prepared_by_email": {"type": "string"},
+                "date": {"type": "string", "description": "e.g. '4 May 2026'"},
+                "platform": {"type": "string", "description": "e.g. 'Darwinbox', 'SAP S/4HANA'"},
+                "domain": {"type": "string", "description": "e.g. 'Order-to-Cash', 'HR/payroll'"},
+                "client_description": {"type": "string", "description": "One-line description of what the client does."},
+                "use_cases": {"type": "array", "items": {"type": "string"}, "description": "2-3 key use cases."},
+                "effort_reduction_pct": {"type": "string", "description": "e.g. '50-60'"},
+                "timeline_reduction_pct": {"type": "string", "description": "e.g. '40-60'"},
+                "hypercare_reduction_pct": {"type": "string", "description": "e.g. '70-80'"},
+                "annual_platform_fee": {"type": "string", "description": "e.g. '250000'"},
+                "per_client_fee": {"type": "string", "description": "e.g. '1000'"},
+                "implementations_per_year": {"type": "string"},
+                "avg_hours_per_impl": {"type": "string"},
+                "hourly_rate": {"type": "string"},
+                "change_request": {
+                    "type": "string",
+                    "description": "For updates: what the user wants changed. Leave empty for first-time generation.",
+                },
+            },
+            "required": ["client_name"],
+        },
+    },
+    {
         "name": "inspect_roi_template",
         "description": (
             "Check that the Beacon ROI Excel template is available in Drive "
@@ -267,7 +330,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
                 "q3_team_size": {"type": "string", "description": "e.g. '24'"},
                 "q4_ftes_per_impl": {"type": "string", "description": "e.g. '3'"},
-                "q5_duration_range": {"type": "string"},
+                "q5_duration_range": {
+                    "type": "string",
+                    "description": (
+                        "REQUIRED. Overall min-max project duration "
+                        "(start to go-live). Always ask the AE for this. "
+                        "e.g. '3-6 months' or '10-16 weeks'. This is the "
+                        "TOTAL project range, not per-phase."
+                    ),
+                },
                 "q6_inception_weeks": {
                     "type": "string",
                     "description": "e.g. '1-4 weeks'",
@@ -281,7 +352,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "e.g. '$40,000'",
                 },
-                "q13_ramp_up": {"type": "string"},
+                "q13_ramp_up": {
+                    "type": "string",
+                    "description": (
+                        "REQUIRED. Ramp-up period for a new implementation "
+                        "team member to handle a full implementation "
+                        "independently. Always ask the AE for this. "
+                        "e.g. '3 months', '6 weeks', '1 quarter'."
+                    ),
+                },
                 "q14_new_headcount": {
                     "type": "string",
                     "description": "e.g. 'Net 0' or '+3'",
@@ -465,6 +544,10 @@ async def execute_tool(
             return await _execute_inspect_nda(args, user_id=user_id)
         if name == "generate_nda":
             return await _execute_nda(args, user_id=user_id)
+        if name == "inspect_proposal_template":
+            return await _execute_inspect_proposal(user_id=user_id)
+        if name == "generate_proposal":
+            return await _execute_proposal(args, user_id=user_id)
         if name == "inspect_roi_template":
             return await _execute_inspect_roi(user_id=user_id)
         if name == "generate_roi":
@@ -679,6 +762,53 @@ async def _execute_nda(args: dict, *, user_id: Optional[UUID] = None) -> ToolOut
             f"✅ NDA generated ({data.jurisdiction.upper()}).\n"
             f"{_doc_link_text(doc)}\n"
             f"Summary: {doc.summary}"
+        ),
+        artifacts=[_doc_to_artifact(doc)],
+    )
+
+
+async def _execute_inspect_proposal(*, user_id: Optional[UUID] = None) -> ToolOutcome:
+    meta = await inspect_proposal_template(
+        user_id=str(user_id) if user_id else None
+    )
+    return ToolOutcome(result_text=meta.get("message", str(meta)))
+
+
+async def _execute_proposal(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:
+    inp = ProposalInput(
+        client_name=args.get("client_name", ""),
+        variant=args.get("variant", "main"),
+        email_thread_content=args.get("email_thread_content", ""),
+        transcript=args.get("transcript", ""),
+        prepared_by=args.get("prepared_by", ""),
+        prepared_by_title=args.get("prepared_by_title", ""),
+        prepared_by_phone=args.get("prepared_by_phone", ""),
+        prepared_by_email=args.get("prepared_by_email", ""),
+        date=args.get("date", ""),
+        platform=args.get("platform", ""),
+        domain=args.get("domain", ""),
+        client_description=args.get("client_description", ""),
+        use_cases=args.get("use_cases", []),
+        effort_reduction_pct=args.get("effort_reduction_pct", ""),
+        timeline_reduction_pct=args.get("timeline_reduction_pct", ""),
+        hypercare_reduction_pct=args.get("hypercare_reduction_pct", ""),
+        annual_platform_fee=args.get("annual_platform_fee", ""),
+        per_client_fee=args.get("per_client_fee", ""),
+        implementations_per_year=args.get("implementations_per_year", ""),
+        avg_hours_per_impl=args.get("avg_hours_per_impl", ""),
+        hourly_rate=args.get("hourly_rate", ""),
+        change_request=args.get("change_request", ""),
+    )
+    doc = await generate_proposal(
+        inp, user_id=str(user_id) if user_id else None
+    )
+    link_line = _doc_link_text(doc)
+    action = "updated" if inp.change_request else "generated"
+    return ToolOutcome(
+        result_text=(
+            f"{link_line}\n\n"
+            f"Business Proposal {action} for **{inp.client_name}**.\n"
+            f"Variant: {inp.variant} | File: {doc.filename}"
         ),
         artifacts=[_doc_to_artifact(doc)],
     )

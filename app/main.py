@@ -13,6 +13,21 @@ from app.services.background_jobs import shutdown_background_workers, start_back
 from app.services.meeting_automation import run_due_pre_meeting_intel_once
 from app.services.zippy_docs.base import ZIPPY_OUTPUT_DIR
 
+# Configure app-wide logging level. Without this, the root logger sits at
+# WARNING and every `logger.info(...)` in the codebase — including the
+# Zippy per-iteration diagnostic at zippy_agent.py:760 — is dropped on
+# the floor. We pin to INFO in dev so the trace is visible. Promote to
+# WARNING via env if a quieter prod log is needed later.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+    force=True,
+)
+# Quiet the noisiest dependency loggers so the signal-to-noise stays sane.
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
