@@ -317,7 +317,12 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
     (numeric model values). Every formula cell is skipped — a defensive
     guard against the template being rearranged. All ROI math runs from
     formulas in the other three sheets, which we leave untouched.
+
+    Post-processing fixes applied after loading:
+    - Executive Summary: any ``=0.XX*BN`` fee formula is corrected to 0.33
+      (the moderate / recommended scenario, 3× ROI for the client).
     """
+    import re
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=False)
@@ -402,19 +407,58 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
         # the LLM hop entirely.
         p = parsed
 
-        safe_set(inp, 4,  3, p.get("impls_per_year")       or data.impls_per_year)
-        safe_set(inp, 5,  3, p.get("team_ftes")            or data.team_ftes)
-        safe_set(inp, 6,  3, p.get("ftes_per_impl")        or data.ftes_per_impl)
-        safe_set(inp, 7,  3, p.get("fte_cost_usd")         or data.fte_cost_usd)
-        safe_set(inp, 8,  3, p.get("new_headcount")        or data.new_headcount)
+        # ── Smart row finder ─────────────────────────────────────────────────
+        # Instead of hardcoding row numbers (which break if the template is
+        # ever restructured), we scan column A for the canonical label text
+        # and write into column C of that same row. This is robust to any
+        # future row insertions or template rearrangements.
+        #
+        # Fallback: if no label match is found we use the known row numbers
+        # from the standard Beacon ROI template (build_roi_model.py layout):
+        #   C5  = impls/year   C6 = team FTEs   C7 = FTEs/impl   C8 = FTE cost
+        #   C14 = Inception    C15 = Solutioning   C16 = Config
+        #   C17 = Data Mig     C18 = Testing       C19 = Cutover
+
+        def _find_row_for_label(ws, *fragments: str) -> Optional[int]:
+            """Return row number of first col-A cell whose text contains any fragment."""
+            for row in ws.iter_rows():
+                cell_a = row[0]
+                if cell_a.value and isinstance(cell_a.value, str):
+                    cv = cell_a.value.lower()
+                    if any(f.lower() in cv for f in fragments):
+                        return cell_a.row
+            return None
+
+        def smart_set(ws, *label_fragments: str, fallback_row: int, value) -> None:
+            """Write value to col C of the row matching label_fragments, or fallback."""
+            if value is None:
+                return
+            row_num = _find_row_for_label(ws, *label_fragments) or fallback_row
+            safe_set(ws, row_num, 3, value)
+
+        smart_set(inp, "implementations", "full-module", "impls",
+                  fallback_row=5,  value=p.get("impls_per_year") or data.impls_per_year)
+        smart_set(inp, "team size", "team ftes", "headcount",
+                  fallback_row=6,  value=p.get("team_ftes") or data.team_ftes)
+        smart_set(inp, "ftes per", "ftes/impl", "fte per impl", "ftes assigned",
+                  fallback_row=7,  value=p.get("ftes_per_impl") or data.ftes_per_impl)
+        smart_set(inp, "annual fte cost", "fully-loaded", "fte cost",
+                  fallback_row=8,  value=p.get("fte_cost_usd") or data.fte_cost_usd)
         # C9 (working hrs/week) and C10 (weeks/year) intentionally untouched —
         # template defaults (40h, 52w) are the right answer 99% of the time.
-        safe_set(inp, 15, 3, p.get("inception_weeks")      or data.inception_weeks)
-        safe_set(inp, 16, 3, p.get("solutioning_weeks")    or data.solutioning_weeks)
-        safe_set(inp, 17, 3, p.get("config_weeks")         or data.config_weeks)
-        safe_set(inp, 18, 3, p.get("data_migration_weeks") or data.data_migration_weeks)
-        safe_set(inp, 19, 3, p.get("testing_weeks")        or data.testing_weeks)
-        safe_set(inp, 20, 3, p.get("cutover_weeks")        or data.cutover_weeks)
+
+        smart_set(inp, "inception", "discovery",
+                  fallback_row=14, value=p.get("inception_weeks") or data.inception_weeks)
+        smart_set(inp, "solutioning", "brd",
+                  fallback_row=15, value=p.get("solutioning_weeks") or data.solutioning_weeks)
+        smart_set(inp, "configuration", "workflow setup", "config",
+                  fallback_row=16, value=p.get("config_weeks") or data.config_weeks)
+        smart_set(inp, "data migration", "data prep",
+                  fallback_row=17, value=p.get("data_migration_weeks") or data.data_migration_weeks)
+        smart_set(inp, "testing", "uat",
+                  fallback_row=18, value=p.get("testing_weeks") or data.testing_weeks)
+        smart_set(inp, "cutover", "go-live", "golive",
+                  fallback_row=19, value=p.get("cutover_weeks") or data.cutover_weeks)
 
         for row in inp.iter_rows(max_row=3):
             for cell in row:
@@ -426,10 +470,16 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
                         "[Client Name]", data.client_name
                     )
 
-    # Executive Summary banner — replace [Client Name]/[Month Year] placeholders
-    # in the title rows only. We never touch the formula-driven rows below.
+    # Executive Summary — two passes:
+    #  1. Replace [Client Name]/[Month Year] placeholders in the title rows.
+    #  2. Correct the Recommended Annual Fee formula to use 33% (moderate
+    #     scenario = 3× ROI for the client). Templates sometimes ship with
+    #     25% or other wrong percentages; we normalise here so the output
+    #     always shows the correct opening-bid number.
     if "Executive Summary" in wb.sheetnames:
         es = wb["Executive Summary"]
+
+        # Pass 1 — banner placeholders (title rows only)
         for row in es.iter_rows(max_row=3):
             for cell in row:
                 if (cell.value
@@ -444,6 +494,33 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
                             "[Month Year]",
                             data.report_date or human_today(),
                         )
+
+        # Pass 2 — fix the Recommended Annual Fee formula.
+        # Pattern: any formula of the form  =0.XX*B{n}  (a flat % × annual
+        # savings). Conservative = 20%, Moderate = 33%, Aggressive = 50%.
+        # We enforce 33% (moderate) as the displayed "recommended" number.
+        # We intentionally skip 0.20 and 0.50 so we don't accidentally
+        # modify the conservative / aggressive scenario cells if they share
+        # the same formula shape (they live on a different sheet, but
+        # defensive code is better code).
+        _fee_pattern = re.compile(r"^=(0\.\d+)\*([A-Z]+\d+)$", re.IGNORECASE)
+        for row in es.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str):
+                    m = _fee_pattern.match(cell.value)
+                    if m:
+                        pct_str, cell_ref = m.group(1), m.group(2)
+                        pct = float(pct_str)
+                        # Only correct clearly-wrong percentages: anything
+                        # that isn't 0.20 (conservative) or 0.50 (aggressive)
+                        # and isn't already 0.33.
+                        if pct not in (0.20, 0.33, 0.50):
+                            cell.value = f"=0.33*{cell_ref}"
+                            logger.info(
+                                "ROI template: corrected fee formula from "
+                                "=%s*%s to =0.33*%s (moderate scenario)",
+                                pct_str, cell_ref, cell_ref,
+                            )
 
     out = io.BytesIO()
     wb.save(out)
