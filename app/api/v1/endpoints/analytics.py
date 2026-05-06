@@ -282,7 +282,14 @@ def _activity_rep_id(
     contact_owner: dict[UUID, UUID | None],
 ) -> UUID | None:
     source = str(row.source or "").strip().lower()
+    medium = str(row.medium or "").strip().lower()
+    kind = str(row.type or "").strip().lower()
     metadata = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+
+    # Manually logged calls/LinkedIn touches should credit the rep who logged
+    # the action, even when the contacted person is assigned to a different rep.
+    if row.created_by_id and source == "manual" and (medium in {"call", "linkedin"} or kind in {"call", "linkedin"}):
+        return row.created_by_id
 
     # Personal inbox sync represents the rep's own mailbox activity, so the
     # syncing user should own the touch even when the deal/contact is assigned
