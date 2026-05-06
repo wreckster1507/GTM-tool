@@ -3,9 +3,9 @@ Resend email client — sends outreach emails via Resend API.
 
 Mock mode: logs the email but doesn't send when RESEND_API_KEY is empty.
 """
-import asyncio
 import logging
-from typing import Optional
+
+import httpx
 
 from app.config import settings
 
@@ -47,9 +47,6 @@ async def send_email(
         return {"error": "Resend API key not configured", "status": "not_configured"}
 
     try:
-        import resend
-        resend.api_key = settings.RESEND_API_KEY
-
         params = {
             "from": f"{from_name} <{settings.RESEND_FROM_EMAIL}>",
             "to": [to],
@@ -58,11 +55,25 @@ async def send_email(
             "text": body,  # plain text fallback
         }
 
-        # Resend SDK is synchronous — run in executor to not block event loop
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: resend.Emails.send(params))
-        logger.info(f"Email sent via Resend: {response}")
-        return {"id": response.get("id", ""), "status": "sent"}
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=params,
+            )
+        if response.status_code >= 400:
+            logger.error("Resend send failed: %s %s", response.status_code, response.text[:500])
+            return {
+                "error": response.text,
+                "status": "failed",
+                "status_code": response.status_code,
+            }
+        payload = response.json()
+        logger.info("Email sent via Resend: %s", payload)
+        return {"id": payload.get("id", ""), "status": "sent"}
 
     except Exception as e:
         logger.error(f"Resend send failed: {e}")
