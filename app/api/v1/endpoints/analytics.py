@@ -568,9 +568,9 @@ async def sales_dashboard(
     if filter_geographies:
         activity_rows = [row for row in activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
 
-    # Meetings are counted when they happened, and upcoming scheduled meetings
-    # are counted when they were booked so reps see newly scheduled meetings in
-    # the current analytics window instead of waiting until the meeting date.
+    # Meetings are counted when they happen. Counting future calendar events by
+    # created_at inflates rep activity for recurring series that sync in bulk.
+    # Manual/legacy records without scheduled_at still fall back to created_at.
     meetings_rows = (
         await session.execute(
             select(
@@ -582,10 +582,12 @@ async def sales_dashboard(
                 Meeting.status,
                 Meeting.external_source,
                 Meeting.attendees,
+                Meeting.is_internal,
             ).where(
+                Meeting.is_internal.is_(False),
                 or_(
                     (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
-                    (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
+                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
                 )
             )
         )
