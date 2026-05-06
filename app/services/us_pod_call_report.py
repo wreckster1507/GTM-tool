@@ -10,10 +10,11 @@ from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.clients.resend_client import send_email
+from app.clients.gmail_sender import send_gmail_email
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.deal import Deal
+from app.models.settings import WorkspaceSettings
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -378,15 +379,55 @@ async def send_us_pod_call_report_email(
     report_date: date | None = None,
 ) -> dict[str, Any]:
     report = await build_us_pod_call_report(session, report_date)
+    settings_row = await session.get(WorkspaceSettings, 1)
+    if (
+        not settings_row
+        or not settings_row.report_sender_email
+        or not settings_row.report_sender_connected_email
+        or not settings_row.report_sender_token_data
+    ):
+        report["send_results"] = [
+            {
+                "status": "not_configured",
+                "error": "Report sender Gmail account is not connected in Settings.",
+            }
+        ]
+        return report
+
+    if settings_row.report_sender_email.lower() != settings_row.report_sender_connected_email.lower():
+        report["send_results"] = [
+            {
+                "status": "failed",
+                "error": (
+                    f"Configured report sender {settings_row.report_sender_email} does not match "
+                    f"connected Gmail account {settings_row.report_sender_connected_email}."
+                ),
+            }
+        ]
+        return report
+
     send_results = []
+    token_data = settings_row.report_sender_token_data
     for recipient in US_POD_REPORT_RECIPIENTS:
-        result = await send_email(
+        result, token_data = await send_gmail_email(
+            token_data=token_data,
+            from_email=settings_row.report_sender_email,
             to=recipient,
             subject=report["subject"],
             body=report["body"],
             from_name="Beacon Sales Ops",
         )
         send_results.append({"to": recipient, **result})
+        if result.get("status") != "sent":
+            settings_row.report_sender_last_error = str(result.get("error") or "Gmail send failed")[:500]
+            break
+
+    if token_data != settings_row.report_sender_token_data:
+        settings_row.report_sender_token_data = token_data
+    if all(result.get("status") == "sent" for result in send_results):
+        settings_row.report_sender_last_error = None
+    session.add(settings_row)
+    await session.commit()
 
     report["send_results"] = send_results
     logger.info("US pod call report sent for %s to %d recipients", report["report_date"], len(send_results))

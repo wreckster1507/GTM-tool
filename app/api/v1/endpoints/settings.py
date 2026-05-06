@@ -37,6 +37,8 @@ from app.models.settings import (
     PipelineSummarySettingsRead,
     PipelineSummarySettingsUpdate,
     PreMeetingAutomationSettingsRead,
+    ReportSenderSettingsRead,
+    ReportSenderSettingsUpdate,
     ProspectStageSettingsRead,
     ProspectStageSettingsUpdate,
     PreMeetingAutomationSettingsUpdate,
@@ -54,7 +56,7 @@ from app.services.deal_stages import (
     get_configured_deal_stage_ids,
     normalize_deal_stage_settings,
 )
-from app.services.gmail_oauth import build_gmail_connect_url, create_gmail_oauth_state, decode_gmail_oauth_state, exchange_gmail_code
+from app.services.gmail_oauth import GMAIL_SEND_SCOPE, build_gmail_connect_url, create_gmail_oauth_state, decode_gmail_oauth_state, exchange_gmail_code
 from app.services.meeting_automation import normalize_pre_meeting_settings, run_due_pre_meeting_intel_once
 from app.services.permissions import normalize_role_permissions
 
@@ -475,6 +477,29 @@ async def _gmail_status(session: DBSession) -> GmailSettingsRead:
     )
 
 
+def _has_scope(token_data: dict | None, scope: str) -> bool:
+    if not isinstance(token_data, dict):
+        return False
+    return scope in set(token_data.get("scopes") or [])
+
+
+async def _report_sender_status(session: DBSession) -> ReportSenderSettingsRead:
+    row = await _get_or_create(session)
+    return ReportSenderSettingsRead(
+        configured=bool(
+            row.report_sender_email
+            and row.report_sender_connected_email
+            and row.report_sender_token_data
+            and _has_scope(row.report_sender_token_data, GMAIL_SEND_SCOPE)
+        ),
+        sender_email=row.report_sender_email,
+        connected_email=row.report_sender_connected_email,
+        connected_at=row.report_sender_connected_at,
+        last_error=row.report_sender_last_error,
+        has_send_scope=_has_scope(row.report_sender_token_data, GMAIL_SEND_SCOPE),
+    )
+
+
 @router.get("/outreach", response_model=OutreachSettingsRead)
 async def get_outreach_settings(session: DBSession, _user: CurrentUser):
     """Return the global outreach sequence timing defaults."""
@@ -844,6 +869,33 @@ async def get_gmail_connect_url(admin: AdminUser, session: DBSession):
     return GmailConnectUrlRead(url=build_gmail_connect_url(state))
 
 
+@router.get("/report-sender", response_model=ReportSenderSettingsRead)
+async def get_report_sender_settings(session: DBSession, _user: CurrentUser):
+    return await _report_sender_status(session)
+
+
+@router.patch("/report-sender", response_model=ReportSenderSettingsRead)
+async def update_report_sender_settings(body: ReportSenderSettingsUpdate, session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    row.report_sender_email = body.sender_email.strip().lower()
+    session.add(row)
+    await session.commit()
+    return await _report_sender_status(session)
+
+
+@router.get("/report-sender/google/connect-url", response_model=GmailConnectUrlRead)
+async def get_report_sender_connect_url(admin: AdminUser, session: DBSession):
+    if not settings.gmail_client_id or not settings.gmail_client_secret:
+        raise UnauthorizedError("Gmail OAuth is not configured. Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET.")
+
+    row = await _get_or_create(session)
+    if not row.report_sender_email:
+        raise ForbiddenError("Set the report sender email before connecting Gmail.")
+
+    state = create_gmail_oauth_state(str(admin.id), flow="report_sender")
+    return GmailConnectUrlRead(url=build_gmail_connect_url(state, scopes=GMAIL_SEND_SCOPE))
+
+
 @router.get("/email-sync/google/callback")
 async def gmail_callback(
     session: DBSession,
@@ -874,7 +926,10 @@ async def gmail_callback(
                     await session.commit()
         else:
             row = await _get_or_create(session)
-            row.gmail_last_error = "Failed to complete Gmail OAuth exchange"
+            if flow == "report_sender":
+                row.report_sender_last_error = "Failed to complete Gmail OAuth exchange"
+            else:
+                row.gmail_last_error = "Failed to complete Gmail OAuth exchange"
             session.add(row)
             await session.commit()
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
@@ -918,6 +973,27 @@ async def gmail_callback(
         query = urlencode({"gmail_connected": "1", "email": gmail_info["email_address"]})
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{query}")
 
+    if flow == "report_sender":
+        row = await _get_or_create(session)
+        row.report_sender_connected_email = gmail_info["email_address"]
+        row.report_sender_token_data = gmail_info["token_data"]
+        row.report_sender_connected_at = datetime.utcnow()
+        if not row.report_sender_email:
+            row.report_sender_email = gmail_info["email_address"]
+        if row.report_sender_email.lower() != str(gmail_info["email_address"] or "").lower():
+            row.report_sender_last_error = (
+                f"Connected {gmail_info['email_address']}, but configured sender is {row.report_sender_email}. "
+                "Reconnect with the configured mailbox or update the sender email."
+            )
+        elif not _has_scope(row.report_sender_token_data, GMAIL_SEND_SCOPE):
+            row.report_sender_last_error = "Connected mailbox is missing Gmail send permission. Reconnect report sender."
+        else:
+            row.report_sender_last_error = None
+        session.add(row)
+        await session.commit()
+        query = urlencode({"report_sender": "connected", "email": gmail_info["email_address"]})
+        return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{query}")
+
     row = await _get_or_create(session)
     row.gmail_connected_email = gmail_info["email_address"]
     row.gmail_token_data = gmail_info["token_data"]
@@ -935,6 +1011,18 @@ async def disconnect_gmail(session: DBSession, _admin: AdminUser):
     row.gmail_connected_at = None
     row.gmail_token_data = None
     row.gmail_last_error = None
+    session.add(row)
+    await session.commit()
+    return {"status": "disconnected"}
+
+
+@router.delete("/report-sender/google")
+async def disconnect_report_sender(session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    row.report_sender_connected_email = None
+    row.report_sender_connected_at = None
+    row.report_sender_token_data = None
+    row.report_sender_last_error = None
     session.add(row)
     await session.commit()
     return {"status": "disconnected"}

@@ -223,6 +223,11 @@ class WorkspaceSettings(SQLModel, table=True):
     gmail_connected_at: Optional[datetime] = Field(default=None)
     gmail_token_data: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     gmail_last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    report_sender_email: Optional[str] = Field(default=None)
+    report_sender_connected_email: Optional[str] = Field(default=None)
+    report_sender_connected_at: Optional[datetime] = Field(default=None)
+    report_sender_token_data: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    report_sender_last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -401,3 +406,16 @@ class GmailSettingsUpdate(SQLModel):
 
 class GmailConnectUrlRead(SQLModel):
     url: str
+
+
+class ReportSenderSettingsRead(SQLModel):
+    configured: bool
+    sender_email: Optional[str] = None
+    connected_email: Optional[str] = None
+    connected_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    has_send_scope: bool = False
+
+
+class ReportSenderSettingsUpdate(SQLModel):
+    sender_email: str

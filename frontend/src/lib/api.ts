@@ -24,6 +24,7 @@ import type {
   ExecutionTrackerSummary,
   Reminder,
   GmailSyncSettings,
+  ReportSenderSettings,
   DealStageSettings,
   ProspectStageSettings,
   OutreachContentSettings,
@@ -1822,6 +1823,19 @@ export const settingsApi = {
   triggerEmailSync: () =>
     request<{ status: string; task_id?: string; message?: string }>("/api/v1/email-sync/trigger", {
       method: "POST",
+    }),
+  getReportSender: () =>
+    request<ReportSenderSettings>("/api/v1/settings/report-sender"),
+  updateReportSender: (sender_email: string) =>
+    request<ReportSenderSettings>("/api/v1/settings/report-sender", {
+      method: "PATCH",
+      body: JSON.stringify({ sender_email }),
+    }),
+  getReportSenderConnectUrl: () =>
+    request<{ url: string }>("/api/v1/settings/report-sender/google/connect-url"),
+  disconnectReportSender: () =>
+    request<{ status: string }>("/api/v1/settings/report-sender/google", {
+      method: "DELETE",
     }),
   getSyncSchedule: () =>
     request<SyncScheduleSettings>("/api/v1/settings/sync-schedule"),

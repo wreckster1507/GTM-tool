@@ -31,6 +31,7 @@ import type {
   DealStageSettings,
   ProspectStageSettings,
   GmailSyncSettings,
+  ReportSenderSettings,
   OutreachContentSettings,
   OutreachTemplateStep,
   PreMeetingAutomationSettings,
@@ -77,7 +78,9 @@ export default function SettingsPage() {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>("email-sync");
   const [gmail, setGmail] = useState<GmailSyncSettings | null>(null);
+  const [reportSender, setReportSender] = useState<ReportSenderSettings | null>(null);
   const [inbox, setInbox] = useState("zippy@beacon.li");
+  const [reportSenderEmail, setReportSenderEmail] = useState("sarthak@beacon.li");
   const [outreachContent, setOutreachContent] = useState<OutreachContentSettings | null>(null);
   const [dealStages, setDealStages] = useState<DealStageSettings | null>(null);
   const [prospectStages, setProspectStages] = useState<ProspectStageSettings | null>(null);
@@ -93,8 +96,11 @@ export default function SettingsPage() {
   const [outreachTimingSteps, setOutreachTimingSteps] = useState<Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }>>([]);
   const [loading, setLoading] = useState(true);
   const [savingInbox, setSavingInbox] = useState(false);
+  const [savingReportSender, setSavingReportSender] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [connectingReportSender, setConnectingReportSender] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectingReportSender, setDisconnectingReportSender] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [savingOutreach, setSavingOutreach] = useState(false);
   const [savingStages, setSavingStages] = useState(false);
@@ -132,8 +138,9 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
+      const [gmailData, reportSenderData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
         settingsApi.getGmailSync(),
+        settingsApi.getReportSender().catch(() => null),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
@@ -146,6 +153,10 @@ export default function SettingsPage() {
       ]);
       setGmail(gmailData);
       setInbox(gmailData.inbox || "zippy@beacon.li");
+      if (reportSenderData) {
+        setReportSender(reportSenderData);
+        setReportSenderEmail(reportSenderData.sender_email || "sarthak@beacon.li");
+      }
       if (personalEmailData) setPersonalEmail(personalEmailData);
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
@@ -210,6 +221,7 @@ export default function SettingsPage() {
     const params = new URLSearchParams(window.location.search);
     const gmailStatus = params.get("gmail");
     const gmailConnected = params.get("gmail_connected");
+    const reportSenderStatus = params.get("report_sender");
     const connectedEmail = params.get("email");
     if (gmailStatus === "connected") {
       setMessage("Gmail connected successfully. Beacon will keep syncing zippy@beacon.li automatically from here.");
@@ -223,9 +235,14 @@ export default function SettingsPage() {
       setPersonalSyncBaseline(null);
       loadSettings();
     }
-    if (gmailStatus || gmailConnected) {
+    if (reportSenderStatus === "connected") {
+      setMessage(`Report sender connected${connectedEmail ? ` (${connectedEmail})` : ""}. Beacon can now send scheduled reports from this Gmail account.`);
+      loadSettings();
+    }
+    if (gmailStatus || gmailConnected || reportSenderStatus) {
       params.delete("gmail");
       params.delete("gmail_connected");
+      params.delete("report_sender");
       params.delete("email");
       const query = params.toString();
       window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
@@ -341,6 +358,59 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to trigger sync");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleSaveReportSender = async () => {
+    if (!reportSenderEmail.trim()) {
+      setError("Enter a report sender email first.");
+      return;
+    }
+    setSavingReportSender(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const data = await settingsApi.updateReportSender(reportSenderEmail.trim());
+      setReportSender(data);
+      setReportSenderEmail(data.sender_email || reportSenderEmail.trim());
+      setMessage("Report sender saved. Connect Gmail to grant send permission for reports.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save report sender");
+    } finally {
+      setSavingReportSender(false);
+    }
+  };
+
+  const handleConnectReportSender = async () => {
+    setConnectingReportSender(true);
+    setError(null);
+    setMessage(null);
+    try {
+      if (!reportSender?.sender_email || reportSender.sender_email !== reportSenderEmail.trim()) {
+        const data = await settingsApi.updateReportSender(reportSenderEmail.trim());
+        setReportSender(data);
+      }
+      const result = await settingsApi.getReportSenderConnectUrl();
+      window.location.assign(result.url);
+    } catch (err) {
+      setConnectingReportSender(false);
+      setError(err instanceof Error ? err.message : "Failed to start report sender Gmail connect");
+    }
+  };
+
+  const handleDisconnectReportSender = async () => {
+    setDisconnectingReportSender(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await settingsApi.disconnectReportSender();
+      const data = await settingsApi.getReportSender();
+      setReportSender(data);
+      setMessage("Report sender disconnected. Scheduled report emails are paused until an admin reconnects it.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect report sender");
+    } finally {
+      setDisconnectingReportSender(false);
     }
   };
 
@@ -1002,6 +1072,92 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+
+            <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div className="crm-chip" style={{ marginBottom: 10, background: "#fff7ed", color: "#c2410c", borderColor: "#fed7aa" }}>
+                    <Mail size={13} />
+                    Report Sender
+                  </div>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>
+                    Daily report Gmail sender
+                  </h3>
+                  <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.7, fontSize: 14 }}>
+                    Beacon sends the US pod daily call report from this mailbox. Use your email now, then switch to a dedicated reports mailbox later without code changes.
+                  </p>
+                </div>
+                <div style={{
+                  padding: "9px 13px",
+                  borderRadius: 999,
+                  background: reportSender?.configured ? "#e8f8ee" : reportSender?.sender_email ? "#fff6df" : "#f3f5fc",
+                  color: reportSender?.configured ? "#217a49" : reportSender?.sender_email ? "#a26a00" : "#66748f",
+                  fontSize: 13,
+                  fontWeight: 800,
+                }}>
+                  {reportSender?.configured ? "Ready to send" : reportSender?.sender_email ? "Needs Gmail connect" : "Not set up"}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)", gap: 16 }}>
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                      Sender mailbox
+                    </div>
+                    <input
+                      value={reportSenderEmail}
+                      onChange={(event) => setReportSenderEmail(event.target.value)}
+                      placeholder="sarthak@beacon.li"
+                      style={{ width: "100%", height: 46, padding: "0 14px", fontSize: 14 }}
+                      disabled={!isAdmin}
+                    />
+                  </div>
+                  {isAdmin ? (
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button className="crm-button soft" onClick={handleSaveReportSender} disabled={savingReportSender}>
+                        {savingReportSender ? <RefreshCw size={15} className="animate-spin" /> : <Shield size={15} />}
+                        Save sender
+                      </button>
+                      <button className="crm-button primary" onClick={handleConnectReportSender} disabled={connectingReportSender}>
+                        {connectingReportSender ? <RefreshCw size={15} className="animate-spin" /> : <Link2 size={15} />}
+                        Connect Gmail send
+                      </button>
+                      <button className="crm-button soft" onClick={handleDisconnectReportSender} disabled={disconnectingReportSender || !reportSender?.connected_email}>
+                        {disconnectingReportSender ? <RefreshCw size={15} className="animate-spin" /> : <Unplug size={15} />}
+                        Disconnect sender
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="crm-muted" style={{ fontSize: 13 }}>Only admins can change the report sender.</p>
+                  )}
+                  {reportSender?.last_error && (
+                    <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff4e6", border: "1px solid #f0d4ac", color: "#a46206", fontSize: 13 }}>
+                      {reportSender.last_error}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span className="crm-muted">Configured sender</span>
+                    <strong style={{ color: "#182042" }}>{reportSender?.sender_email || "Not set"}</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span className="crm-muted">Connected Gmail</span>
+                    <strong style={{ color: "#182042" }}>{reportSender?.connected_email || "Not connected"}</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span className="crm-muted">Send permission</span>
+                    <strong style={{ color: reportSender?.has_send_scope ? "#217a49" : "#a26a00" }}>{reportSender?.has_send_scope ? "Granted" : "Missing"}</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span className="crm-muted">Connected at</span>
+                    <strong style={{ color: "#182042" }}>{formatDate(reportSender?.connected_at)}</strong>
+                  </div>
+                </div>
+              </div>
+            </section>
 
             <section className="crm-panel" style={{ padding: 24 }}>
               <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 14 }}>How it works</h3>

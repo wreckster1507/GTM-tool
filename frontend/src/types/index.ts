@@ -553,6 +553,15 @@ export interface GmailSyncSettings {
   last_error?: string | null;
 }
 
+export interface ReportSenderSettings {
+  configured: boolean;
+  sender_email?: string;
+  connected_email?: string;
+  connected_at?: string;
+  last_error?: string | null;
+  has_send_scope: boolean;
+}
+
 export interface DealStageSetting {
   id: string;
   label: string;
