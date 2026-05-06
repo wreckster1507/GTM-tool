@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import Activity
+from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
@@ -40,6 +41,7 @@ class CompanyRepository(BaseRepository[Company]):
         Delete a company and every dependent record in FK dependency order:
           1. outreach_sequences (FK on company_id + contact_id)
           2. activities (via contact_ids + deal_ids)
+          3. company_stage_milestones
           3. deals
           4. contacts (+ any remaining outreach_sequences on contact_id)
           5. company  (signals cascade via DB ON DELETE CASCADE;
@@ -85,11 +87,18 @@ class CompanyRepository(BaseRepository[Company]):
             for act in (await self.session.execute(acts_stmt)).scalars().all():
                 await self.session.delete(act)
 
-        # 3. deals
+        # 3. company stage milestones
+        milestones = await self.session.execute(
+            select(CompanyStageMilestone).where(CompanyStageMilestone.company_id == company_id)
+        )
+        for milestone in milestones.scalars().all():
+            await self.session.delete(milestone)
+
+        # 4. deals
         for deal in deals:
             await self.session.delete(deal)
 
-        # 4. contacts (+ leftover outreach_sequences on contact_id)
+        # 5. contacts (+ leftover outreach_sequences on contact_id)
         for contact in contacts:
             extra = (
                 await self.session.execute(
@@ -102,7 +111,7 @@ class CompanyRepository(BaseRepository[Company]):
                 await self.session.delete(seq)
             await self.session.delete(contact)
 
-        # 5. company
+        # 6. company
         company = await self.get(company_id)
         if company:
             await self.session.delete(company)

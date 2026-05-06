@@ -56,3 +56,4 @@ beacon-crm/
 - Always create .env.example with placeholder values when adding new env vars
 - The frontend and backend run on separate ports (3000 and 8000). Configure CORS.
 - Use UUID primary keys everywhere (not auto-increment integers)
+

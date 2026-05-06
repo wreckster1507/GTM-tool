@@ -1,13 +1,18 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy import func, or_, select
+
 from fastapi import APIRouter, HTTPException, Query
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import CurrentUser, DBSession, Pagination
+from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
+from app.models.user import User
 from app.repositories.meeting import MeetingRepository
+from app.services.permissions import require_workspace_permission
 from app.schemas.common import PaginatedResponse
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -16,31 +21,124 @@ router = APIRouter(prefix="/meetings", tags=["meetings"])
 @router.get("/", response_model=PaginatedResponse[MeetingRead])
 async def list_meetings(
     session: DBSession,
+    current_user: CurrentUser,
     pagination: Pagination,
     company_id: Optional[UUID] = Query(default=None),
     deal_id: Optional[UUID] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    status: list[str] = Query(default=[]),
+    meeting_type: list[str] = Query(default=[]),
+    assignee_id: list[UUID] = Query(default=[]),
+    link_state: list[str] = Query(default=[]),
+    has_intel: Optional[bool] = Query(default=None),
+    order: str = Query(default="desc"),
 ):
-    repo = MeetingRepository(session)
-    filters = []
+    stmt = select(Meeting)
+    count_stmt = select(func.count()).select_from(Meeting)
+    joined_deal = False
+
+    def ensure_deal_join() -> None:
+        nonlocal stmt, count_stmt, joined_deal
+        if joined_deal:
+            return
+        stmt = stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
+        count_stmt = count_stmt.outerjoin(Deal, Meeting.deal_id == Deal.id)
+        joined_deal = True
+
+    # Non-admins only see meetings they own or that are synced to them
+    if current_user.role != "admin":
+        scope_clause = or_(
+            Meeting.owner_user_id == current_user.id,
+            Meeting.synced_by_user_id == current_user.id,
+        )
+        stmt = stmt.where(scope_clause)
+        count_stmt = count_stmt.where(scope_clause)
+
     if company_id:
-        filters.append(Meeting.company_id == company_id)
+        stmt = stmt.where(Meeting.company_id == company_id)
+        count_stmt = count_stmt.where(Meeting.company_id == company_id)
     if deal_id:
-        filters.append(Meeting.deal_id == deal_id)
+        stmt = stmt.where(Meeting.deal_id == deal_id)
+        count_stmt = count_stmt.where(Meeting.deal_id == deal_id)
     if status:
-        filters.append(Meeting.status == status)
-    items, total = await repo.list_paginated(
-        *filters,
-        skip=pagination.skip,
-        limit=pagination.limit,
-        order_by=Meeting.scheduled_at.desc(),
-    )
+        stmt = stmt.where(Meeting.status.in_(status))
+        count_stmt = count_stmt.where(Meeting.status.in_(status))
+    if meeting_type:
+        stmt = stmt.where(Meeting.meeting_type.in_(meeting_type))
+        count_stmt = count_stmt.where(Meeting.meeting_type.in_(meeting_type))
+    if assignee_id:
+        ensure_deal_join()
+        assignee_clause = or_(
+            Deal.assigned_to_id.in_(assignee_id),
+            Meeting.owner_user_id.in_(assignee_id),
+        )
+        stmt = stmt.where(assignee_clause)
+        count_stmt = count_stmt.where(assignee_clause)
+    link_state_set = {value.strip().lower() for value in link_state if value}
+    if link_state_set == {"needs_review"}:
+        review_clause = or_(Meeting.company_id.is_(None), Meeting.deal_id.is_(None))
+        stmt = stmt.where(review_clause)
+        count_stmt = count_stmt.where(review_clause)
+    elif link_state_set == {"linked"}:
+        stmt = stmt.where(Meeting.company_id.is_not(None), Meeting.deal_id.is_not(None))
+        count_stmt = count_stmt.where(Meeting.company_id.is_not(None), Meeting.deal_id.is_not(None))
+    if has_intel is True:
+        stmt = stmt.where(Meeting.research_data.is_not(None))
+        count_stmt = count_stmt.where(Meeting.research_data.is_not(None))
+    elif has_intel is False:
+        stmt = stmt.where(Meeting.research_data.is_(None))
+        count_stmt = count_stmt.where(Meeting.research_data.is_(None))
+
+    order_by = Meeting.scheduled_at.asc() if order == "asc" else Meeting.scheduled_at.desc()
+    stmt = stmt.order_by(order_by).offset(pagination.skip).limit(pagination.limit)
+
+    total = (await session.execute(count_stmt)).scalar_one()
+    items = list((await session.execute(stmt)).scalars().all())
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 
 
+def _attendees_key(attendees) -> frozenset:
+    """Canonical frozenset of attendee emails for dedup comparison."""
+    if not attendees:
+        return frozenset()
+    if isinstance(attendees, list):
+        return frozenset(
+            str(a.get("email", "")).lower().strip()
+            for a in attendees
+            if isinstance(a, dict) and a.get("email")
+        )
+    return frozenset()
+
+
 @router.post("/", response_model=MeetingRead, status_code=201)
-async def create_meeting(payload: MeetingCreate, session: DBSession):
-    return await MeetingRepository(session).create(payload.model_dump())
+async def create_meeting(payload: MeetingCreate, session: DBSession, current_user: CurrentUser):
+    data = payload.model_dump()
+
+    # Dedup: reject if a meeting with same title + overlapping attendees already exists
+    # within a 2-hour window around the scheduled_at (same name on different days is fine)
+    scheduled_at = data.get("scheduled_at")
+    title = (data.get("title") or "").strip()
+    if scheduled_at and title:
+        window_start = scheduled_at - timedelta(hours=1)
+        window_end = scheduled_at + timedelta(hours=1)
+        existing_candidates = list((await session.execute(
+            select(Meeting).where(
+                Meeting.title == title,
+                Meeting.scheduled_at >= window_start,
+                Meeting.scheduled_at <= window_end,
+            )
+        )).scalars().all())
+
+        incoming_attendees = _attendees_key(data.get("attendees"))
+        for candidate in existing_candidates:
+            existing_attendees = _attendees_key(candidate.attendees)
+            # Same title + same time window + overlapping attendees = duplicate
+            if not incoming_attendees or not existing_attendees or incoming_attendees & existing_attendees:
+                return candidate  # return existing instead of creating duplicate
+
+    data.setdefault("synced_by_user_id", str(current_user.id))
+    data.setdefault("synced_at", datetime.utcnow().isoformat())
+    data.setdefault("external_source", "manual")
+    return await MeetingRepository(session).create(data)
 
 
 @router.get("/{meeting_id}", response_model=MeetingRead)
@@ -65,8 +163,10 @@ async def delete_meeting(meeting_id: UUID, session: DBSession):
 
 
 @router.post("/{meeting_id}/pre-brief")
-async def generate_pre_brief(meeting_id: UUID, session: DBSession):
+async def generate_pre_brief(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     """Generate AI pre-meeting brief combining company research + attendee profiles."""
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
     repo = MeetingRepository(session)
     meeting = await repo.get_or_raise(meeting_id)
 
@@ -102,12 +202,14 @@ async def generate_pre_brief(meeting_id: UUID, session: DBSession):
 
 
 @router.post("/{meeting_id}/intelligence")
-async def run_meeting_intelligence(meeting_id: UUID, session: DBSession):
+async def run_meeting_intelligence(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     """
     Full pre-meeting intelligence: website scrape, DuckDuckGo news/signals,
     Hunter contacts, Google News, competitive landscape, GPT-4o executive
     briefing. Saves to meeting.research_data. ~10-15s.
     """
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
     import logging
     logger = logging.getLogger(__name__)
     from app.services.pre_meeting_intelligence import run_pre_meeting_intelligence
@@ -124,11 +226,13 @@ async def run_meeting_intelligence(meeting_id: UUID, session: DBSession):
 
 
 @router.post("/{meeting_id}/demo-strategy")
-async def generate_demo_strategy(meeting_id: UUID, session: DBSession):
+async def generate_demo_strategy(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     """
     GPT-4o Demo Strategy & Story Lineup. Reads cached research_data (if intel
     was already run) plus company DB profile. Saves to meeting.demo_strategy.
     """
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
     import logging
     logger = logging.getLogger(__name__)
     from app.services.pre_meeting_intelligence import generate_meeting_demo_strategy
@@ -142,6 +246,116 @@ async def generate_demo_strategy(meeting_id: UUID, session: DBSession):
     except Exception as e:
         logger.exception(f"Demo strategy generation failed for {meeting_id}")
         raise HTTPException(status_code=500, detail=f"Demo strategy failed: {str(e)}")
+
+
+@router.post("/{meeting_id}/research-more")
+async def research_more(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
+    """
+    Gap-filling enrichment: detects what's missing in the company's enrichment_cache
+    and only fetches those pieces (Hunter firmographics, contacts, Google News, etc.).
+    Much faster than running full web intel — only fills actual gaps.
+    """
+    await require_workspace_permission(session, current_user, "run_pre_meeting_intel")
+
+    import logging
+    logger = logging.getLogger(__name__)
+    from app.services.pre_meeting_intelligence import run_research_more
+    try:
+        result = await run_research_more(meeting_id, session)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Research more failed for {meeting_id}")
+        raise HTTPException(status_code=500, detail=f"Research more failed: {str(e)}")
+
+
+@router.get("/{meeting_id}/research-gaps")
+async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
+    """
+    Returns a list of data gaps for the meeting's company — what's missing
+    so the frontend can show 'Research More (N gaps)' without running anything.
+    """
+    from app.models.meeting import Meeting
+    from app.models.company import Company
+    from datetime import datetime
+
+    meeting = await session.get(Meeting, meeting_id)
+    if not meeting or not meeting.company_id:
+        return {"gaps": [], "count": 0}
+
+    company = await session.get(Company, meeting.company_id)
+    if not company:
+        return {"gaps": [], "count": 0}
+
+    import re as _re
+    ec = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+    now = datetime.utcnow()
+    gaps = []
+
+    # Strip CRM suffixes to get real company name for news/search queries
+    raw_name = company.name or ""
+    clean_name = _re.sub(r'\s*-\s*(Impl|Skilljar|CS|Pilot|Trial|POC|Demo|Test)\s*$', '', raw_name, flags=_re.IGNORECASE).strip() or raw_name
+
+    def _unwrap(key):
+        entry = ec.get(key)
+        return entry.get("data") if isinstance(entry, dict) else None
+
+    def _age_days(key) -> float:
+        entry = ec.get(key)
+        if not isinstance(entry, dict):
+            return 9999
+        fetched_at = entry.get("fetched_at")
+        if not fetched_at:
+            return 9999
+        try:
+            d = datetime.fromisoformat(fetched_at)
+            return (now - d).total_seconds() / 86400
+        except Exception:
+            return 9999
+
+    def _has_contacts() -> bool:
+        data = _unwrap("hunter_contacts")
+        if isinstance(data, list):
+            return len(data) > 0
+        if isinstance(data, dict):
+            return len(data.get("contacts", [])) > 0
+        return False
+
+    domain = company.domain or ""
+
+    if not _unwrap("hunter_company") and domain and not domain.endswith(".unknown"):
+        gaps.append({"key": "hunter_company", "label": "Company firmographics (revenue, tech stack, size)"})
+
+    hc_entry = ec.get("hunter_contacts")
+    hc_paused = isinstance(hc_entry, dict) and hc_entry.get("paused")
+    if (not _has_contacts() or hc_paused) and domain and not domain.endswith(".unknown"):
+        gaps.append({"key": "hunter_contacts", "label": "Verified contacts with seniority & department"})
+
+    if not _unwrap("google_news") or _age_days("google_news") > 7:
+        if clean_name:
+            gaps.append({"key": "google_news", "label": f"Latest news about {clean_name}"})
+
+    if not _unwrap("web_scrape") and domain and not domain.endswith(".unknown"):
+        gaps.append({"key": "web_scrape", "label": "Website content (pricing, product, careers)"})
+
+    if not ec.get("competitive_landscape_v2") and clean_name:
+        gaps.append({"key": "competitive_landscape", "label": "Competitive landscape"})
+
+    icp_raw = _unwrap("icp_analysis")
+    icp_data = icp_raw.get("data") if isinstance(icp_raw, dict) and "data" in icp_raw else icp_raw
+    if isinstance(icp_data, dict):
+        missing_icp = []
+        if not icp_data.get("conversation_starter"):
+            missing_icp.append("conversation starter")
+        if not icp_data.get("why_now"):
+            missing_icp.append("why now")
+        if missing_icp:
+            gaps.append({"key": "icp_fields", "label": f"AI-generated {', '.join(missing_icp)}"})
+
+    return {"gaps": gaps, "count": len(gaps)}
 
 
 @router.post("/{meeting_id}/post-score")

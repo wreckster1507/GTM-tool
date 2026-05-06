@@ -1,14 +1,11 @@
 """
-Azure OpenAI client wrapper.
+Claude client wrapper with adaptive model routing.
 
-Used across the CRM wherever AI reasoning is needed:
-  - Persona classification (beyond keyword matching)
-  - Deal health narrative ("why is this deal red?")
-  - Pre-meeting account intelligence summary
-  - Email draft generation (MoM, follow-ups)
-  - Objection handling suggestions
+This module intentionally keeps the historical `AzureOpenAIClient` class name
+so existing services do not need large refactors. Under the hood it uses
+Anthropic Claude only and chooses the model by request complexity.
 
-Mock mode: returns None when AZURE_OPENAI_API_KEY is empty.
+Mock mode: returns None when no Claude API key is configured.
 """
 import asyncio
 import logging
@@ -21,16 +18,44 @@ logger = logging.getLogger(__name__)
 
 class AzureOpenAIClient:
     def __init__(self) -> None:
-        self.api_key = settings.AZURE_OPENAI_API_KEY
+        self.api_key = settings.claude_api_key
         self.mock = not self.api_key
 
     def _get_client(self):
-        from openai import AzureOpenAI
-        return AzureOpenAI(
-            api_key=self.api_key,
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-        )
+        import anthropic
+
+        return anthropic.AsyncAnthropic(api_key=self.api_key)
+
+    def _pick_model(self, system: str, user: str, max_tokens: int) -> str:
+        text = f"{system}\n{user}".lower()
+        text_len = len(text)
+
+        complex_markers = [
+            "executive",
+            "comprehensive",
+            "competitive",
+            "strategy",
+            "deep",
+            "analysis",
+            "battlecard",
+            "briefing",
+            "demo strategy",
+            "meeting intelligence",
+        ]
+        simple_markers = [
+            "classify",
+            "one word",
+            "exactly one",
+            "return the domain",
+            "short",
+            "concise",
+        ]
+
+        if max_tokens >= 650 or text_len > 7000 or any(marker in text for marker in complex_markers):
+            return settings.CLAUDE_MODEL_COMPLEX
+        if max_tokens <= 120 and text_len < 1500 and any(marker in text for marker in simple_markers):
+            return settings.CLAUDE_MODEL_SIMPLE
+        return settings.CLAUDE_MODEL_STANDARD
 
     async def complete(self, system: str, user: str, max_tokens: int = 500) -> Optional[str]:
         """Single-turn completion. Returns None in mock mode."""
@@ -38,22 +63,23 @@ class AzureOpenAIClient:
             return None
 
         try:
-            def _call_model():
-                client = self._get_client()
-                return client.chat.completions.create(
-                    model=settings.AZURE_OPENAI_DEPLOYMENT,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
+            model = self._pick_model(system=system, user=user, max_tokens=max_tokens)
+            client = self._get_client()
+            response = await asyncio.wait_for(
+                client.messages.create(
+                    model=model,
                     max_tokens=max_tokens,
-                    temperature=0.3,
-                )
-
-            response = await asyncio.wait_for(asyncio.to_thread(_call_model), timeout=20)
-            return response.choices[0].message.content.strip()
+                    temperature=0.2,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                ),
+                timeout=40,
+            )
+            text_blocks = [block.text for block in response.content if getattr(block, "type", None) == "text"]
+            content = "\n".join(text_blocks).strip() if text_blocks else ""
+            return content or None
         except Exception as e:
-            logger.error(f"Azure OpenAI call failed: {e}")
+            logger.error(f"Claude call failed: {e}")
             return None
 
     async def classify_persona(self, title: str, company_context: str = "") -> Optional[str]:
@@ -92,10 +118,7 @@ class AzureOpenAIClient:
         industry: Optional[str] = None,
         description: Optional[str] = None,
     ) -> Optional[str]:
-        """
-        Use GPT-4o to infer the most likely website domain for a company.
-        Returns a bare domain like 'acmecorp.com', or None if not confident.
-        """
+        """Infer the most likely website domain for a company."""
         if self.mock:
             return None
 

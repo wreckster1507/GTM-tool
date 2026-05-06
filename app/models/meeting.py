@@ -22,6 +22,7 @@ class MeetingBase(SQLModel):
     title: str
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
     deal_id: Optional[UUID] = Field(default=None, foreign_key="deals.id", index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     scheduled_at: Optional[datetime] = None
 
     @field_validator("scheduled_at", mode="before")
@@ -43,6 +44,12 @@ class Meeting(MeetingBase, table=True):
     __tablename__ = "meetings"
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    external_source: Optional[str] = Field(default=None, index=True)
+    external_source_id: Optional[str] = Field(default=None, index=True)
+    synced_by_user_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    synced_at: Optional[datetime] = None
+    meeting_url: Optional[str] = Field(default=None, sa_column=Column(Text))
+    recording_url: Optional[str] = Field(default=None, sa_column=Column(Text))
     # Pre-meeting
     pre_brief: Optional[str] = Field(default=None, sa_column=Column(Text))
     demo_strategy: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -56,6 +63,7 @@ class Meeting(MeetingBase, table=True):
     what_went_right: Optional[str] = Field(default=None, sa_column=Column(Text))
     what_went_wrong: Optional[str] = Field(default=None, sa_column=Column(Text))
     next_steps: Optional[str] = Field(default=None, sa_column=Column(Text))
+    intel_email_sent_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -66,6 +74,12 @@ class MeetingCreate(MeetingBase):
 
 class MeetingRead(MeetingBase):
     id: UUID
+    external_source: Optional[str] = None
+    external_source_id: Optional[str] = None
+    synced_by_user_id: Optional[UUID] = None
+    synced_at: Optional[datetime] = None
+    meeting_url: Optional[str] = None
+    recording_url: Optional[str] = None
     pre_brief: Optional[str] = None
     demo_strategy: Optional[str] = None
     research_data: Optional[Any] = None
@@ -77,15 +91,23 @@ class MeetingRead(MeetingBase):
     what_went_right: Optional[str] = None
     what_went_wrong: Optional[str] = None
     next_steps: Optional[str] = None
+    intel_email_sent_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
 
 class MeetingUpdate(SQLModel):
     title: Optional[str] = None
+    company_id: Optional[UUID] = None
+    deal_id: Optional[UUID] = None
+    owner_user_id: Optional[UUID] = None
     scheduled_at: Optional[datetime] = None
     status: Optional[str] = None
     meeting_type: Optional[str] = None
+    external_source: Optional[str] = None
+    external_source_id: Optional[str] = None
+    meeting_url: Optional[str] = None
+    recording_url: Optional[str] = None
     attendees: Optional[Any] = None
     raw_notes: Optional[str] = None
     ai_summary: Optional[str] = None
@@ -94,3 +116,4 @@ class MeetingUpdate(SQLModel):
     what_went_right: Optional[str] = None
     what_went_wrong: Optional[str] = None
     next_steps: Optional[str] = None
+    intel_email_sent_at: Optional[datetime] = None

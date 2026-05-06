@@ -1,11 +1,21 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
-import { CalendarDays, Plus, X } from "lucide-react";
-import { companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
-import type { Company, Contact, Deal, Meeting } from "../types";
+import { CalendarDays, Check, ChevronDown, Filter, Plus, Search, X } from "lucide-react";
+import { authApi, companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
+import type { Company, Contact, Deal, Meeting, User } from "../types";
 import { formatDate } from "../lib/utils";
 
 const MEETING_TYPES = ["discovery", "demo", "poc", "qbr", "other"];
+const PAGE_SIZE = 25;
+const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
+
+function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {
+  if (!user) return false;
+  const email = (user.email || "").trim().toLowerCase();
+  const name = (user.name || "").trim().toLowerCase();
+  return DEVELOPER_EMAILS.has(email) || name === "sarthak aitha";
+}
 
 const styles: Record<string, CSSProperties> = {
   page: {
@@ -134,15 +144,157 @@ const styles: Record<string, CSSProperties> = {
   },
 };
 
+function MultiSelectDropdown({
+  options,
+  selected,
+  onChange,
+  placeholder,
+}: {
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filtered = useMemo(
+    () => query.trim() ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase())) : options,
+    [options, query],
+  );
+
+  function toggle(value: string) {
+    onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
+  }
+
+  const displayText =
+    selected.length === 0 ? placeholder
+    : selected.length === 1 ? (options.find((o) => o.value === selected[0])?.label ?? placeholder)
+    : `${selected.length} selected`;
+
+  const isActive = selected.length > 0;
+
+  return (
+    <div style={{ position: "relative" }} ref={ref}>
+      <button
+        type="button"
+        onClick={() => { setOpen((o) => !o); setQuery(""); }}
+        style={{
+          height: 36,
+          borderRadius: 8,
+          border: isActive ? "1px solid #b8cff7" : "1px solid #d7e2ee",
+          background: isActive ? "#eef4ff" : "#fff",
+          color: isActive ? "#2948b9" : "#25384d",
+          fontSize: 13,
+          fontWeight: 600,
+          padding: "0 10px",
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>{displayText}</span>
+        {isActive && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onChange([]); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange([]); } }}
+            style={{ display: "flex", alignItems: "center", color: "#5878be" }}
+          >
+            <X size={12} />
+          </span>
+        )}
+        <ChevronDown size={12} style={{ color: "#7a8ca0", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute",
+          top: "calc(100% + 4px)",
+          left: 0,
+          zIndex: 50,
+          minWidth: 200,
+          background: "#fff",
+          border: "1px solid #dde8f4",
+          borderRadius: 12,
+          boxShadow: "0 8px 28px rgba(20,50,80,0.12)",
+          overflow: "hidden",
+        }}>
+          <div style={{ padding: "6px 8px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 6 }}>
+            <Search size={12} style={{ color: "#94a8be", flexShrink: 0 }} />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search..."
+              style={{ flex: 1, border: "none", outline: "none", fontSize: 13, color: "#203244", background: "transparent" }}
+            />
+          </div>
+          <div style={{ maxHeight: 200, overflowY: "auto" }}>
+            {filtered.length === 0 ? (
+              <p style={{ margin: 0, padding: "10px 12px", fontSize: 12, color: "#94a8be" }}>No results</p>
+            ) : filtered.map((opt) => {
+              const isSel = selected.includes(opt.value);
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => toggle(opt.value)}
+                  style={{
+                    width: "100%", padding: "9px 12px", display: "flex", alignItems: "center", gap: 8,
+                    border: "none", background: isSel ? "#f0f5ff" : "transparent", cursor: "pointer",
+                    textAlign: "left", fontSize: 13, fontWeight: isSel ? 700 : 500, color: isSel ? "#2948b9" : "#2e4260",
+                  }}
+                >
+                  <span style={{
+                    width: 16, height: 16, borderRadius: 5, border: isSel ? "none" : "1.5px solid #c8d8ea",
+                    background: isSel ? "#3f5fd4" : "#fff", display: "grid", placeItems: "center", flexShrink: 0,
+                  }}>
+                    {isSel && <Check size={10} style={{ color: "#fff" }} />}
+                  </span>
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Meetings() {
+  const { isAdmin, user } = useAuth();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
+  const [linkFilter, setLinkFilter] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalMeetings, setTotalMeetings] = useState(0);
+  const [meetingPages, setMeetingPages] = useState(1);
   const [form, setForm] = useState({
     title: "",
     company_id: "",
@@ -155,14 +307,32 @@ export default function Meetings() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [ms, cs, ds] = await Promise.all([
-        meetingsApi.list(0, 200),
-        companiesApi.list(),
-        dealsApi.list(0, 300),
-      ]);
+      const pageResp = await meetingsApi.listPaginated({
+        skip: (page - 1) * PAGE_SIZE,
+        limit: PAGE_SIZE,
+        status: statusFilter,
+        meetingType: typeFilter,
+        assigneeId: assigneeFilter,
+        linkState: linkFilter,
+      });
+
+      const ms = pageResp.items;
       setMeetings(ms);
-      setCompanies(cs);
-      setDeals(ds);
+      setTotalMeetings(pageResp.total);
+      setMeetingPages(pageResp.pages);
+
+      const companyIds = Array.from(new Set(ms.map((meeting) => meeting.company_id).filter(Boolean))) as string[];
+      const dealIds = Array.from(new Set(ms.map((meeting) => meeting.deal_id).filter(Boolean))) as string[];
+
+      const [companyResults, dealResults, us] = await Promise.all([
+        Promise.all(companyIds.map((id) => companiesApi.get(id).catch(() => null))),
+        Promise.all(dealIds.map((id) => dealsApi.get(id).catch(() => null))),
+        isAdmin ? authApi.listAllUsers().catch(() => []) : Promise.resolve([]),
+      ]);
+
+      setCompanies(companyResults.filter((item): item is Company => Boolean(item)));
+      setDeals(dealResults.filter((item): item is Deal => Boolean(item)));
+      setUsers(us);
     } finally {
       setLoading(false);
     }
@@ -170,7 +340,11 @@ export default function Meetings() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [page, statusFilter, typeFilter, assigneeFilter, linkFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, typeFilter, assigneeFilter, linkFilter]);
 
   useEffect(() => {
     if (!showModal || !form.company_id) {
@@ -184,6 +358,14 @@ export default function Meetings() {
   const companyDeals = useMemo(() => {
     return deals.filter((d) => !form.company_id || d.company_id === form.company_id);
   }, [deals, form.company_id]);
+
+  const hideDeveloper = isDeveloperUser(user);
+  const visibleUsers = useMemo(
+    () => (hideDeveloper ? users.filter((teamUser) => !isDeveloperUser(teamUser)) : users),
+    [hideDeveloper, users],
+  );
+
+  const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || assigneeFilter.length > 0 || linkFilter.length > 0;
 
   const handleCreate = async () => {
     if (!form.title.trim()) {
@@ -221,16 +403,76 @@ export default function Meetings() {
   return (
     <div style={styles.page}>
       <div style={{ ...styles.panel, ...styles.toolbar }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={styles.chip}>
-            <span style={{ fontWeight: 800 }}>{meetings.length}</span>
-            Meetings
-          </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={styles.chip}>
+              <span style={{ fontWeight: 800 }}>{totalMeetings}</span>
+              Meetings
+            </span>
+            {hasFilters && (
+              <span style={{ ...styles.chip, background: "#fff7ed", color: "#b94a20", borderColor: "#ffd3be" }}>
+                {totalMeetings} shown
+              </span>
+            )}
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: "#7a8ea4", maxWidth: 560 }}>
+            Log discovery calls, demos, and QBRs here. Beacon sends a pre-meeting intel brief to the assigned rep 12 hours before each scheduled meeting — covering account context, prior meeting notes, and email threads.
+          </p>
         </div>
         <button style={styles.buttonPrimary} onClick={() => setShowModal(true)}>
           <Plus size={14} />
           New Meeting
         </button>
+      </div>
+
+      {/* Filters */}
+      <div style={{ ...styles.panel, padding: "14px 18px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: "#55657a" }}>
+          <Filter size={13} />
+          Filter
+        </span>
+        <MultiSelectDropdown
+          options={[
+            { value: "scheduled", label: "Scheduled" },
+            { value: "completed", label: "Completed" },
+            { value: "cancelled", label: "Cancelled" },
+          ]}
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          placeholder="All statuses"
+        />
+        <MultiSelectDropdown
+          options={MEETING_TYPES.map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
+          selected={typeFilter}
+          onChange={setTypeFilter}
+          placeholder="All types"
+        />
+        <MultiSelectDropdown
+          options={[
+            { value: "linked", label: "Linked" },
+            { value: "needs_review", label: "Needs review" },
+          ]}
+          selected={linkFilter}
+          onChange={setLinkFilter}
+          placeholder="All links"
+        />
+        {isAdmin && visibleUsers.length > 0 && (
+          <MultiSelectDropdown
+            options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
+            selected={assigneeFilter}
+            onChange={setAssigneeFilter}
+            placeholder="All reps"
+          />
+        )}
+        {hasFilters && (
+          <button
+            type="button"
+            onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); }}
+            style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          >
+            Reset
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -255,14 +497,38 @@ export default function Meetings() {
                 {meetings.map((m) => (
                   <tr key={m.id}>
                     <td style={styles.td}>
-                      <Link
-                        to={`/meetings/${m.id}`}
-                        style={{ fontWeight: 700, color: "#24364b", textDecoration: "none" }}
-                      >
-                        {m.title}
-                      </Link>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <Link
+                          to={`/meetings/${m.id}`}
+                          style={{ fontWeight: 700, color: "#24364b", textDecoration: "none" }}
+                        >
+                          {m.title}
+                        </Link>
+                        {(!m.company_id || !m.deal_id) && (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              width: "fit-content",
+                              padding: "3px 8px",
+                              borderRadius: 999,
+                              border: "1px solid #ffd8b4",
+                              background: "#fff6ec",
+                              color: "#b25a1d",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.05em",
+                            }}
+                          >
+                            Needs review
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td style={styles.td}>{m.company_id ? (companyName[m.company_id] ?? "-") : "-"}</td>
+                    <td style={styles.td}>
+                      {m.company_id ? (companyName[m.company_id] ?? "-") : <span style={{ color: "#b25a1d", fontWeight: 700 }}>Unlinked</span>}
+                    </td>
                     <td style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
                     <td style={styles.td}>{formatDate(m.scheduled_at)}</td>
                     <td style={styles.td}>
@@ -273,13 +539,46 @@ export default function Meetings() {
                 ))}
                 {meetings.length === 0 && (
                   <tr>
-                    <td colSpan={6} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "38px 12px" }}>
-                      No meetings yet.
+                    <td colSpan={6} style={{ ...styles.td, textAlign: "center", color: "#7a8ea4", padding: "48px 12px" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#25384d", marginBottom: 6 }}>
+                        {totalMeetings === 0 ? "No meetings scheduled" : "No meetings match these filters"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#7a8ea4", maxWidth: 420, margin: "0 auto" }}>
+                        {totalMeetings === 0
+                          ? "Create a meeting and link it to a deal. Beacon will automatically generate a pre-meeting intel brief and send it to the assigned rep 12 hours before the call."
+                          : "Try adjusting the filters above to see more results."}
+                      </div>
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {meetingPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <p style={{ margin: 0, fontSize: 12, color: "#7a8ea4" }}>
+            Page {page} of {meetingPages}
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page <= 1 ? "#f7f9fc" : "#fff", color: page <= 1 ? "#94a8be" : "#25384d", cursor: page <= 1 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={page >= meetingPages}
+              onClick={() => setPage((current) => Math.min(meetingPages, current + 1))}
+              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page >= meetingPages ? "#f7f9fc" : "#fff", color: page >= meetingPages ? "#94a8be" : "#25384d", cursor: page >= meetingPages ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+            >
+              Next
+            </button>
           </div>
         </div>
       )}

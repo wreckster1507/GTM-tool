@@ -19,33 +19,50 @@ class Settings(BaseSettings):
     # App
     SECRET_KEY: str = "dev_secret_key"
     ENVIRONMENT: str = "development"
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
+    FRONTEND_URL: str = "http://localhost:5173"
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: str = ""
+    GMAIL_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/settings/email-sync/google/callback"
+
+    # JWT
+    JWT_SECRET: str = "jwt_dev_secret_change_me"
+    JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
     CORS_ORIGINS: str = ",".join([
         "http://localhost:3000",
         "http://localhost:5173",
         "http://localhost:5174",
+        "http://localhost:8080",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
+        "http://127.0.0.1:8080",
     ])
 
     # External API keys (empty string = mock mode)
     APOLLO_API_KEY: str = ""
     HUNTER_API_KEY: str = ""
+    SERPER_API_KEY: str = ""
     BUILTWITH_API_KEY: str = ""
     INSTANTLY_API_KEY: str = ""
+    INSTANTLY_WEBHOOK_URL: str = ""  # e.g. https://yourdomain.com/api/v1/webhooks/instantly
+    INSTANTLY_WEBHOOK_SECRET: str = ""  # Shared secret sent as X-Beacon-Webhook-Secret header
     FIREFLIES_API_KEY: str = ""
     NEWS_API_KEY: str = ""  # No longer required — news client uses Google News RSS
 
-    # Azure OpenAI
-    AZURE_OPENAI_API_KEY: str = ""
-    AZURE_OPENAI_ENDPOINT: str = ""
-    AZURE_OPENAI_DEPLOYMENT: str = "gpt-4o-mini"
-    AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
-
-    # Anthropic Claude (demo HTML generation)
+    # Anthropic Claude
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_API_KEY: str = ""  # alias — some .env files use this name
-    ANTHROPIC_MODEL: str = "claude-opus-4-6"
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+
+    # CRM AI routing by complexity
+    CLAUDE_MODEL_SIMPLE: str = "claude-haiku-4-5-20251001"
+    CLAUDE_MODEL_STANDARD: str = "claude-sonnet-4-20250514"
+    CLAUDE_MODEL_COMPLEX: str = "claude-opus-4-6"
 
     # Demo generation tuning
     DEMO_MODEL: str = "claude-sonnet-4-20250514"  # Sonnet 4 — best availability + quality for code gen
@@ -56,15 +73,125 @@ class Settings(BaseSettings):
     @property
     def claude_api_key(self) -> str:
         """Return whichever Claude key is set (ANTHROPIC_API_KEY or CLAUDE_API_KEY)."""
+        # Some environments use the old variable name and others use the newer one,
+        # so callers can depend on a single property instead of branching.
         return self.ANTHROPIC_API_KEY or self.CLAUDE_API_KEY
 
     @property
+    def gmail_client_id(self) -> str:
+        return self.GMAIL_CLIENT_ID or self.GOOGLE_CLIENT_ID
+
+    @property
+    def gmail_client_secret(self) -> str:
+        return self.GMAIL_CLIENT_SECRET or self.GOOGLE_CLIENT_SECRET
+
+    @property
     def cors_origins(self) -> List[str]:
+        # `.env` stores this as a comma-separated string, but FastAPI middleware
+        # expects an actual list of origins.
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     # Resend (email sending)
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
+
+    # Gmail shared inbox (email-to-activity sync)
+    GMAIL_SHARED_INBOX: str = ""  # e.g. sales@beacon.li
+    GMAIL_CREDENTIALS_JSON: str = ""  # Path to OAuth credentials.json
+    GMAIL_TOKEN_JSON: str = ""  # Path to stored token.json (auto-refreshed)
+    EMAIL_SYNC_INTERVAL_SECONDS: int = 180  # 3 minutes
+    EMAIL_SUMMARY_MIN_CHARS: int = 100  # Skip AI summary for short emails
+
+    # Aircall
+    AIRCALL_API_ID: str = ""
+    AIRCALL_API_TOKEN: str = ""
+    AIRCALL_WEBHOOK_URL: str = ""
+    AIRCALL_WEBHOOK_SECRET: str = ""  # Shared secret sent as X-Beacon-Webhook-Secret header
+    AIRCALL_DEFAULT_NUMBER: str = ""  # E.164 digits of the default outbound number
+
+    # tl;dv meeting intelligence
+    TLDV_API_BASE: str = "https://pasta.tldv.io/v1alpha1"
+    TLDV_API_KEY: str = ""
+    TLDV_SYNC_LOOKBACK_DAYS: int = 365
+
+    # ClickUp migration
+    CLICKUP_API_BASE: str = "https://api.clickup.com/api/v2"
+    CLICKUP_API_TOKEN: str = ""
+    CLICKUP_TEAM_ID: str = ""
+    CLICKUP_SPACE_ID: str = ""
+    CLICKUP_DEALS_LIST_ID: str = ""
+
+    # Qdrant vector DB (Zippy knowledge base)
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str = ""
+    QDRANT_COLLECTION: str = "beacon_knowledge"
+
+    # OpenAI (for embeddings used by Zippy RAG)
+    OPENAI_API_KEY: str = ""
+    OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    OPENAI_EMBED_DIMS: int = 1536
+
+    # Azure OpenAI (used for the LLM and/or embeddings — controlled separately)
+    AZURE_OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_ENDPOINT: str = ""  # e.g. https://myresource.openai.azure.com/
+    AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
+    AZURE_OPENAI_DEPLOYMENT: str = ""  # existing LLM deployment (gpt-4o-mini etc.)
+    # Leave empty when your Azure resource has no embedding deployment —
+    # auto-detect will then fall back to the direct OpenAI API.
+    AZURE_OPENAI_EMBED_DEPLOYMENT: str = ""
+    AZURE_OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    AZURE_OPENAI_EMBED_DIMS: int = 1536
+
+    # Explicit override: "openai" | "azure" | "" (auto-detect).
+    # Use this when you want Azure for the LLM but OpenAI for embeddings
+    # (or vice versa). Auto-detect only picks Azure for embeddings when its
+    # embedding deployment is actually configured.
+    EMBEDDINGS_PROVIDER: str = ""
+
+    @property
+    def embeddings_provider(self) -> str:
+        """Return 'azure' or 'openai' — respects EMBEDDINGS_PROVIDER override."""
+        explicit = self.EMBEDDINGS_PROVIDER.strip().lower()
+        if explicit in {"openai", "azure"}:
+            return explicit
+        # Auto-detect: only route to Azure if the *embedding* deployment is
+        # set. Having Azure configured for the LLM alone isn't enough —
+        # embedding deployments are a separate Azure resource.
+        if (
+            self.AZURE_OPENAI_API_KEY
+            and self.AZURE_OPENAI_ENDPOINT
+            and self.AZURE_OPENAI_EMBED_DEPLOYMENT
+        ):
+            return "azure"
+        return "openai"
+
+    @property
+    def embeddings_ready(self) -> bool:
+        """True if we have enough config to actually call an embeddings API."""
+        if self.embeddings_provider == "azure":
+            return bool(
+                self.AZURE_OPENAI_API_KEY
+                and self.AZURE_OPENAI_ENDPOINT
+                and self.AZURE_OPENAI_EMBED_DEPLOYMENT
+            )
+        return bool(self.OPENAI_API_KEY)
+
+    @property
+    def embeddings_dims(self) -> int:
+        if self.embeddings_provider == "azure":
+            return self.AZURE_OPENAI_EMBED_DIMS
+        return self.OPENAI_EMBED_DIMS
+
+    # Zippy document templates (Google Drive file IDs)
+    NDA_TEMPLATE_DRIVE_ID_INDIA: str = ""
+    NDA_TEMPLATE_DRIVE_ID_US: str = ""
+    NDA_TEMPLATE_DRIVE_ID_SINGAPORE: str = ""
+    # Zippy agent tuning
+    ZIPPY_MODEL: str = "claude-sonnet-4-20250514"
+    ZIPPY_MAX_TOKENS: int = 4000
+    ZIPPY_TOP_K: int = 8
+    ZIPPY_CHUNK_SIZE: int = 1200
+    ZIPPY_CHUNK_OVERLAP: int = 200
 
 
 settings = Settings()
