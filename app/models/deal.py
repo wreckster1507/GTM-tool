@@ -83,6 +83,11 @@ class Deal(DealBase, table=True):
     tags: list[str] = Field(default=[], sa_column=Column(JSONB, nullable=False, server_default="[]"))
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     next_step: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # Timestamp for next_step itself — only moves when next_step text changes.
+    # last_activity_at and updated_at are too noisy (any activity / any column
+    # write bumps them), so the UI can't use them to answer "is this note
+    # current?". Set in the create/update endpoints when next_step diffs.
+    next_step_updated_at: Optional[datetime] = None
     commit_to_deal: bool = Field(default=False)
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_input_hash: Optional[str] = None
@@ -122,6 +127,7 @@ class DealRead(DealBase):
     tags: list[str] = []
     description: Optional[str] = None
     next_step: Optional[str] = None
+    next_step_updated_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     # Joined fields populated by board/detail queries

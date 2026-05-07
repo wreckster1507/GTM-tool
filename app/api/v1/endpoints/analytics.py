@@ -938,12 +938,35 @@ async def sales_dashboard(
                 + week_counts["meetings"]
             )
 
+    # tl;dv and Google Calendar both ingest the same real-world meeting from
+    # different sources, producing two Meeting rows with different
+    # external_source values but the same scheduled_at + customer. Without
+    # dedup, recorded calls double-count (the "157 meetings" inflation Rakesh
+    # saw in prod). We collapse on (scheduled_at floored to the minute,
+    # company_id, deal_id, primary owner) and prefer the tl;dv row when both
+    # exist because tl;dv only fires on calls that actually happened, while
+    # google_calendar entries can include rescheduled/no-show events.
+    _SOURCE_PRIORITY = {"tldv": 0, "google_calendar": 1, "manual": 2, "": 3}
+    candidate_rows = []
     for row in meetings_rows:
         if row.status == "cancelled":
             continue
         source = str(row.external_source or "").strip().lower()
         if source not in REAL_MEETING_SOURCES:
             continue
+        candidate_rows.append((source, row))
+
+    seen: dict[tuple, tuple[int, object]] = {}
+    for source, row in candidate_rows:
+        primary_owner = row.owner_user_id or deal_owner.get(row.deal_id)
+        bucket_minute = row.scheduled_at.replace(second=0, microsecond=0) if row.scheduled_at else None
+        dedup_key = (bucket_minute, row.company_id, row.deal_id, primary_owner)
+        priority = _SOURCE_PRIORITY.get(source, 99)
+        existing = seen.get(dedup_key)
+        if existing is None or priority < existing[0]:
+            seen[dedup_key] = (priority, row)
+
+    for _priority, row in seen.values():
         meeting_timestamp = _meeting_reporting_timestamp(row, window_end=window_end)
         for row_rep_id in _meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email):
             if filter_rep_ids and row_rep_id not in filter_rep_ids:
@@ -1118,11 +1141,9 @@ async def sales_dashboard(
 
     leads_count = sum(1 for row in contact_rows if row.created_at >= window_start)
     meeting_stage_contacts = sum(1 for row in contact_rows if _contact_meeting_signal(row))
-    meetings_count = sum(
-        1
-        for row in meetings_rows
-        if row.status != "cancelled" and str(row.external_source or "").strip().lower() in REAL_MEETING_SOURCES
-    )
+    # Reuse the deduped set from rep-activity counting above so the funnel's
+    # Meeting count agrees with per-rep totals (no tldv+gcal double-count).
+    meetings_count = len(seen)
     proposal_count = sum(
         1
         for row in deal_rows

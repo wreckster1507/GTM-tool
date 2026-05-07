@@ -167,6 +167,7 @@ export interface Deal {
   source?: string;
   description?: string;
   next_step?: string;
+  next_step_updated_at?: string;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;

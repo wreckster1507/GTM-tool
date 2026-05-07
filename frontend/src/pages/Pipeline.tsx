@@ -954,7 +954,14 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag }:
           </div>
         )}
         <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
-        {deal.next_step && <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>{deal.next_step}</div>}
+        {deal.next_step && (
+          <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>
+            {deal.next_step}
+            {deal.next_step_updated_at && (
+              <span style={{ color: "#94a3b8", fontWeight: 400, marginLeft: 6 }}>· {formatDate(deal.next_step_updated_at)}</span>
+            )}
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
           <EngagementBadge side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} reason={deal.seller_engagement_reason} />
           <EngagementBadge side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} reason={deal.client_engagement_reason} />

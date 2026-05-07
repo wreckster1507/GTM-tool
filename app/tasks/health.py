@@ -18,7 +18,13 @@ logger = logging.getLogger(__name__)
 _CLOSED_STAGES = frozenset([
     "closed_won", "closed_lost", "not_a_fit", "churned",
 ])
-DEAL_TASK_RECONCILE_BATCH_SIZE = 12
+# Batch size × cron cadence caps reconcile throughput. With 12/hour, ceiling
+# was 288 deals/day — well below active deal count in prod, which is why p95
+# task-refresh lag measured ~39h. Bumped to 40 per run, paired with a 15-min
+# cron cadence (see celery_app.py beat_schedule) for ~3,840 deals/day. The
+# per-deal `should_queue_deal_task_refresh` gate (TTL + input-hash) prevents
+# unchanged deals from re-running the AI pipeline.
+DEAL_TASK_RECONCILE_BATCH_SIZE = 40
 DEAL_TASK_RECONCILE_LOOKBACK_DAYS = 30
 
 

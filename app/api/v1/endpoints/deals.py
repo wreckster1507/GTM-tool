@@ -101,6 +101,10 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
         raise ValidationError(f"Invalid stage for {data['pipeline_type']}. Must be one of: {sorted(valid)}")
 
     data["stage_entered_at"] = datetime.utcnow()
+    # Seed next_step_updated_at iff the create payload actually carries a
+    # next_step note (so the card shows a real date on first render).
+    if (data.get("next_step") or "").strip():
+        data["next_step_updated_at"] = datetime.utcnow()
     deal = await DealRepository(session).create(data)
 
     # Auto-log activity
@@ -180,6 +184,9 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         changes.append(f"Deal {label}")
     if "next_step" in update_data and update_data["next_step"] != _normalize_optional_text(deal.next_step):
         changes.append(_summarize_text_change("Next step", update_data["next_step"]))
+        # Only stamp next_step_updated_at when the text itself changed —
+        # ignore no-op writes that send the same string back.
+        update_data["next_step_updated_at"] = datetime.utcnow()
     if "description" in update_data and update_data["description"] != _normalize_optional_text(deal.description):
         changes.append(_summarize_text_change("Description", update_data["description"]))
 

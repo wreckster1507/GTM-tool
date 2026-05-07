@@ -41,7 +41,11 @@ celery_app.conf.update(
         },
         "reconcile-recent-deal-tasks": {
             "task": "app.tasks.health.reconcile_recent_deal_tasks",
-            "schedule": crontab(minute=17),  # hourly, bounded cleanup for stale system tasks
+            # Every 15 min — paired with batch_size=40 in app.tasks.health to
+            # keep AI-task lag under ~30 min p95. Hourly was producing >24h
+            # lag because throughput (288 deals/day) was below the active
+            # deal count.
+            "schedule": crontab(minute="2,17,32,47"),
         },
         "sync-gmail-inbox": {
             "task": "app.tasks.email_sync.sync_gmail_inbox",
