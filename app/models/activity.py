@@ -52,6 +52,11 @@ class ActivityCreate(ActivityBase):
     contact_id: Optional[UUID] = None
     event_metadata: Optional[Any] = None
     created_by_id: Optional[UUID] = None
+    call_id: Optional[str] = None
+    call_duration: Optional[int] = None
+    call_outcome: Optional[str] = None
+    recording_url: Optional[str] = None
+    aircall_user_name: Optional[str] = None
     email_message_id: Optional[str] = None
     email_subject: Optional[str] = None
     email_from: Optional[str] = None
@@ -88,3 +93,13 @@ class ActivityUpdate(SQLModel):
     deal_id: Optional[UUID] = None
     contact_id: Optional[UUID] = None
     event_metadata: Optional[Any] = None
+    call_id: Optional[str] = None
+    call_duration: Optional[int] = None
+    call_outcome: Optional[str] = None
+    recording_url: Optional[str] = None
+    aircall_user_name: Optional[str] = None
+    email_message_id: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_from: Optional[str] = None
+    email_to: Optional[str] = None
+    email_cc: Optional[str] = None
