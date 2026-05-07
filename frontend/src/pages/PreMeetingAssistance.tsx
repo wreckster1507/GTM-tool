@@ -33,7 +33,7 @@ import {
 import { activitiesApi, authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Deal, Meeting, MeetingPrepMonitor, User as UserType } from "../types/index";
-import { formatOptionalDate, isValidDateValue } from "../lib/utils";
+import { formatOptionalDate, isValidDateValue, suggestCompanyNameFromMeetingTitle } from "../lib/utils";
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 
 const colors = {
@@ -239,17 +239,11 @@ function detectTitleCompanyMismatch(
   return titleCompany.id !== linkedCompanyId ? titleCompany : null;
 }
 
-function suggestCompanyNameFromMeetingTitle(title: string): string {
-  const cleaned = title
-    .replace(/\b(introduction|intro|connect|sync|call|meeting|demo|walkthrough|discussion|cadence|kick off|clarification)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const parts = cleaned
-    .split(/\s*(?:<>|<->| x | X | with | and |~|\||-|:|\/)\s*/g)
-    .map((part) => part.replace(/\bbeacon(?:\.li)?\b/gi, "").replace(/\s+/g, " ").trim())
-    .filter((part) => part.length >= 2);
-  return parts.find((part) => !/^beacon$/i.test(part)) || title.trim();
-}
+// Shared parser lives in lib/utils.ts — see suggestCompanyNameFromMeetingTitle.
+// The previous local copy was missing em-dash/en-dash separators and let
+// half-cleaned segments win over the real customer name (e.g.
+// "POC Kickoff Disucssion – Beacon<>Fabtech" yielded the meeting-name half
+// instead of "Fabtech"). The shared util mirrors the Python tldv title parser.
 
 function MeetingIntelCard({
   meeting,

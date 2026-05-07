@@ -585,6 +585,11 @@ export default function TasksPage() {
   const [entityFilter, setEntityFilter] = useState<EntityFilter>(() => (searchParams.get("entity") as EntityFilter) ?? "all");
   const [dueDateFilter, setDueDateFilter] = useState<DueDateFilter>(() => (searchParams.get("due") as DueDateFilter) ?? "all");
   const [queueScope, setQueueScope] = useState<QueueScope>(() => (searchParams.get("scope") as QueueScope) ?? "mine");
+  // Client-side pagination for the task list. Filtering happens above; we
+  // just slice the filtered set into pages so the workspace doesn't render
+  // hundreds of cards at once. Reset to page 1 whenever any filter changes
+  // (otherwise the rep ends up on page 7 of a 2-page filtered result).
+  const [tasksPage, setTasksPage] = useState(1);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [outcomeDrafts, setOutcomeDrafts] = useState<Record<string, string>>({});
   const [showCreateTask, setShowCreateTask] = useState(() => searchParams.get("new") === "task");
@@ -721,6 +726,24 @@ export default function TasksPage() {
     });
   }, [tasks, statusFilter, dueDateFilter]);
 
+  const TASKS_PAGE_SIZE = 25;
+  const tasksPageCount = Math.max(1, Math.ceil(visibleTasks.length / TASKS_PAGE_SIZE));
+  // Clamp the current page when the filtered set shrinks (e.g. rep narrows
+  // the filter and the previous page no longer exists). useMemo so the slice
+  // is stable across re-renders that don't change the filter result.
+  const safeTasksPage = Math.min(tasksPage, tasksPageCount);
+  const pagedTasks = useMemo(
+    () => visibleTasks.slice((safeTasksPage - 1) * TASKS_PAGE_SIZE, safeTasksPage * TASKS_PAGE_SIZE),
+    [visibleTasks, safeTasksPage],
+  );
+
+  // Reset to page 1 whenever the filter inputs change. Without this, the rep
+  // could be stuck on page 4 looking at zero tasks because their filter
+  // produced fewer than 4 pages of results.
+  useEffect(() => {
+    setTasksPage(1);
+  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope, dealFilter]);
+
   const summary = useMemo(() => ({
     open: tasks.filter((task) => task.status === "open").length,
     system: tasks.filter((task) => task.status === "open" && task.task_type === "system").length,
@@ -853,7 +876,13 @@ export default function TasksPage() {
         </div>
       </section>
 
-      <section className="crm-panel" style={{ padding: 20, display: "grid", gap: 14 }}>
+      {/* `crm-panel` ships with `overflow: hidden` for the rounded-corner card
+          look — but the deal-search dropdown sits below the input and gets
+          clipped at the panel's bottom edge. Override here so the dropdown
+          can escape the card. The explicit zIndex bumps this whole section
+          above the task cards section that follows, so the dropdown also
+          paints over the cards rather than under them. */}
+      <section className="crm-panel" style={{ padding: 20, display: "grid", gap: 14, overflow: "visible", position: "relative", zIndex: 5 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800 }}>
           <Filter size={15} />
           <span>Filters</span>
@@ -966,24 +995,66 @@ export default function TasksPage() {
             <div>When Beacon recommends something or a teammate assigns you a manual follow-up, it will appear here.</div>
           </div>
         ) : (
-          visibleTasks.map((task) => (
-            <TaskWorkspaceCard
-              key={task.id}
-              task={task}
-              commentDraft={commentDrafts[task.id] || ""}
-              outcomeDraft={outcomeDrafts[task.id] || ""}
-              onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
-              onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
-              onAddComment={() => addComment(task.id)}
-              onAccept={() => acceptTask(task.id)}
-              onComplete={() => completeTask(task)}
-              onDismiss={() => patchTask(task.id, { status: "dismissed" })}
-              onManualTakeover={() => takeManualOwnership(task)}
-              onReschedule={(newDate) => patchTask(task.id, { due_at: new Date(newDate).toISOString() })}
-              onDelete={() => deleteTask(task)}
-              canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
-            />
-          ))
+          <>
+            {pagedTasks.map((task) => (
+              <TaskWorkspaceCard
+                key={task.id}
+                task={task}
+                commentDraft={commentDrafts[task.id] || ""}
+                outcomeDraft={outcomeDrafts[task.id] || ""}
+                onCommentDraftChange={(value) => setCommentDrafts((current) => ({ ...current, [task.id]: value }))}
+                onOutcomeDraftChange={(value) => setOutcomeDrafts((current) => ({ ...current, [task.id]: value }))}
+                onAddComment={() => addComment(task.id)}
+                onAccept={() => acceptTask(task.id)}
+                onComplete={() => completeTask(task)}
+                onDismiss={() => patchTask(task.id, { status: "dismissed" })}
+                onManualTakeover={() => takeManualOwnership(task)}
+                onReschedule={(newDate) => patchTask(task.id, { due_at: new Date(newDate).toISOString() })}
+                onDelete={() => deleteTask(task)}
+                canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+              />
+            ))}
+            {tasksPageCount > 1 ? (
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "12px 18px",
+                borderRadius: 14,
+                border: `1px solid ${colors.border}`,
+                background: "#fff",
+              }}>
+                <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>
+                  Showing {(safeTasksPage - 1) * TASKS_PAGE_SIZE + 1}–
+                  {Math.min(safeTasksPage * TASKS_PAGE_SIZE, visibleTasks.length)} of {visibleTasks.length}
+                </span>
+                <div style={{ display: "inline-flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="crm-button soft"
+                    onClick={() => setTasksPage(Math.max(1, safeTasksPage - 1))}
+                    disabled={safeTasksPage <= 1}
+                    style={{ height: 34, padding: "0 12px", opacity: safeTasksPage <= 1 ? 0.45 : 1 }}
+                  >
+                    Previous
+                  </button>
+                  <span style={{ fontSize: 12, color: colors.text, fontWeight: 700, alignSelf: "center" }}>
+                    Page {safeTasksPage} of {tasksPageCount}
+                  </span>
+                  <button
+                    type="button"
+                    className="crm-button soft"
+                    onClick={() => setTasksPage(Math.min(tasksPageCount, safeTasksPage + 1))}
+                    disabled={safeTasksPage >= tasksPageCount}
+                    style={{ height: 34, padding: "0 12px", opacity: safeTasksPage >= tasksPageCount ? 0.45 : 1 }}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </>
         )}
       </section>
 

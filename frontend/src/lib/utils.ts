@@ -28,6 +28,80 @@ export function formatDomain(value?: string | null, fallback = "Domain not found
   return isPlaceholderDomain(domain) ? fallback : domain;
 }
 
+/**
+ * Pull the most likely customer/account name out of a meeting title.
+ *
+ * Mirrors `_extract_title_candidates` in app/services/tldv_sync.py so the
+ * frontend shows the same candidate the backend will resolve to. Handles
+ * em-dash / en-dash separators, Beacon-on-either-side ("Beacon x Acme",
+ * "Acme x Beacon"), parenthetical noise, and meeting-type keywords —
+ * tolerant of misspellings (matches by ignore-list, not strict regex).
+ *
+ * Returns the first non-Beacon candidate, falling back to the trimmed
+ * title when nothing parses out cleanly. Never returns the literal title
+ * for cases like "POC Kickoff Disucssion – Beacon<>Fabtech" (which used to
+ * yield the meeting-name half because em-dash wasn't a split separator).
+ */
+export function suggestCompanyNameFromMeetingTitle(title: string | null | undefined): string {
+  const raw = (title || "").trim();
+  if (!raw) return "";
+
+  // Replace all known separators with a single sentinel so split is uniform.
+  // Includes em-dash (—), en-dash (–), and ASCII hyphen surrounded by spaces
+  // (so we don't break hyphenated company names like "Coca-Cola").
+  const SEP = "|";
+  const normalized = raw
+    .replace(/\[STAGING COPY\]/gi, " ")
+    .replace(/🤝|<>|<->|\sx\s|\sX\s|\swith\s|\sand\s|~|\||\s-\s|\s–\s|\s—\s|:|\//g, SEP)
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const ignored = new Set([
+    "beacon", "beacon.li", "zippy",
+    "introduction", "intro", "connect", "sync", "call", "meeting",
+    "demo", "walkthrough", "discussion", "disucssion", // include common typo
+    "cadence", "kick off", "kickoff", "clarification", "interview",
+    "next steps", "sales review", "demo recording", "recording",
+    "tech deep dive", "in-person tech deep dive", "catch up",
+    "poc", "pilot", "qbr", "review",
+  ]);
+
+  const candidates: string[] = [];
+  for (const part of normalized.split(SEP)) {
+    // Strip parenthetical noise like "(notes)" or "(reschedule)".
+    let cleaned = part.replace(/\(.*?\)/g, "").replace(/\s+/g, " ").trim();
+    if (!cleaned) continue;
+    let lowered = cleaned.toLowerCase();
+    if (ignored.has(lowered)) continue;
+    // Trim "Beacon " prefix / " Beacon" suffix, then re-evaluate.
+    if (lowered.startsWith("beacon ")) {
+      cleaned = cleaned.slice(7).trim();
+      lowered = cleaned.toLowerCase();
+    }
+    if (lowered.endsWith(" beacon")) {
+      cleaned = cleaned.slice(0, -7).trim();
+      lowered = cleaned.toLowerCase();
+    }
+    // Drop fragments that are entirely meeting-type words even after stripping.
+    // Example: "POC Kickoff Disucssion" should not become an account name.
+    const words = lowered.split(/\s+/).filter(Boolean);
+    if (words.length > 0 && words.every((w) => ignored.has(w))) continue;
+    if (cleaned.length < 2) continue;
+    if (!ignored.has(lowered)) candidates.push(cleaned);
+  }
+
+  // Dedupe while preserving order.
+  const seen = new Set<string>();
+  const ordered = candidates.filter((c) => {
+    const key = c.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return ordered[0] || raw;
+}
+
 export function formatDate(dateStr?: string | null): string {
   if (!dateStr) return "—";
   return new Date(dateStr).toLocaleString("en-US", {

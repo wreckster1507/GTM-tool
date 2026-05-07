@@ -11,7 +11,7 @@ import {
 import { accountSourcingApi, companiesApi, contactsApi, dealsApi, meetingsApi, signalsApi } from "../lib/api";
 import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
-import { formatCurrency, formatDate, formatOptionalDate, avatarColor, getInitials, isValidDateValue } from "../lib/utils";
+import { formatCurrency, formatDate, formatOptionalDate, avatarColor, getInitials, isValidDateValue, suggestCompanyNameFromMeetingTitle } from "../lib/utils";
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
@@ -70,18 +70,9 @@ function detectTitleCompanyMismatch(
   return titleCompany.id !== linkedCompanyId ? titleCompany : null;
 }
 
-function suggestedAccountNameFromTitle(title: string): string {
-  const cleaned = title
-    .replace(/\[STAGING COPY\]/gi, "")
-    .replace(/\b(introduction|intro|connect|sync|call|meeting|demo|walkthrough|discussion|cadence|kick off|clarification|interview)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const parts = cleaned
-    .split(/\s*(?:<>|<->| x | X | with | and |~|\||-|:|\/)\s*/g)
-    .map((part) => part.replace(/\bbeacon(?:\.li)?\b/gi, "").replace(/\s+/g, " ").trim())
-    .filter((part) => part.length >= 2);
-  return parts.find((part) => !/^beacon$/i.test(part)) || cleaned || title.trim();
-}
+// Shared title parser lives in lib/utils — see suggestCompanyNameFromMeetingTitle.
+// Local alias kept for diff minimalism at call sites.
+const suggestedAccountNameFromTitle = suggestCompanyNameFromMeetingTitle;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
