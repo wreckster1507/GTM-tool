@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
 from app.models.user import User
@@ -42,6 +42,33 @@ def _validate_assignment_user(user: User, *, role: str) -> None:
         )
 
 
+def _is_self_claim_or_self_release(
+    *,
+    actor: User,
+    target_user_id: Optional[UUID],
+    current_assigned_id: Optional[UUID],
+    role: str,
+) -> bool:
+    """Non-admin reps may only self-claim or self-release a slot.
+
+    Allowed transitions for a non-admin actor whose role matches the slot:
+      - Slot is unassigned, target is themselves           (claim)
+      - Slot is themselves, target is None                 (release)
+
+    Everything else (taking someone else's slot, assigning a third party,
+    cross-role action) requires admin. Per Pulkit's request 2026-05-07.
+    """
+    if actor.role != role:
+        return False
+    is_self_target = target_user_id == actor.id
+    is_unassign = target_user_id is None
+    if current_assigned_id is None and is_self_target:
+        return True
+    if current_assigned_id == actor.id and (is_unassign or is_self_target):
+        return True
+    return False
+
+
 # ── Single assignment ────────────────────────────────────────────────────────
 
 
@@ -50,9 +77,12 @@ async def assign_company(
     company_id: UUID,
     body: AssignRequest,
     session: DBSession,
-    admin: AdminUser,
+    actor: CurrentUser,
 ):
-    """Assign a company-level AE or SDR. Admin only. Pass user_id=null to unassign."""
+    """Assign a company-level AE or SDR. Admins can assign anyone; non-admin
+    reps can only self-claim an unassigned slot that matches their role, or
+    release a slot they currently hold. Pass user_id=null to unassign.
+    """
     company = (
         await session.execute(select(Company).where(Company.id == company_id))
     ).scalar_one_or_none()
@@ -60,6 +90,19 @@ async def assign_company(
         raise NotFoundError("Company not found")
 
     is_sdr = (body.role or "ae") == "sdr"
+    role_key = "sdr" if is_sdr else "ae"
+    current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
+    if actor.role != "admin":
+        if not _is_self_claim_or_self_release(
+            actor=actor,
+            target_user_id=body.user_id,
+            current_assigned_id=current_assigned_id,
+            role=role_key,
+        ):
+            raise ForbiddenError(
+                "Only admins can reassign accounts. You can claim an unassigned "
+                f"{role_key.upper()} slot or release your own assignment."
+            )
     previous_name = (
         company.sdr_name or company.sdr_email
         if is_sdr
@@ -112,8 +155,8 @@ async def assign_company(
     append_company_activity_log(
         company,
         action="company_assignment_updated",
-        actor_name=admin.name,
-        actor_email=admin.email,
+        actor_name=actor.name,
+        actor_email=actor.email,
         message=f"{'SDR' if is_sdr else 'AE'} updated from {previous_name or 'Unassigned'} to {next_name or 'Unassigned'}",
         metadata={
             "role": "sdr" if is_sdr else "ae",
@@ -134,9 +177,10 @@ async def assign_contact(
     contact_id: UUID,
     body: AssignRequest,
     session: DBSession,
-    admin: AdminUser,
+    actor: CurrentUser,
 ):
-    """Assign a contact to a sales rep. Admin only.
+    """Assign a contact to a sales rep. Admins can assign anyone; non-admin
+    reps can only self-claim an unassigned slot or release a slot they hold.
     role="ae" (default) sets AE, role="sdr" sets SDR. Pass user_id=null to unassign.
     """
     contact = (
@@ -146,6 +190,19 @@ async def assign_contact(
         raise NotFoundError("Contact not found")
 
     is_sdr = (body.role or "ae") == "sdr"
+    role_key = "sdr" if is_sdr else "ae"
+    current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
+    if actor.role != "admin":
+        if not _is_self_claim_or_self_release(
+            actor=actor,
+            target_user_id=body.user_id,
+            current_assigned_id=current_assigned_id,
+            role=role_key,
+        ):
+            raise ForbiddenError(
+                "Only admins can reassign contacts. You can claim an unassigned "
+                f"{role_key.upper()} slot or release your own assignment."
+            )
     previous_name = contact.sdr_name if is_sdr else contact.assigned_rep_email
 
     if body.user_id:
@@ -176,8 +233,8 @@ async def assign_contact(
             append_company_activity_log(
                 company,
                 action="contact_assignment_updated",
-                actor_name=admin.name,
-                actor_email=admin.email,
+                actor_name=actor.name,
+                actor_email=actor.email,
                 message=f"{'SDR' if is_sdr else 'AE'} updated to {next_name or 'Unassigned'} for {contact.first_name} {contact.last_name}",
                 metadata={
                     "role": "sdr" if is_sdr else "ae",
