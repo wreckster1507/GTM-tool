@@ -939,6 +939,14 @@ export default function Contacts() {
     }
   };
 
+  const handleCallDispositionChange = (value: string) => {
+    setCallDisposition(value);
+    const matched = CALL_DISPOSITION_OPTIONS.find((option) => option.value === value);
+    if (matched?.suggestedCallStatus) {
+      setCallStatus(matched.suggestedCallStatus);
+    }
+  };
+
   const saveCallDisposition = async () => {
     if (!callContact || !callDisposition) return;
     setSavingDisposition(true);
@@ -2577,7 +2585,7 @@ export default function Contacts() {
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Disposition *</label>
                 <select
                   value={callDisposition}
-                  onChange={(e) => setCallDisposition(e.target.value)}
+                  onChange={(e) => handleCallDispositionChange(e.target.value)}
                   style={{ width: "100%", border: `1px solid ${callDisposition ? "#c8d9e8" : "#f87171"}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, color: callDisposition ? "#0f2744" : "#7a96b0", background: "#fff", outline: "none" }}
                 >
                   <option value="">— Select disposition —</option>

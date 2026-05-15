@@ -76,7 +76,46 @@ def _normalize(value: str | None) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
+def _bucket_from_manual_disposition_text(activity: Activity) -> str | None:
+    """Recover the intended outcome for legacy manual-call rows.
+
+    The prospecting UI used to default every call outcome to "attempted" and
+    did not change it when the rep selected a connected disposition. The saved
+    activity content still starts with the disposition label, so use that as a
+    compatibility signal for reports generated from already-logged calls.
+    """
+    if _normalize(activity.source) != "manual":
+        return None
+    text = _normalize(activity.content)
+    if not text:
+        return None
+
+    if text.startswith("call back later/rescheduled"):
+        return "callback"
+    if text.startswith("left voicemail") or text.startswith("voicemail"):
+        return "voicemail"
+    if text.startswith("no answer/busy signal") or text.startswith("invalid number/wrong number"):
+        return "not_answered"
+    if text.startswith(
+        (
+            "demo scheduled/booked",
+            "interested/follow-up required",
+            "meeting confirmed",
+            "gatekeeper (connected to admin, not lead)",
+            "connected - not interested",
+            "do not contact/dnc",
+            "contact poor fit",
+            "redirected to other icp",
+        )
+    ):
+        return "connected"
+    return None
+
+
 def _is_connected_call(activity: Activity) -> bool:
+    disposition_bucket = _bucket_from_manual_disposition_text(activity)
+    if disposition_bucket in {"connected", "callback"}:
+        return True
     outcome = _normalize(activity.call_outcome).replace("-", "_")
     if outcome in {"connected", "answered", "completed", "success"}:
         return True
@@ -86,6 +125,9 @@ def _is_connected_call(activity: Activity) -> bool:
 
 
 def _outcome_bucket(activity: Activity) -> str:
+    disposition_bucket = _bucket_from_manual_disposition_text(activity)
+    if disposition_bucket:
+        return disposition_bucket
     outcome = _normalize(activity.call_outcome).replace("-", "_")
     if outcome in {"connected", "answered", "completed", "success"}:
         return "connected"
@@ -149,6 +191,13 @@ def _activity_rep_id(
     deal_owner: dict[UUID, UUID | None],
     contact_owner: dict[UUID, UUID | None],
 ) -> UUID | None:
+    source = _normalize(activity.source)
+    if source == "manual":
+        if activity.contact_id and contact_owner.get(activity.contact_id) in rep_ids:
+            return contact_owner.get(activity.contact_id)
+        if activity.deal_id and deal_owner.get(activity.deal_id) in rep_ids:
+            return deal_owner.get(activity.deal_id)
+
     if activity.created_by_id in rep_ids:
         return activity.created_by_id
 
@@ -374,7 +423,8 @@ def _render_report_text(report: dict[str, Any]) -> str:
             "",
             "Counting logic:",
             "- Includes activities where type or medium is call.",
-            "- Credits the user who logged/made the call first, then Aircall user name, then deal/contact owner fallback.",
+            "- Credits manual CRM calls to the assigned contact/deal owner first, then the user who logged the activity.",
+            "- Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.",
             "- Uses the America/Chicago calendar day so the report matches US pod working days.",
         ]
     )
@@ -435,7 +485,8 @@ def _render_report_html(report: dict[str, Any]) -> str:
     <h3 style="margin:24px 0 6px 0;font-size:13px;color:#475569;text-transform:uppercase;letter-spacing:0.04em;">Counting logic</h3>
     <ul style="margin:0;padding-left:20px;color:#475569;font-size:13px;line-height:1.6;">
       <li>Includes activities where type or medium is <code>call</code>.</li>
-      <li>Credits the user who logged/made the call first, then Aircall user name, then deal/contact owner fallback.</li>
+      <li>Credits manual CRM calls to the assigned contact/deal owner first, then the user who logged the activity.</li>
+      <li>Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.</li>
       <li>Uses the America/Chicago calendar day so the report matches US pod working days.</li>
     </ul>
     """.strip()
